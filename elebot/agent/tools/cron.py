@@ -1,4 +1,4 @@
-"""Cron tool for scheduling reminders and tasks."""
+"""计划任务工具，用于安排提醒与定时任务。"""
 
 from contextvars import ContextVar
 from datetime import datetime
@@ -40,9 +40,18 @@ from elebot.cron.types import CronJob, CronJobState, CronSchedule
     )
 )
 class CronTool(Tool):
-    """Tool to schedule reminders and recurring tasks."""
+    """提供新增、查看、删除定时任务的工具。"""
 
     def __init__(self, cron_service: CronService, default_timezone: str = "UTC"):
+        """初始化计划任务工具。
+
+        参数:
+            cron_service: 底层计划任务服务。
+            default_timezone: 默认时区名称。
+
+        返回:
+            无返回值。
+        """
         self._cron = cron_service
         self._default_timezone = default_timezone
         self._channel = ""
@@ -50,16 +59,38 @@ class CronTool(Tool):
         self._in_cron_context: ContextVar[bool] = ContextVar("cron_in_context", default=False)
 
     def set_context(self, channel: str, chat_id: str) -> None:
-        """Set the current session context for delivery."""
+        """设置当前会话上下文，供任务回投消息时复用。
+
+        参数:
+            channel: 渠道名称。
+            chat_id: 会话标识。
+
+        返回:
+            无返回值。
+        """
         self._channel = channel
         self._chat_id = chat_id
 
     def set_cron_context(self, active: bool):
-        """Mark whether the tool is executing inside a cron job callback."""
+        """标记当前是否处于 cron 回调上下文。
+
+        参数:
+            active: 是否处于 cron 回调中。
+
+        返回:
+            可用于后续重置的 ContextVar token。
+        """
         return self._in_cron_context.set(active)
 
     def reset_cron_context(self, token) -> None:
-        """Restore previous cron context."""
+        """恢复之前保存的 cron 上下文标记。
+
+        参数:
+            token: ``set_cron_context`` 返回的 token。
+
+        返回:
+            无返回值。
+        """
         self._in_cron_context.reset(token)
 
     @staticmethod
@@ -85,10 +116,20 @@ class CronTool(Tool):
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            工具名称字符串。
+        """
         return "cron"
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            面向模型的工具描述文本。
+        """
         return (
             "Schedule reminders and recurring tasks. Actions: add, list, remove. "
             f"If tz is omitted, cron expressions and naive ISO times default to {self._default_timezone}."
@@ -107,6 +148,23 @@ class CronTool(Tool):
         deliver: bool = True,
         **kwargs: Any,
     ) -> str:
+        """执行计划任务相关操作。
+
+        参数:
+            action: 操作类型。
+            name: 任务名称。
+            message: 任务触发时执行的消息。
+            every_seconds: 固定间隔秒数。
+            cron_expr: cron 表达式。
+            tz: cron 时区。
+            at: 一次性执行时间。
+            job_id: 删除时使用的任务标识。
+            deliver: 是否投递执行结果。
+            **kwargs: 兼容额外参数。
+
+        返回:
+            操作结果文本。
+        """
         if action == "add":
             if self._in_cron_context.get():
                 return "Error: cannot schedule new jobs from within a cron job execution"
@@ -137,7 +195,7 @@ class CronTool(Tool):
             if err := self._validate_timezone(tz):
                 return err
 
-        # Build schedule
+        # 调度方式只能三选一，统一在这里转成 CronSchedule，避免外层理解多套格式。
         delete_after = False
         if every_seconds:
             schedule = CronSchedule(kind="every", every_ms=every_seconds * 1000)
@@ -175,7 +233,14 @@ class CronTool(Tool):
         return f"Created job '{job.name}' (id: {job.id})"
 
     def _format_timing(self, schedule: CronSchedule) -> str:
-        """Format schedule as a human-readable timing string."""
+        """把调度信息格式化为便于阅读的时间描述。
+
+        参数:
+            schedule: 调度配置对象。
+
+        返回:
+            人类可读的时间描述字符串。
+        """
         if schedule.kind == "cron":
             tz = f" ({schedule.tz})" if schedule.tz else ""
             return f"cron: {schedule.expr}{tz}"
@@ -193,7 +258,15 @@ class CronTool(Tool):
         return schedule.kind
 
     def _format_state(self, state: CronJobState, schedule: CronSchedule) -> list[str]:
-        """Format job run state as display lines."""
+        """格式化任务运行状态信息。
+
+        参数:
+            state: 任务状态对象。
+            schedule: 任务调度配置。
+
+        返回:
+            适合展示的多行文本列表。
+        """
         lines: list[str] = []
         display_tz = self._display_timezone(schedule)
         if state.last_run_at_ms:

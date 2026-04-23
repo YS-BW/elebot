@@ -1,9 +1,4 @@
-"""Sandbox backends for shell command execution.
-
-To add a new backend, implement a function with the signature:
-    _wrap_<name>(command: str, workspace: str, cwd: str) -> str
-and register it in _BACKENDS below.
-"""
+"""Shell 命令沙箱后端。"""
 
 import shlex
 from pathlib import Path
@@ -12,11 +7,15 @@ from elebot.config.paths import get_media_dir
 
 
 def _bwrap(command: str, workspace: str, cwd: str) -> str:
-    """Wrap command in a bubblewrap sandbox (requires bwrap in container).
+    """把命令包装进 bubblewrap 沙箱。
 
-    Only the workspace is bind-mounted read-write; its parent dir (which holds
-    config.json) is hidden behind a fresh tmpfs.  The media directory is
-    bind-mounted read-only so exec commands can read uploaded attachments.
+    参数:
+        command: 原始命令。
+        workspace: 工作区路径。
+        cwd: 当前工作目录。
+
+    返回:
+        包装后的命令字符串。
     """
     ws = Path(workspace).resolve()
     media = get_media_dir().resolve()
@@ -35,10 +34,10 @@ def _bwrap(command: str, workspace: str, cwd: str) -> str:
     for p in optional: args += ["--ro-bind-try", p, p]
     args += [
         "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
-        "--tmpfs", str(ws.parent),        # mask config dir
-        "--dir", str(ws),                 # recreate workspace mount point
+        "--tmpfs", str(ws.parent),        # 隐藏工作区父目录，避免顺手看到配置目录等敏感内容。
+        "--dir", str(ws),                 # 重新建挂载点，确保后续 bind 到同一路径。
         "--bind", str(ws), str(ws),
-        "--ro-bind-try", str(media), str(media),  # read-only access to media
+        "--ro-bind-try", str(media), str(media),  # 媒体目录保留只读，便于命令读取上传附件。
         "--chdir", sandbox_cwd,
         "--", "sh", "-c", command,
     ]
@@ -49,7 +48,17 @@ _BACKENDS = {"bwrap": _bwrap}
 
 
 def wrap_command(sandbox: str, command: str, workspace: str, cwd: str) -> str:
-    """Wrap *command* using the named sandbox backend."""
+    """按指定后端包装命令。
+
+    参数:
+        sandbox: 沙箱后端名称。
+        command: 原始命令。
+        workspace: 工作区路径。
+        cwd: 当前工作目录。
+
+    返回:
+        包装后的命令字符串。
+    """
     if backend := _BACKENDS.get(sandbox):
         return backend(command, workspace, cwd)
     raise ValueError(f"Unknown sandbox backend {sandbox!r}. Available: {list(_BACKENDS)}")

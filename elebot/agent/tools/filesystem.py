@@ -1,4 +1,4 @@
-"""File system tools: read, write, edit, list."""
+"""文件系统工具，负责读取、写入、编辑与列目录。"""
 
 import difflib
 import mimetypes
@@ -41,7 +41,7 @@ def _is_under(path: Path, directory: Path) -> bool:
 
 
 class _FsTool(Tool):
-    """Shared base for filesystem tools — common init and path resolution."""
+    """文件系统工具的共享基类。"""
 
     def __init__(
         self,
@@ -49,6 +49,16 @@ class _FsTool(Tool):
         allowed_dir: Path | None = None,
         extra_allowed_dirs: list[Path] | None = None,
     ):
+        """初始化文件系统工具上下文。
+
+        参数:
+            workspace: 默认工作区路径。
+            allowed_dir: 允许访问的主目录。
+            extra_allowed_dirs: 额外允许访问的目录列表。
+
+        返回:
+            无返回值。
+        """
         self._workspace = workspace
         self._allowed_dir = allowed_dir
         self._extra_allowed_dirs = extra_allowed_dirs
@@ -57,9 +67,7 @@ class _FsTool(Tool):
         return _resolve_path(path, self._workspace, self._allowed_dir, self._extra_allowed_dirs)
 
 
-# ---------------------------------------------------------------------------
-# read_file
-# ---------------------------------------------------------------------------
+# 这里开始是 read_file 工具相关实现。
 
 
 _BLOCKED_DEVICE_PATHS = frozenset({
@@ -110,7 +118,7 @@ def _parse_page_range(pages: str, total: int) -> tuple[int, int]:
     )
 )
 class ReadFileTool(_FsTool):
-    """Read file contents with optional line-based pagination."""
+    """读取文本、图片或 PDF 文件内容。"""
 
     _MAX_CHARS = 128_000
     _DEFAULT_LIMIT = 2000
@@ -118,10 +126,20 @@ class ReadFileTool(_FsTool):
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            工具名称字符串。
+        """
         return "read_file"
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            面向模型的工具描述文本。
+        """
         return (
             "Read a file (text or image). Text output format: LINE_NUM|CONTENT. "
             "Images return visual content for analysis. "
@@ -132,14 +150,31 @@ class ReadFileTool(_FsTool):
 
     @property
     def read_only(self) -> bool:
+        """声明该工具为只读工具。
+
+        返回:
+            恒为 ``True``。
+        """
         return True
 
     async def execute(self, path: str | None = None, offset: int = 1, limit: int | None = None, pages: str | None = None, **kwargs: Any) -> Any:
+        """执行文件读取。
+
+        参数:
+            path: 目标文件路径。
+            offset: 文本读取起始行。
+            limit: 文本读取行数限制。
+            pages: PDF 页码范围。
+            **kwargs: 兼容额外参数。
+
+        返回:
+            文本结果、图片内容块或错误信息。
+        """
         try:
             if not path:
                 return "Error reading file: Unknown path"
 
-            # Device path blacklist
+            # 设备文件可能阻塞或产生无限输出，必须在真正读取前直接拦截。
             if _is_blocked_device(path):
                 return f"Error: Reading {path} is blocked (device path that could hang or produce infinite output)."
 
@@ -151,7 +186,7 @@ class ReadFileTool(_FsTool):
             if not fp.is_file():
                 return f"Error: Not a file: {path}"
 
-            # PDF support
+            # PDF 单独走文本提取分支，避免误按二进制处理。
             if fp.suffix.lower() == ".pdf":
                 return self._read_pdf(fp, pages)
 
@@ -163,7 +198,7 @@ class ReadFileTool(_FsTool):
             if mime and mime.startswith("image/"):
                 return build_image_content_blocks(raw, mime, str(fp), f"(Image file: {path})")
 
-            # Read dedup: same path + offset + limit + unchanged mtime → stub
+            # 相同分页参数且文件未变化时直接返回占位，避免模型重复浪费上下文读取同一内容。
             if file_state.is_unchanged(fp, offset=offset, limit=limit):
                 return f"[File unchanged since last read: {path}]"
 
@@ -208,7 +243,7 @@ class ReadFileTool(_FsTool):
 
     def _read_pdf(self, fp: Path, pages: str | None) -> str:
         try:
-            import fitz  # pymupdf
+            import fitz  # 这里延迟导入 pymupdf，避免非 PDF 场景平白增加依赖门槛。
         except ImportError:
             return "Error: PDF reading requires pymupdf. Install with: pip install pymupdf"
 
@@ -253,9 +288,7 @@ class ReadFileTool(_FsTool):
         return result
 
 
-# ---------------------------------------------------------------------------
-# write_file
-# ---------------------------------------------------------------------------
+# 这里开始是 write_file 工具相关实现。
 
 
 @tool_parameters(
@@ -266,14 +299,24 @@ class ReadFileTool(_FsTool):
     )
 )
 class WriteFileTool(_FsTool):
-    """Write content to a file."""
+    """把完整内容写入文件。"""
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            工具名称字符串。
+        """
         return "write_file"
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            面向模型的工具描述文本。
+        """
         return (
             "Write content to a file. Overwrites if the file already exists; "
             "creates parent directories as needed. "
@@ -281,6 +324,16 @@ class WriteFileTool(_FsTool):
         )
 
     async def execute(self, path: str | None = None, content: str | None = None, **kwargs: Any) -> str:
+        """执行整文件写入。
+
+        参数:
+            path: 目标文件路径。
+            content: 要写入的完整内容。
+            **kwargs: 兼容额外参数。
+
+        返回:
+            写入结果文本。
+        """
         try:
             if not path:
                 raise ValueError("Unknown path")
@@ -297,14 +350,12 @@ class WriteFileTool(_FsTool):
             return f"Error writing file: {e}"
 
 
-# ---------------------------------------------------------------------------
-# edit_file
-# ---------------------------------------------------------------------------
+# 这里开始是 edit_file 工具相关实现。
 
 _QUOTE_TABLE = str.maketrans({
-    "\u2018": "'", "\u2019": "'",  # curly single → straight
-    "\u201c": '"', "\u201d": '"',  # curly double → straight
-    "'": "'", '"': '"',            # identity (kept for completeness)
+    "\u2018": "'", "\u2019": "'",  # 统一把弯单引号折叠成直单引号。
+    "\u201c": '"', "\u201d": '"',  # 统一把弯双引号折叠成直双引号。
+    "'": "'", '"': '"',            # 保留恒等映射，便于后续转换表完整表达意图。
 })
 
 
@@ -576,17 +627,27 @@ def _find_match(content: str, old_text: str) -> tuple[str | None, int]:
     )
 )
 class EditFileTool(_FsTool):
-    """Edit a file by replacing text with fallback matching."""
+    """通过文本替换方式编辑文件。"""
 
-    _MAX_EDIT_FILE_SIZE = 1024 * 1024 * 1024  # 1 GiB
+    _MAX_EDIT_FILE_SIZE = 1024 * 1024 * 1024  # 1 GiB 上限可以挡住误把大型二进制喂进文本替换流程。
     _MARKDOWN_EXTS = frozenset({".md", ".mdx", ".markdown"})
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            工具名称字符串。
+        """
         return "edit_file"
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            面向模型的工具描述文本。
+        """
         return (
             "Edit a file by replacing old_text with new_text. "
             "Tolerates minor whitespace/indentation differences and curly/straight quote mismatches. "
@@ -604,6 +665,18 @@ class EditFileTool(_FsTool):
         new_text: str | None = None,
         replace_all: bool = False, **kwargs: Any,
     ) -> str:
+        """执行基于 old_text/new_text 的文件编辑。
+
+        参数:
+            path: 目标文件路径。
+            old_text: 待替换旧文本。
+            new_text: 新文本。
+            replace_all: 是否替换全部匹配项。
+            **kwargs: 兼容额外参数。
+
+        返回:
+            编辑结果文本。
+        """
         try:
             if not path:
                 raise ValueError("Unknown path")
@@ -612,13 +685,13 @@ class EditFileTool(_FsTool):
             if new_text is None:
                 raise ValueError("Unknown new_text")
 
-            # .ipynb detection
+            # Notebook 需要保留结构化语义，混用 edit_file 会破坏单元格边界。
             if path.endswith(".ipynb"):
                 return "Error: This is a Jupyter notebook. Use the notebook_edit tool instead of edit_file."
 
             fp = self._resolve(path)
 
-            # Create-file semantics: old_text='' + file doesn't exist → create
+            # 允许用空 old_text 创建新文件，这样模型无需额外判断“先创建还是再编辑”。
             if not fp.exists():
                 if old_text == "":
                     fp.parent.mkdir(parents=True, exist_ok=True)
@@ -627,7 +700,7 @@ class EditFileTool(_FsTool):
                     return f"Successfully created {fp}"
                 return self._file_not_found_msg(path, fp)
 
-            # File size protection
+            # 超大文件不适合做整段字符串替换，否则容易造成卡死或误截断。
             try:
                 fsize = fp.stat().st_size
             except OSError:
@@ -635,7 +708,7 @@ class EditFileTool(_FsTool):
             if fsize > self._MAX_EDIT_FILE_SIZE:
                 return f"Error: File too large to edit ({fsize / (1024**3):.1f} GiB). Maximum is 1 GiB."
 
-            # Create-file: old_text='' but file exists and not empty → reject
+            # 目标文件已存在且非空时拒绝“创建语义”，避免模型误把覆盖写当作新建。
             if old_text == "":
                 raw = fp.read_bytes()
                 content = raw.decode("utf-8")
@@ -645,7 +718,7 @@ class EditFileTool(_FsTool):
                 file_state.record_write(fp)
                 return f"Successfully edited {fp}"
 
-            # Read-before-edit check
+            # 先做读后写检查，尽量把风险提示带回给模型，而不是静默继续改旧内容。
             warning = file_state.check_read(fp)
 
             raw = fp.read_bytes()
@@ -670,7 +743,7 @@ class EditFileTool(_FsTool):
 
             norm_new = new_text.replace("\r\n", "\n")
 
-            # Trailing whitespace stripping (skip markdown to preserve double-space line breaks)
+            # Markdown 里双空格换行有语义，非 Markdown 才统一剔除尾随空白。
             if fp.suffix.lower() not in self._MARKDOWN_EXTS:
                 norm_new = self._strip_trailing_ws(norm_new)
 
@@ -680,8 +753,7 @@ class EditFileTool(_FsTool):
                 replacement = _preserve_quote_style(norm_old, match.text, norm_new)
                 replacement = _reindent_like_match(norm_old, match.text, replacement)
 
-                # Delete-line cleanup: when deleting text (new_text=''), consume trailing
-                # newline to avoid leaving a blank line
+                # 删除整段文本时顺手吞掉紧随的换行，可以避免平白留下空行。
                 end = match.end
                 if replacement == "" and not match.text.endswith("\n") and content[end:end + 1] == "\n":
                     end += 1
@@ -742,9 +814,7 @@ class EditFileTool(_FsTool):
         return f"Error: old_text not found in {path}. No similar text found. Verify the file content."
 
 
-# ---------------------------------------------------------------------------
-# list_dir
-# ---------------------------------------------------------------------------
+# 这里开始是 list_dir 工具相关实现。
 
 @tool_parameters(
     tool_parameters_schema(
@@ -759,7 +829,7 @@ class EditFileTool(_FsTool):
     )
 )
 class ListDirTool(_FsTool):
-    """List directory contents with optional recursion."""
+    """列出目录内容，可选递归。"""
 
     _DEFAULT_MAX = 200
     _IGNORE_DIRS = {
@@ -770,10 +840,20 @@ class ListDirTool(_FsTool):
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            工具名称字符串。
+        """
         return "list_dir"
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            面向模型的工具描述文本。
+        """
         return (
             "List the contents of a directory. "
             "Set recursive=true to explore nested structure. "
@@ -782,12 +862,28 @@ class ListDirTool(_FsTool):
 
     @property
     def read_only(self) -> bool:
+        """声明该工具为只读工具。
+
+        返回:
+            恒为 ``True``。
+        """
         return True
 
     async def execute(
         self, path: str | None = None, recursive: bool = False,
         max_entries: int | None = None, **kwargs: Any,
     ) -> str:
+        """执行目录列举。
+
+        参数:
+            path: 目标目录路径。
+            recursive: 是否递归。
+            max_entries: 返回条目上限。
+            **kwargs: 兼容额外参数。
+
+        返回:
+            目录列表文本。
+        """
         try:
             if path is None:
                 raise ValueError("Unknown path")

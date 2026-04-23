@@ -1,4 +1,4 @@
-"""Shared helpers for OpenAI Responses API providers (Codex, Azure OpenAI)."""
+"""OpenAI Responses API 相关的共享转换与解析工具。"""
 
 from elebot.providers.openai_responses.converters import (
     convert_messages,

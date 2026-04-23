@@ -1,6 +1,10 @@
 /**
- * WebSocket server for Python-Node.js bridge communication.
- * Security: binds to 127.0.0.1 only; requires BRIDGE_TOKEN auth; rejects browser Origin headers.
+ * Python 与 Node 桥接层之间的本地 WebSocket 服务。
+ *
+ * 安全约束：
+ * - 只监听 `127.0.0.1`
+ * - 首条消息必须完成 `BRIDGE_TOKEN` 鉴权
+ * - 带浏览器 `Origin` 头的连接直接拒绝
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
@@ -40,7 +44,7 @@ export class BridgeServer {
       throw new Error('BRIDGE_TOKEN is required');
     }
 
-    // Bind to localhost only — never expose to external network
+    // 这里只允许本机连接，避免桥接口被当成公开服务暴露出去。
     this.wss = new WebSocketServer({
       host: '127.0.0.1',
       port: this.port,
@@ -57,7 +61,7 @@ export class BridgeServer {
     console.log(`🌉 Bridge server listening on ws://127.0.0.1:${this.port}`);
     console.log('🔒 Token authentication enabled');
 
-    // Initialize WhatsApp client
+    // 先把 WhatsApp 客户端绑上广播回调，再统一由 BridgeServer 向 Python 侧扇出。
     this.wa = new WhatsAppClient({
       authDir: this.authDir,
       onMessage: (msg) => this.broadcast({ type: 'message', ...msg }),
@@ -65,9 +69,9 @@ export class BridgeServer {
       onStatus: (status) => this.broadcast({ type: 'status', status }),
     });
 
-    // Handle WebSocket connections
+    // 每条 Python 连接都必须先完成鉴权，避免本地其他进程直接接管桥接服务。
     this.wss.on('connection', (ws) => {
-      // Require auth handshake as first message
+      // 把鉴权限制在第一帧完成，避免未认证连接长期占住资源。
       const timeout = setTimeout(() => ws.close(4001, 'Auth timeout'), 5000);
       ws.once('message', (data) => {
         clearTimeout(timeout);
@@ -85,7 +89,7 @@ export class BridgeServer {
       });
     });
 
-    // Connect to WhatsApp
+    // 桥接服务起来后再连 WhatsApp，保证状态事件有出口可发。
     await this.wa.connect();
   }
 
@@ -134,19 +138,19 @@ export class BridgeServer {
   }
 
   async stop(): Promise<void> {
-    // Close all client connections
+    // 先关掉 Python 侧连接，避免它们在后端停止过程中继续发命令。
     for (const client of this.clients) {
       client.close();
     }
     this.clients.clear();
 
-    // Close WebSocket server
+    // 再关闭本地 WebSocket 服务，阻止新连接进入。
     if (this.wss) {
       this.wss.close();
       this.wss = null;
     }
 
-    // Disconnect WhatsApp
+    // 最后断开 WhatsApp，完成整个桥接层的有序收尾。
     if (this.wa) {
       await this.wa.disconnect();
       this.wa = null;

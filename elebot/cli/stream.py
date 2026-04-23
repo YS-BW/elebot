@@ -22,6 +22,14 @@ class ThinkingSpinner:
     """封装 CLI 思考 spinner，并支持临时暂停。"""
 
     def __init__(self, console: Console | None = None):
+        """初始化思考中 spinner。
+
+        参数:
+            console: 可选的输出终端对象。
+
+        返回:
+            无返回值。
+        """
         terminal_console = console or _make_console()
         self._spinner = terminal_console.status("[dim]elebot is thinking...[/dim]", spinner="dots")
         self._active = False
@@ -57,6 +65,15 @@ class StreamRenderer:
     """以 Rich Live 渲染流式回复，并在首个可见 token 前展示 spinner。"""
 
     def __init__(self, render_markdown: bool = True, show_spinner: bool = True):
+        """初始化流式渲染器。
+
+        参数:
+            render_markdown: 是否按 Markdown 渲染回复。
+            show_spinner: 是否在首个可见 token 前显示 spinner。
+
+        返回:
+            无返回值。
+        """
         self._render_markdown = render_markdown
         self._show_spinner = show_spinner
         self._buffer = ""

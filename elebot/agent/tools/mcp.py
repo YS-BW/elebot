@@ -1,4 +1,4 @@
-"""MCP client: connects to MCP servers and wraps their tools as native elebot tools."""
+"""MCP 客户端工具封装，用于连接外部 MCP 服务。"""
 
 import asyncio
 from contextlib import AsyncExitStack
@@ -73,9 +73,20 @@ def _normalize_schema_for_openai(schema: Any) -> dict[str, Any]:
 
 
 class MCPToolWrapper(Tool):
-    """Wraps a single MCP server tool as a elebot Tool."""
+    """把单个 MCP 工具包装成 EleBot 原生工具。"""
 
     def __init__(self, session, server_name: str, tool_def, tool_timeout: int = 30):
+        """初始化 MCP 工具包装器。
+
+        参数:
+            session: MCP 会话对象。
+            server_name: MCP 服务名。
+            tool_def: MCP 工具定义。
+            tool_timeout: 调用超时时间。
+
+        返回:
+            无返回值。
+        """
         self._session = session
         self._original_name = tool_def.name
         self._name = f"mcp_{server_name}_{tool_def.name}"
@@ -86,17 +97,40 @@ class MCPToolWrapper(Tool):
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            带服务名前缀的工具名。
+        """
         return self._name
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            工具描述文本。
+        """
         return self._description
 
     @property
     def parameters(self) -> dict[str, Any]:
+        """返回工具参数 Schema。
+
+        返回:
+            标准化后的参数 Schema 字典。
+        """
         return self._parameters
 
     async def execute(self, **kwargs: Any) -> str:
+        """调用对应的 MCP 工具。
+
+        参数:
+            **kwargs: 工具参数。
+
+        返回:
+            工具输出文本。
+        """
         from mcp import types
 
         try:
@@ -108,8 +142,7 @@ class MCPToolWrapper(Tool):
             logger.warning("MCP tool '{}' timed out after {}s", self._name, self._tool_timeout)
             return f"(MCP tool call timed out after {self._tool_timeout}s)"
         except asyncio.CancelledError:
-            # MCP SDK's anyio cancel scopes can leak CancelledError on timeout/failure.
-            # Re-raise only if our task was externally cancelled (e.g. /stop).
+            # 这里只在外部真实取消任务时继续抛出，避免 SDK 内部泄漏的取消信号误中断主循环。
             task = asyncio.current_task()
             if task is not None and task.cancelling() > 0:
                 raise
@@ -134,9 +167,20 @@ class MCPToolWrapper(Tool):
 
 
 class MCPResourceWrapper(Tool):
-    """Wraps an MCP resource URI as a read-only elebot Tool."""
+    """把 MCP 资源 URI 包装成只读工具。"""
 
     def __init__(self, session, server_name: str, resource_def, resource_timeout: int = 30):
+        """初始化 MCP 资源包装器。
+
+        参数:
+            session: MCP 会话对象。
+            server_name: MCP 服务名。
+            resource_def: MCP 资源定义。
+            resource_timeout: 读取超时时间。
+
+        返回:
+            无返回值。
+        """
         self._session = session
         self._uri = resource_def.uri
         self._name = f"mcp_{server_name}_resource_{resource_def.name}"
@@ -151,21 +195,49 @@ class MCPResourceWrapper(Tool):
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            带服务名前缀的资源工具名。
+        """
         return self._name
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            资源描述文本。
+        """
         return self._description
 
     @property
     def parameters(self) -> dict[str, Any]:
+        """返回资源工具参数 Schema。
+
+        返回:
+            空参数对象 Schema。
+        """
         return self._parameters
 
     @property
     def read_only(self) -> bool:
+        """声明资源工具为只读。
+
+        返回:
+            恒为 ``True``。
+        """
         return True
 
     async def execute(self, **kwargs: Any) -> str:
+        """读取 MCP 资源内容。
+
+        参数:
+            **kwargs: 兼容额外参数。
+
+        返回:
+            资源内容文本。
+        """
         from mcp import types
 
         try:
@@ -205,9 +277,20 @@ class MCPResourceWrapper(Tool):
 
 
 class MCPPromptWrapper(Tool):
-    """Wraps an MCP prompt as a read-only elebot Tool."""
+    """把 MCP prompt 包装成只读工具。"""
 
     def __init__(self, session, server_name: str, prompt_def, prompt_timeout: int = 30):
+        """初始化 MCP Prompt 包装器。
+
+        参数:
+            session: MCP 会话对象。
+            server_name: MCP 服务名。
+            prompt_def: MCP prompt 定义。
+            prompt_timeout: 调用超时时间。
+
+        返回:
+            无返回值。
+        """
         self._session = session
         self._prompt_name = prompt_def.name
         self._name = f"mcp_{server_name}_prompt_{prompt_def.name}"
@@ -218,7 +301,7 @@ class MCPPromptWrapper(Tool):
         )
         self._prompt_timeout = prompt_timeout
 
-        # Build parameters from prompt arguments
+        # prompt 参数定义来自服务端描述，这里统一转成工具调用可消费的对象 Schema。
         properties: dict[str, Any] = {}
         required: list[str] = []
         for arg in prompt_def.arguments or []:
@@ -236,21 +319,49 @@ class MCPPromptWrapper(Tool):
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            带服务名前缀的 prompt 工具名。
+        """
         return self._name
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            prompt 描述文本。
+        """
         return self._description
 
     @property
     def parameters(self) -> dict[str, Any]:
+        """返回 prompt 参数 Schema。
+
+        返回:
+            由 prompt 参数定义转换得到的 Schema 字典。
+        """
         return self._parameters
 
     @property
     def read_only(self) -> bool:
+        """声明 prompt 工具为只读。
+
+        返回:
+            恒为 ``True``。
+        """
         return True
 
     async def execute(self, **kwargs: Any) -> str:
+        """执行 MCP prompt 并展开内容。
+
+        参数:
+            **kwargs: prompt 参数。
+
+        返回:
+            展开的 prompt 文本。
+        """
         from mcp import types
         from mcp.shared.exceptions import McpError
 
@@ -288,7 +399,7 @@ class MCPPromptWrapper(Tool):
         parts: list[str] = []
         for message in result.messages:
             content = message.content
-            # content is a single ContentBlock (not a list) in MCP SDK >= 1.x
+            # 新版 SDK 把单条消息内容直接做成单个 ContentBlock，需要兼容旧版 list 结构。
             if isinstance(content, types.TextContent):
                 parts.append(content.text)
             elif isinstance(content, list):
@@ -305,11 +416,14 @@ class MCPPromptWrapper(Tool):
 async def connect_mcp_servers(
     mcp_servers: dict, registry: ToolRegistry
 ) -> dict[str, AsyncExitStack]:
-    """Connect to configured MCP servers and register their tools, resources, prompts.
+    """连接配置中的 MCP 服务并注册其能力。
 
-    Returns a dict mapping server name -> its dedicated AsyncExitStack.
-    Each server gets its own stack and runs in its own task to prevent
-    cancel scope conflicts when multiple MCP servers are configured.
+    参数:
+        mcp_servers: MCP 服务配置映射。
+        registry: 工具注册表。
+
+    返回:
+        ``server_name -> AsyncExitStack`` 的映射。
     """
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.sse import sse_client
@@ -317,6 +431,15 @@ async def connect_mcp_servers(
     from mcp.client.streamable_http import streamable_http_client
 
     async def connect_single_server(name: str, cfg) -> tuple[str, AsyncExitStack | None]:
+        """连接单个 MCP 服务。
+
+        参数:
+            name: 服务名称。
+            cfg: 服务配置对象。
+
+        返回:
+            二元组 ``(name, stack)``，连接失败时 ``stack`` 为 ``None``。
+        """
         server_stack = AsyncExitStack()
         await server_stack.__aenter__()
 
@@ -346,6 +469,16 @@ async def connect_mcp_servers(
                     timeout: httpx.Timeout | None = None,
                     auth: httpx.Auth | None = None,
                 ) -> httpx.AsyncClient:
+                    """构建带默认头的 HTTP 客户端工厂。
+
+                    参数:
+                        headers: 额外请求头。
+                        timeout: 超时配置。
+                        auth: 认证对象。
+
+                    返回:
+                        配置完成的 ``httpx.AsyncClient``。
+                    """
                     merged_headers = {
                         "Accept": "application/json, text/event-stream",
                         **(cfg.headers or {}),

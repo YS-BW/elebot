@@ -1,4 +1,4 @@
-"""Spawn tool for creating background subagents."""
+"""子代理创建工具。"""
 
 from typing import TYPE_CHECKING, Any
 
@@ -17,26 +17,52 @@ if TYPE_CHECKING:
     )
 )
 class SpawnTool(Tool):
-    """Tool to spawn a subagent for background task execution."""
+    """用于创建后台子代理执行独立任务。"""
 
     def __init__(self, manager: "SubagentManager"):
+        """初始化子代理工具。
+
+        参数:
+            manager: 子代理管理器。
+
+        返回:
+            无返回值。
+        """
         self._manager = manager
         self._origin_channel = "cli"
         self._origin_chat_id = "direct"
         self._session_key = "cli:direct"
 
     def set_context(self, channel: str, chat_id: str) -> None:
-        """Set the origin context for subagent announcements."""
+        """设置子代理回传结果所使用的来源上下文。
+
+        参数:
+            channel: 来源渠道名。
+            chat_id: 来源会话标识。
+
+        返回:
+            无返回值。
+        """
         self._origin_channel = channel
         self._origin_chat_id = chat_id
         self._session_key = f"{channel}:{chat_id}"
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            工具名称字符串。
+        """
         return "spawn"
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            面向模型的工具描述文本。
+        """
         return (
             "Spawn a subagent to handle a task in the background. "
             "Use this for complex or time-consuming tasks that can run independently. "
@@ -46,7 +72,16 @@ class SpawnTool(Tool):
         )
 
     async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str:
-        """Spawn a subagent to execute the given task."""
+        """创建一个子代理执行指定任务。
+
+        参数:
+            task: 子代理要执行的任务描述。
+            label: 可选的短标签。
+            **kwargs: 兼容额外参数。
+
+        返回:
+            子代理创建结果文本。
+        """
         return await self._manager.spawn(
             task=task,
             label=label,

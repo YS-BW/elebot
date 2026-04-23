@@ -1,4 +1,4 @@
-"""Context builder for assembling agent prompts."""
+"""负责组装 Agent 提示词与消息上下文。"""
 
 import base64
 import mimetypes
@@ -15,7 +15,7 @@ from elebot.utils.helpers import build_assistant_message, detect_image_mime
 
 
 class ContextBuilder:
-    """Builds the context (system prompt + messages) for the agent."""
+    """负责把工作区状态整理成一次可直接发给模型的上下文。"""
 
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
     _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
@@ -23,6 +23,11 @@ class ContextBuilder:
     _RUNTIME_CONTEXT_END = "[/Runtime Context]"
 
     def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None):
+        """绑定上下文构造所需的工作区依赖。
+
+        这里不缓存最终提示词，只缓存读取入口。
+        这样每一轮都能基于最新的记忆、技能和启动文件重新组装上下文。
+        """
         self.workspace = workspace
         self.timezone = timezone
         self.memory = MemoryStore(workspace)
@@ -33,7 +38,18 @@ class ContextBuilder:
         skill_names: list[str] | None = None,
         channel: str | None = None,
     ) -> str:
-        """Build the system prompt from identity, bootstrap files, memory, and skills."""
+        """组装系统提示词主干。
+
+        核心职责：
+        - 写入身份与运行环境信息
+        - 注入工作区启动文件
+        - 拼接长期记忆和常驻技能
+        - 追加可按需读取的技能摘要
+        - 在末尾补上近期未被 Dream 吸收的历史
+
+        返回：
+            可直接作为 `system` 消息发送的完整提示词文本。
+        """
         parts = [self._get_identity(channel=channel)]
 
         bootstrap = self._load_bootstrap_files()
@@ -127,12 +143,21 @@ class ContextBuilder:
         current_role: str = "user",
         session_summary: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Build the complete message list for an LLM call."""
+        """构造一次模型调用的完整消息数组。
+
+        核心职责：
+        - 补齐运行时元信息，避免模板层直接依赖外部状态
+        - 把文本和媒体统一成 Provider 可接受的内容块
+        - 在必要时与上一条同角色消息合并，规避部分 Provider 的协议限制
+
+        返回：
+            按当前 Provider 约定整理好的消息列表。
+        """
         runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone, session_summary=session_summary)
         user_content = self._build_user_content(current_message, media)
 
-        # Merge runtime context and user content into a single user message
-        # to avoid consecutive same-role messages that some providers reject.
+        # 这里把运行时上下文和用户正文合并成一条消息，
+        # 避免部分 Provider 拒绝连续出现相同 role 的消息。
         if isinstance(user_content, str):
             merged = f"{runtime_ctx}\n\n{user_content}"
         else:
@@ -160,7 +185,7 @@ class ContextBuilder:
             if not p.is_file():
                 continue
             raw = p.read_bytes()
-            # Detect real MIME type from magic bytes; fallback to filename guess
+            # 优先按文件内容识别 MIME，避免扩展名伪装导致 Provider 拒收图片。
             mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
             if not mime or not mime.startswith("image/"):
                 continue
@@ -179,7 +204,10 @@ class ContextBuilder:
         self, messages: list[dict[str, Any]],
         tool_call_id: str, tool_name: str, result: Any,
     ) -> list[dict[str, Any]]:
-        """Add a tool result to the message list."""
+        """把工具执行结果追加回消息链路。
+
+        这里直接在原列表上追加，保持调用方持有的会话视图和实际发送顺序一致。
+        """
         messages.append({"role": "tool", "tool_call_id": tool_call_id, "name": tool_name, "content": result})
         return messages
 
@@ -190,7 +218,11 @@ class ContextBuilder:
         reasoning_content: str | None = None,
         thinking_blocks: list[dict] | None = None,
     ) -> list[dict[str, Any]]:
-        """Add an assistant message to the message list."""
+        """把助手回复写回消息链路。
+
+        之所以统一走 `build_assistant_message`，是为了让正文、工具调用和思考块的落盘结构保持一致，
+        后续 Runner、Session 和测试都只需要面对一种助手消息格式。
+        """
         messages.append(build_assistant_message(
             content,
             tool_calls=tool_calls,

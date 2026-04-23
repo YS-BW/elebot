@@ -128,23 +128,23 @@ class ProvidersConfig(Base):
 
 
 class HeartbeatConfig(Base):
-    """Heartbeat service configuration."""
+    """Heartbeat 服务配置。"""
 
     enabled: bool = True
-    interval_s: int = 30 * 60  # 30 minutes
+    interval_s: int = 30 * 60  # 默认每 30 分钟触发一次
     keep_recent_messages: int = 8
 
 
 class ApiConfig(Base):
-    """OpenAI-compatible API server configuration."""
+    """OpenAI 兼容 API 服务配置。"""
 
-    host: str = "127.0.0.1"  # Safer default: local-only bind.
+    host: str = "127.0.0.1"  # 默认只绑定本地，避免无意暴露到公网。
     port: int = 8900
-    timeout: float = 120.0  # Per-request timeout in seconds.
+    timeout: float = 120.0  # 单次请求超时时间，单位秒。
 
 
 class GatewayConfig(Base):
-    """Gateway/server configuration."""
+    """Gateway 服务配置。"""
 
     host: str = "0.0.0.0"
     port: int = 18790
@@ -152,58 +152,58 @@ class GatewayConfig(Base):
 
 
 class WebSearchConfig(Base):
-    """Web search tool configuration."""
+    """Web 搜索工具配置。"""
 
-    provider: str = "duckduckgo"  # brave, tavily, duckduckgo, searxng, jina, kagi
+    provider: str = "duckduckgo"  # 支持 brave、tavily、duckduckgo、searxng、jina、kagi
     api_key: str = ""
-    base_url: str = ""  # SearXNG base URL
+    base_url: str = ""  # SearXNG 服务地址
     max_results: int = 5
-    timeout: int = 30  # Wall-clock timeout (seconds) for search operations
+    timeout: int = 30  # 搜索操作的总超时时间，单位秒。
 
 
 class WebToolsConfig(Base):
-    """Web tools configuration."""
+    """Web 工具配置。"""
 
     enable: bool = True
     proxy: str | None = (
-        None  # HTTP/SOCKS5 proxy URL, e.g. "http://127.0.0.1:7890" or "socks5://127.0.0.1:1080"
+        None  # HTTP 或 SOCKS5 代理地址，例如 "http://127.0.0.1:7890"
     )
     search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 
 class ExecToolConfig(Base):
-    """Shell exec tool configuration."""
+    """Shell 执行工具配置。"""
 
     enable: bool = True
     timeout: int = 60
     path_append: str = ""
-    sandbox: str = ""  # sandbox backend: "" (none) or "bwrap"
-    allowed_env_keys: list[str] = Field(default_factory=list)  # Env var names to pass through to subprocess (e.g. ["GOPATH", "JAVA_HOME"])
+    sandbox: str = ""  # 沙箱后端，空字符串表示不启用，"bwrap" 表示 bubblewrap。
+    allowed_env_keys: list[str] = Field(default_factory=list)  # 允许透传给子进程的环境变量名。
 
 class MCPServerConfig(Base):
-    """MCP server connection configuration (stdio or HTTP)."""
+    """MCP 服务连接配置。"""
 
-    type: Literal["stdio", "sse", "streamableHttp"] | None = None  # auto-detected if omitted
-    command: str = ""  # Stdio: command to run (e.g. "npx")
-    args: list[str] = Field(default_factory=list)  # Stdio: command arguments
-    env: dict[str, str] = Field(default_factory=dict)  # Stdio: extra env vars
-    url: str = ""  # HTTP/SSE: endpoint URL
-    headers: dict[str, str] = Field(default_factory=dict)  # HTTP/SSE: custom headers
-    tool_timeout: int = 30  # seconds before a tool call is cancelled
-    enabled_tools: list[str] = Field(default_factory=lambda: ["*"])  # Only register these tools; accepts raw MCP names or wrapped mcp_<server>_<tool> names; ["*"] = all tools; [] = no tools
+    type: Literal["stdio", "sse", "streamableHttp"] | None = None  # 不填时由运行时自动判断协议。
+    command: str = ""  # stdio 模式下要执行的命令。
+    args: list[str] = Field(default_factory=list)  # stdio 模式下的命令参数。
+    env: dict[str, str] = Field(default_factory=dict)  # stdio 模式下附加环境变量。
+    url: str = ""  # HTTP 或 SSE 模式的服务地址。
+    headers: dict[str, str] = Field(default_factory=dict)  # HTTP 或 SSE 模式下的自定义请求头。
+    tool_timeout: int = 30  # 单次工具调用超时时间，单位秒。
+    enabled_tools: list[str] = Field(default_factory=lambda: ["*"])  # 用于限制注册到本地的工具白名单。
 
 class ToolsConfig(Base):
-    """Tools configuration."""
+    """工具系统配置。"""
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
-    restrict_to_workspace: bool = False  # restrict all tool access to workspace directory
+    restrict_to_workspace: bool = False  # 为 True 时把工具访问范围限制到工作区。
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
-    ssrf_whitelist: list[str] = Field(default_factory=list)  # CIDR ranges to exempt from SSRF blocking (e.g. ["100.64.0.0/10"] for Tailscale)
+    ssrf_whitelist: list[str] = Field(default_factory=list)  # 允许跳过 SSRF 限制的 CIDR 白名单。
 
 
 class Config(BaseSettings):
-    """Root configuration for elebot."""
+    """elebot 根配置。"""
 
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
@@ -214,7 +214,7 @@ class Config(BaseSettings):
 
     @property
     def workspace_path(self) -> Path:
-        """Get expanded workspace path."""
+        """返回展开后的工作区路径。"""
         return Path(self.agents.defaults.workspace).expanduser()
 
     def _match_provider(
@@ -227,8 +227,7 @@ class Config(BaseSettings):
         model_prefix = model_lower.split("/", 1)[0] if "/" in model_lower else ""
         normalized_prefix = model_prefix.replace("-", "_")
 
-        # 显式模型前缀优先于默认 provider，避免默认 dashscope 抢走
-        # github-copilot/...、openai-codex/...、ollama/... 这类已指明路由的模型。
+        # 显式模型前缀必须优先，避免默认 provider 抢走已声明路由的模型。
         if model_prefix:
             spec = find_by_name(normalized_prefix)
             if spec is not None:
@@ -248,24 +247,22 @@ class Config(BaseSettings):
             kw = kw.lower()
             return kw in model_lower or kw.replace("-", "_") in model_normalized
 
-        # Explicit provider prefix wins — prevents `github-copilot/...codex` matching openai_codex.
+        # 显式 provider 前缀优先，避免 `github-copilot/...codex` 被误判为 openai_codex。
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
             if p and model_prefix and normalized_prefix == spec.name:
                 if spec.is_oauth or spec.is_local or p.api_key:
                     return p, spec.name
 
-        # Match by keyword (order follows PROVIDERS registry)
+        # 关键字匹配顺序跟随 PROVIDERS 注册表，保证行为稳定。
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
             if p and any(_kw_matches(kw) for kw in spec.keywords):
                 if spec.is_oauth or spec.is_local or p.api_key:
                     return p, spec.name
 
-        # Fallback: configured local providers can route models without
-        # provider-specific keywords (for example plain "llama3.2" on Ollama).
-        # Prefer providers whose detect_by_base_keyword matches the configured api_base
-        # (e.g. Ollama's "11434" in "http://localhost:11434") over plain registry order.
+        # 本地 provider 常常承载无前缀模型名，因此需要在这里补一层兜底匹配。
+        # 如果 api_base 能命中特征关键字，则优先使用该 provider，避免按注册顺序误选。
         local_fallback: tuple[ProviderConfig, str] | None = None
         for spec in PROVIDERS:
             if not spec.is_local:
@@ -280,8 +277,7 @@ class Config(BaseSettings):
         if local_fallback:
             return local_fallback
 
-        # Fallback: gateways first, then others (follows registry order)
-        # OAuth providers are NOT valid fallbacks — they require explicit model selection
+        # 最后按网关优先顺序兜底，但 OAuth provider 不能走兜底分支。
         for spec in PROVIDERS:
             if spec.is_oauth:
                 continue
@@ -291,29 +287,28 @@ class Config(BaseSettings):
         return None, None
 
     def get_provider(self, model: str | None = None) -> ProviderConfig | None:
-        """Get matched provider config (api_key, api_base, extra_headers). Falls back to first available."""
+        """返回匹配到的 provider 配置。"""
         p, _ = self._match_provider(model)
         return p
 
     def get_provider_name(self, model: str | None = None) -> str | None:
-        """Get the registry name of the matched provider (e.g. "deepseek", "openrouter")."""
+        """返回匹配到的 provider 注册名。"""
         _, name = self._match_provider(model)
         return name
 
     def get_api_key(self, model: str | None = None) -> str | None:
-        """Get API key for the given model. Falls back to first available key."""
+        """返回给定模型对应的 API Key。"""
         p = self.get_provider(model)
         return p.api_key if p else None
 
     def get_api_base(self, model: str | None = None) -> str | None:
-        """Get API base URL for the given model. Applies default URLs for gateway/local providers."""
+        """返回给定模型对应的 API Base。"""
         from elebot.providers.registry import find_by_name
 
         p, name = self._match_provider(model)
         if p and p.api_base:
             return p.api_base
-        # Only gateways get a default api_base here. Standard providers
-        # resolve their base URL from the registry in the provider constructor.
+        # 这里只给网关和本地 provider 补默认 api_base，标准 provider 由构造器自行解析。
         if name:
             spec = find_by_name(name)
             if spec and (spec.is_gateway or spec.is_local) and spec.default_api_base:

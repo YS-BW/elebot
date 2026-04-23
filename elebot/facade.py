@@ -24,6 +24,11 @@ class Elebot:
     """面向代码调用的 elebot 外观对象。"""
 
     def __init__(self, loop: AgentLoop) -> None:
+        """绑定一条已经装配完成的主循环。
+
+        Facade 本身不重新管理 Provider、Bus 或 Session，
+        只负责把程序化调用收口到现有主链路上。
+        """
         self._loop = loop
 
     @classmethod

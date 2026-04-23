@@ -16,6 +16,14 @@ class SafeFileHistory(FileHistory):
     """写入历史前清洗代理项，避免 prompt_toolkit 落盘时报错。"""
 
     def store_string(self, string: str) -> None:
+        """写入历史记录前先替换非法 UTF-8 代理项。
+
+        参数:
+            string: 待写入的历史文本。
+
+        返回:
+            无返回值。
+        """
         safe_text = string.encode("utf-8", errors="surrogateescape").decode(
             "utf-8", errors="replace"
         )

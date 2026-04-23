@@ -1,4 +1,4 @@
-"""Interactive onboarding questionnaire for elebot."""
+"""EleBot 交互式配置向导。"""
 
 import json
 import types
@@ -29,15 +29,12 @@ console = Console()
 
 @dataclass
 class OnboardResult:
-    """Result of an onboarding session."""
+    """保存一次向导会话的结果。"""
 
     config: Config
     should_save: bool
 
-# --- Field Hints for Select Fields ---
-# Maps field names to (choices, hint_text)
-# To add a new select field with hints, add an entry:
-#   "field_name": (["choice1", "choice2", ...], "hint text for the field")
+# 选择型字段的提示文字集中放在这里，便于统一维护选项解释。
 _SELECT_FIELD_HINTS: dict[str, tuple[list[str], str]] = {
     "reasoning_effort": (
         ["low", "medium", "high"],
@@ -45,9 +42,7 @@ _SELECT_FIELD_HINTS: dict[str, tuple[list[str], str]] = {
     ),
 }
 
-# --- Key Bindings for Navigation ---
-
-_BACK_PRESSED = object()  # Sentinel value for back navigation
+_BACK_PRESSED = object()  # 用专门哨兵区分“返回上一步”和真正取消输入。
 
 
 def _get_questionary():
@@ -83,21 +78,25 @@ def _select_with_back(
     from prompt_toolkit.layout.controls import FormattedTextControl
     from prompt_toolkit.styles import Style
 
-    # Validate choices
+    # 空选项列表会让交互组件进入异常状态，这里直接提前返回更稳妥。
     if not choices:
         logger.warning("Empty choices list provided to _select_with_back")
         return None
 
-    # Find default index
+    # 先把默认光标定位好，减少用户每次重复移动的成本。
     selected_index = 0
     if default and default in choices:
         selected_index = choices.index(default)
 
-    # State holder for the result
+    # prompt_toolkit 的事件回调需要闭包可变状态，这里用字典统一承接。
     state: dict[str, str | None | object] = {"result": None}
 
-    # Build menu items (uses closure over selected_index)
     def get_menu_text():
+        """构建当前菜单行文本。
+
+        返回:
+            prompt_toolkit 可消费的格式化文本片段列表。
+        """
         items = []
         for i, choice in enumerate(choices):
             if i == selected_index:
@@ -106,7 +105,7 @@ def _select_with_back(
                 items.append(("", f"  {choice}\n"))
         return items
 
-    # Create layout
+    # 布局拆成提示语和菜单两块，能保持和主 CLI 其它界面一致的视觉结构。
     menu_control = FormattedTextControl(get_menu_text)
     menu_window = Window(content=menu_control, height=len(choices))
 
@@ -115,7 +114,7 @@ def _select_with_back(
 
     layout = Layout(HSplit([prompt_window, menu_window]))
 
-    # Key bindings
+    # 自定义按键绑定是为了支持“左键/ESC 返回”这类 questionary 默认不提供的交互。
     bindings = KeyBindings()
 
     @bindings.add(Keys.Up)
@@ -150,7 +149,7 @@ def _select_with_back(
         state["result"] = None
         event.app.exit()
 
-    # Style
+    # 这里只保留最少样式覆盖，避免和终端主题冲突过大。
     style = Style.from_dict({
         "selected": "fg:green bold",
         "question": "fg:cyan",
@@ -169,7 +168,7 @@ def _select_with_back(
 
 
 class FieldTypeInfo(NamedTuple):
-    """Result of field type introspection."""
+    """保存字段类型推断结果。"""
 
     type_name: str
     inner_type: Any
@@ -302,7 +301,7 @@ def _show_main_menu_header() -> None:
     from elebot import __logo__, __version__
 
     console.print()
-    # Use Align.CENTER for the single line of text
+    # 主标题只有一行，直接居中能比手写空格对齐更稳定。
     from rich.align import Align
 
     console.print(
@@ -405,16 +404,33 @@ def _input_model_with_autocomplete(
     default = str(current) if current else ""
 
     class DynamicModelCompleter(Completer):
-        """Completer that dynamically fetches model suggestions."""
+        """动态拉取模型候选项的补全器。"""
 
         def __init__(self, provider_name: str):
+            """初始化动态模型补全器。
+
+            参数:
+                provider_name: 当前选中的提供方名称。
+
+            返回:
+                无返回值。
+            """
             self.provider = provider_name
 
         def get_completions(self, document, complete_event):
+            """根据当前输入动态生成候选项。
+
+            参数:
+                document: 当前输入文档。
+                complete_event: 补全触发事件对象。
+
+            返回:
+                生成器，逐个产出补全项。
+            """
             text = document.text_before_cursor
             suggestions = get_model_suggestions(text, provider=self.provider, limit=50)
             for model in suggestions:
-                # Skip if model doesn't contain the typed text
+                # 二次过滤可以挡住底层补全源返回的宽泛结果，减少候选噪音。
                 if text.lower() not in model.lower():
                     continue
                 yield Completion(
@@ -425,7 +441,7 @@ def _input_model_with_autocomplete(
 
     value = _get_questionary().autocomplete(
         f"{display_name}:",
-        choices=[""],  # Placeholder, actual completions from completer
+        choices=[""],  # 这里只是占位，真实候选完全来自动态 completer。
         completer=DynamicModelCompleter(provider),
         default=default,
         qmark=">",
@@ -458,7 +474,7 @@ def _input_context_window_with_recommendation(
         return None
 
     if choice == "[?] Get recommended value":
-        # Get the model name from the model object
+        # 推荐上下文窗口必须依赖已选模型，缺模型时继续往下只会给出误导结果。
         model_name = getattr(model_obj, "model", None)
         if not model_name:
             console.print("[yellow]! Please configure the model field first[/yellow]")
@@ -472,9 +488,9 @@ def _input_context_window_with_recommendation(
             return context_limit
         else:
             console.print("[yellow]! Could not fetch model info, please enter manually[/yellow]")
-            # Fall through to manual input
+            # 查不到推荐值时退回手填，比静默失败更容易让用户理解当前状态。
 
-    # Manual input
+    # 仍保留手动输入路径，避免模型库不全时阻塞配置流程。
     value = _get_questionary().text(
         f"{display_name}:",
         default=str(current_val) if current_val else "",
@@ -542,6 +558,11 @@ def _configure_pydantic_model(
         return working_model
 
     def get_choices() -> list[str]:
+        """构建当前配置块的可选字段列表。
+
+        返回:
+            带当前值摘要的菜单项列表。
+        """
         items = []
         for fname, finfo in fields:
             value = getattr(working_model, fname, None)
@@ -570,7 +591,7 @@ def _configure_pydantic_model(
         ftype = _get_field_type_info(field_info)
         field_display = _get_field_display_name(field_name, field_info)
 
-        # Nested Pydantic model - recurse
+        # 嵌套模型沿用同一套编辑器，能减少不同配置块之间的交互分裂。
         if ftype.type_name == "model":
             nested = current_value
             created = nested is None
@@ -584,13 +605,13 @@ def _configure_pydantic_model(
                     setattr(working_model, field_name, None)
             continue
 
-        # Registered special-field handlers
+        # 特殊字段优先走专用处理器，避免通用输入框丢掉补全和推荐能力。
         handler = _FIELD_HANDLERS.get(field_name)
         if handler:
             handler(working_model, field_name, field_display, current_value)
             continue
 
-        # Select fields with hints (e.g. reasoning_effort)
+        # 选择型字段补提示，可以降低用户误选抽象枚举值的概率。
         if field_name in _SELECT_FIELD_HINTS:
             choices_list, hint = _SELECT_FIELD_HINTS[field_name]
             select_choices = choices_list + ["(clear/unset)"]
@@ -606,7 +627,7 @@ def _configure_pydantic_model(
                 setattr(working_model, field_name, new_value)
             continue
 
-        # Generic field input
+        # 其它字段统一退回基础输入流程，保持行为一致。
         if ftype.type_name == "bool":
             new_value = _input_bool(field_display, current_value)
         else:
@@ -623,20 +644,19 @@ def _try_auto_fill_context_window(model: BaseModel, new_model_name: str) -> None
         the default context_window_tokens value. If the schema changes, this
         coupling needs to be updated accordingly.
     """
-    # Check if context_window_tokens field exists
+    # 只有支持这个字段的模型配置才尝试自动填充，避免误操作其它对象。
     if not hasattr(model, "context_window_tokens"):
         return
 
     current_context = getattr(model, "context_window_tokens", None)
 
-    # Check if current value is the default (65536)
-    # We only auto-fill if the user hasn't changed it from default
+    # 仅在仍是默认值时自动覆盖，避免用户手工调优后被推荐值悄悄改掉。
     from elebot.config.schema import AgentDefaults
 
     default_context = AgentDefaults.model_fields["context_window_tokens"].default
 
     if current_context != default_context:
-        return  # User has customized it, don't override
+        return  # 用户已经手工改过时，自动推荐不应抢写。
 
     provider = _get_current_provider(model)
     context_limit = get_model_context_limit(new_model_name, provider)
@@ -646,9 +666,6 @@ def _try_auto_fill_context_window(model: BaseModel, new_model_name: str) -> None
         console.print(f"[green]+ Auto-filled context window: {format_token_count(context_limit)} tokens[/green]")
     else:
         console.print("[dim](i) Could not auto-fill context window (model not in database)[/dim]")
-
-
-# --- Provider Configuration ---
 
 
 @lru_cache(maxsize=1)
@@ -700,7 +717,11 @@ def _configure_providers(config: Config) -> None:
     """Configure LLM providers."""
 
     def get_provider_choices() -> list[str]:
-        """Build provider choices with config status indicators."""
+        """构建带状态标记的提供方列表。
+
+        返回:
+            可直接用于选择框的提供方文本列表。
+        """
         choices = []
         for name, display in _get_provider_names().items():
             provider = getattr(config.providers, name, None)
@@ -720,11 +741,11 @@ def _configure_providers(config: Config) -> None:
             if answer is _BACK_PRESSED or answer is None or answer == "<- Back":
                 break
 
-            # Type guard: answer is now guaranteed to be a string
+            # 经过前面的分支过滤后，这里可以安全当作字符串使用。
             assert isinstance(answer, str)
-            # Extract provider name from choice (remove " *" suffix if present)
+            # UI 层附带的状态后缀只用于展示，真正查找时要先去掉。
             provider_name = answer.replace(" *", "")
-            # Find the actual provider key from display names
+            # 展示名和内部 key 不完全等同，因此这里反查真实配置字段名。
             for name, display in _get_provider_names().items():
                 if display == provider_name:
                     _configure_provider(config, name)
@@ -733,9 +754,6 @@ def _configure_providers(config: Config) -> None:
         except KeyboardInterrupt:
             console.print("\n[dim]Returning to main menu...[/dim]")
             break
-
-
-# --- Channel Configuration ---
 
 
 @lru_cache(maxsize=1)
@@ -809,15 +827,13 @@ def _configure_channels(config: Config) -> None:
             if answer is _BACK_PRESSED or answer is None or answer == "<- Back":
                 break
 
-            # Type guard: answer is now guaranteed to be a string
+            # 这里经过返回和取消分支过滤后，answer 可以视作合法渠道名。
             assert isinstance(answer, str)
             _configure_channel(config, answer)
         except KeyboardInterrupt:
             console.print("\n[dim]Returning to main menu...[/dim]")
             break
 
-
-# --- General Settings ---
 
 _SETTINGS_SECTIONS: dict[str, tuple[str, str, set[str] | None]] = {
     "Agent Settings": ("Agent Defaults", "Configure default model, temperature, and behavior", None),
@@ -848,9 +864,6 @@ def _configure_general_settings(config: Config, section: str) -> None:
     updated = _configure_pydantic_model(model, display_name, skip_fields=skip)
     if updated is not None:
         _SETTINGS_SETTER[section](config, updated)
-
-
-# --- Summary ---
 
 
 def _summarize_model(obj: BaseModel) -> list[tuple[str, str]]:
@@ -888,7 +901,7 @@ def _show_summary(config: Config) -> None:
     """Display configuration summary using rich."""
     console.print()
 
-    # Providers
+    # 提供方单独展示配置状态，方便用户先确认认证是否完成。
     provider_rows = []
     for name, display in _get_provider_names().items():
         provider = getattr(config.providers, name, None)
@@ -896,7 +909,7 @@ def _show_summary(config: Config) -> None:
         provider_rows.append((display, status))
     _print_summary_panel(provider_rows, "LLM Providers")
 
-    # Channels
+    # 渠道部分重点展示启用状态，而不是把全部内部字段直接暴露出来。
     channel_rows = []
     for name, display in _get_channel_names().items():
         channel = getattr(config.channels, name, None)
@@ -912,7 +925,7 @@ def _show_summary(config: Config) -> None:
         channel_rows.append((display, status))
     _print_summary_panel(channel_rows, "Chat Channels")
 
-    # Settings sections
+    # 其余设置按配置块展示，便于和主菜单结构一一对应。
     for title, model in [
         ("Agent Settings", config.agents.defaults),
         ("Gateway", config.gateway),
@@ -920,9 +933,6 @@ def _show_summary(config: Config) -> None:
         ("Channel Common", config.channels),
     ]:
         _print_summary_panel(_summarize_model(model), title)
-
-
-# --- Main Entry Point ---
 
 
 def _has_unsaved_changes(original: Config, current: Config) -> bool:
@@ -954,11 +964,13 @@ def _prompt_main_menu_exit(has_unsaved_changes: bool) -> str:
 
 
 def run_onboard(initial_config: Config | None = None) -> OnboardResult:
-    """Run the interactive onboarding questionnaire.
+    """运行交互式配置向导。
 
-    Args:
-        initial_config: Optional pre-loaded config to use as starting point.
-                       If None, loads from config file or creates new default.
+    参数:
+        initial_config: 可选的初始配置；未传时会从配置文件加载或创建默认配置。
+
+    返回:
+        包含最终配置和是否保存标志的向导结果。
     """
     _get_questionary()
 

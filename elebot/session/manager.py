@@ -15,15 +15,15 @@ from elebot.utils.helpers import ensure_dir, find_legal_message_start, safe_file
 class Session:
     """一段会话的持久化模型。"""
 
-    key: str  # channel:chat_id
+    key: str  # `channel:chat_id` 形式的会话键
     messages: list[dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
-    last_consolidated: int = 0  # Number of messages already consolidated to files
+    last_consolidated: int = 0  # 已经归档到文件的消息条数
 
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
-        """Add a message to the session."""
+        """向会话追加一条消息。"""
         msg = {
             "role": role,
             "content": content,
@@ -34,20 +34,20 @@ class Session:
         self.updated_at = datetime.now()
 
     def get_history(self, max_messages: int = 500) -> list[dict[str, Any]]:
-        """Return unconsolidated messages for LLM input, aligned to a legal tool-call boundary."""
+        """返回适合送入模型的未归档消息历史。"""
         unconsolidated = self.messages[self.last_consolidated:]
         if max_messages <= 0:
             sliced = list(unconsolidated)
         else:
             sliced = unconsolidated[-max_messages:]
 
-        # Avoid starting mid-turn when possible.
+        # 优先从用户消息开始，避免把截断点落在半个轮次中间。
         for i, message in enumerate(sliced):
             if message.get("role") == "user":
                 sliced = sliced[i:]
                 break
 
-        # Drop orphan tool results at the front.
+        # 开头如果出现孤儿工具结果，需要剥掉以免污染上下文。
         start = find_legal_message_start(sliced)
         if start:
             sliced = sliced[start:]
@@ -62,13 +62,13 @@ class Session:
         return out
 
     def clear(self) -> None:
-        """Clear all messages and reset session to initial state."""
+        """清空会话消息并重置状态。"""
         self.messages = []
         self.last_consolidated = 0
         self.updated_at = datetime.now()
 
     def retain_recent_legal_suffix(self, max_messages: int) -> None:
-        """Keep a legal recent suffix, mirroring get_history boundary rules."""
+        """保留一段合法的最近消息后缀。"""
         if max_messages <= 0:
             self.clear()
             return
@@ -77,13 +77,13 @@ class Session:
 
         start_idx = max(0, len(self.messages) - max_messages)
 
-        # If the cutoff lands mid-turn, extend backward to the nearest user turn.
+        # 如果截断点落在轮次中间，需要回退到最近的用户消息。
         while start_idx > 0 and self.messages[start_idx].get("role") != "user":
             start_idx -= 1
 
         retained = self.messages[start_idx:]
 
-        # Mirror get_history(): avoid persisting orphan tool results at the front.
+        # 持久化后的尾部也要遵守和 get_history 一致的合法边界规则。
         start = find_legal_message_start(retained)
         if start:
             retained = retained[start:]
@@ -95,13 +95,10 @@ class Session:
 
 
 class SessionManager:
-    """
-    Manages conversation sessions.
-
-    Sessions are stored as JSONL files in the sessions directory.
-    """
+    """管理会话加载、缓存与持久化。"""
 
     def __init__(self, workspace: Path):
+        """初始化会话管理器。"""
         self.workspace = workspace
         self.sessions_dir = ensure_dir(self.workspace / "sessions")
         self._cache: dict[str, Session] = {}
@@ -112,15 +109,7 @@ class SessionManager:
         return self.sessions_dir / f"{safe_key}.jsonl"
 
     def get_or_create(self, key: str) -> Session:
-        """
-        Get an existing session or create a new one.
-
-        Args:
-            key: Session key (usually channel:chat_id).
-
-        Returns:
-            The session.
-        """
+        """获取现有会话，必要时创建新会话。"""
         if key in self._cache:
             return self._cache[key]
 
@@ -173,7 +162,7 @@ class SessionManager:
             return None
 
     def save(self, session: Session) -> None:
-        """Save a session to disk."""
+        """把会话写回磁盘。"""
         path = self._get_session_path(session.key)
 
         with open(path, "w", encoding="utf-8") as f:
@@ -192,21 +181,16 @@ class SessionManager:
         self._cache[session.key] = session
 
     def invalidate(self, key: str) -> None:
-        """Remove a session from the in-memory cache."""
+        """移除内存缓存中的会话。"""
         self._cache.pop(key, None)
 
     def list_sessions(self) -> list[dict[str, Any]]:
-        """
-        List all sessions.
-
-        Returns:
-            List of session info dicts.
-        """
+        """列出所有已持久化会话。"""
         sessions = []
 
         for path in self.sessions_dir.glob("*.jsonl"):
             try:
-                # Read just the metadata line
+                # 这里只读首行元数据，避免扫描整个历史文件带来额外开销。
                 with open(path, encoding="utf-8") as f:
                     first_line = f.readline().strip()
                     if first_line:

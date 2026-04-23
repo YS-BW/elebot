@@ -1,4 +1,4 @@
-"""Shell execution tool."""
+"""Shell 执行工具。"""
 
 import asyncio
 import os
@@ -35,7 +35,7 @@ _IS_WINDOWS = sys.platform == "win32"
     )
 )
 class ExecTool(Tool):
-    """Tool to execute shell commands."""
+    """执行受安全规则约束的 shell 命令。"""
 
     def __init__(
         self,
@@ -48,27 +48,40 @@ class ExecTool(Tool):
         path_append: str = "",
         allowed_env_keys: list[str] | None = None,
     ):
+        """初始化 shell 执行工具。
+
+        参数:
+            timeout: 默认超时时间。
+            working_dir: 默认工作目录。
+            deny_patterns: 拒绝规则列表。
+            allow_patterns: 允许规则列表。
+            restrict_to_workspace: 是否限制在工作区内。
+            sandbox: 沙箱后端名称。
+            path_append: 需要追加到 PATH 的目录。
+            allowed_env_keys: 允许继承的环境变量键名。
+
+        返回:
+            无返回值。
+        """
         self.timeout = timeout
         self.working_dir = working_dir
         self.sandbox = sandbox
         self.deny_patterns = deny_patterns or [
-            r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
-            r"\bdel\s+/[fq]\b",              # del /f, del /q
-            r"\brmdir\s+/s\b",               # rmdir /s
-            r"(?:^|[;&|]\s*)format\b",       # format (as standalone command only)
-            r"\b(mkfs|diskpart)\b",          # disk operations
-            r"\bdd\s+if=",                   # dd
-            r">\s*/dev/sd",                  # write to disk
-            r"\b(shutdown|reboot|poweroff)\b",  # system power
-            r":\(\)\s*\{.*\};\s*:",          # fork bomb
-            # Block writes to elebot internal state files (#2989).
-            # history.jsonl / .dream_cursor are managed by append_history();
-            # direct writes corrupt the cursor format and crash /dream.
-            r">>?\s*\S*(?:history\.jsonl|\.dream_cursor)",            # > / >> redirect
-            r"\btee\b[^|;&<>]*(?:history\.jsonl|\.dream_cursor)",     # tee / tee -a
-            r"\b(?:cp|mv)\b(?:\s+[^\s|;&<>]+)+\s+\S*(?:history\.jsonl|\.dream_cursor)",  # cp/mv target
-            r"\bdd\b[^|;&<>]*\bof=\S*(?:history\.jsonl|\.dream_cursor)",  # dd of=
-            r"\bsed\s+-i[^|;&<>]*(?:history\.jsonl|\.dream_cursor)",  # sed -i
+            r"\brm\s+-[rf]{1,2}\b",          # 拦截递归删除。
+            r"\bdel\s+/[fq]\b",              # 拦截 Windows 强删。
+            r"\brmdir\s+/s\b",               # 拦截 Windows 递归删目录。
+            r"(?:^|[;&|]\s*)format\b",       # 拦截独立 format 命令。
+            r"\b(mkfs|diskpart)\b",          # 拦截磁盘级操作。
+            r"\bdd\s+if=",                   # 拦截 dd。
+            r">\s*/dev/sd",                  # 拦截直接写块设备。
+            r"\b(shutdown|reboot|poweroff)\b",  # 拦截关机重启命令。
+            r":\(\)\s*\{.*\};\s*:",          # 拦截 fork bomb。
+            # 内部状态文件由专门逻辑维护，允许 shell 直接覆盖会破坏记忆游标与历史格式。
+            r">>?\s*\S*(?:history\.jsonl|\.dream_cursor)",            # 拦截 > / >> 重定向写入。
+            r"\btee\b[^|;&<>]*(?:history\.jsonl|\.dream_cursor)",     # 拦截 tee / tee -a 写入。
+            r"\b(?:cp|mv)\b(?:\s+[^\s|;&<>]+)+\s+\S*(?:history\.jsonl|\.dream_cursor)",  # 拦截 cp/mv 到目标文件。
+            r"\bdd\b[^|;&<>]*\bof=\S*(?:history\.jsonl|\.dream_cursor)",  # 拦截 dd of= 写入。
+            r"\bsed\s+-i[^|;&<>]*(?:history\.jsonl|\.dream_cursor)",  # 拦截 sed -i 原地改写。
         ]
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace
@@ -77,6 +90,11 @@ class ExecTool(Tool):
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            工具名称字符串。
+        """
         return "exec"
 
     _MAX_TIMEOUT = 600
@@ -84,6 +102,11 @@ class ExecTool(Tool):
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            面向模型的工具描述文本。
+        """
         return (
             "Execute a shell command and return its output. "
             "Prefer read_file/write_file/edit_file over cat/echo/sed, "
@@ -94,19 +117,31 @@ class ExecTool(Tool):
 
     @property
     def exclusive(self) -> bool:
+        """声明该工具需要独占执行。
+
+        返回:
+            恒为 ``True``。
+        """
         return True
 
     async def execute(
         self, command: str, working_dir: str | None = None,
         timeout: int | None = None, **kwargs: Any,
     ) -> str:
+        """执行 shell 命令。
+
+        参数:
+            command: 待执行命令。
+            working_dir: 本次调用覆盖的工作目录。
+            timeout: 本次调用覆盖的超时时间。
+            **kwargs: 兼容额外参数。
+
+        返回:
+            命令输出或错误信息。
+        """
         cwd = working_dir or self.working_dir or os.getcwd()
 
-        # Prevent an LLM-supplied working_dir from escaping the configured
-        # workspace when restrict_to_workspace is enabled (#2826). Without
-        # this, a caller can pass working_dir="/etc" and then all absolute
-        # paths under /etc would pass the _guard_command check that anchors
-        # on cwd.
+        # 工作目录本身也必须落在工作区内，否则后续绝对路径校验会被绕过。
         if self.restrict_to_workspace and self.working_dir:
             try:
                 requested = Path(cwd).expanduser().resolve()
@@ -222,14 +257,10 @@ class ExecTool(Tool):
                     logger.debug("Process already reaped or not found: {}", e)
 
     def _build_env(self) -> dict[str, str]:
-        """Build a minimal environment for subprocess execution.
+        """构建子进程环境变量。
 
-        On Unix, only HOME/LANG/TERM are passed; ``bash -l`` sources the
-        user's profile which sets PATH and other essentials.
-
-        On Windows, ``cmd.exe`` has no login-profile mechanism, so a curated
-        set of system variables (including PATH) is forwarded.  API keys and
-        other secrets are still excluded.
+        返回:
+            受控的环境变量字典。
         """
         if _IS_WINDOWS:
             sr = os.environ.get("SYSTEMROOT", r"C:\Windows")
@@ -310,9 +341,8 @@ class ExecTool(Tool):
 
     @staticmethod
     def _extract_absolute_paths(command: str) -> list[str]:
-        # Windows: match drive-root paths like `C:\` as well as `C:\path\to\file`
-        # NOTE: `*` is required so `C:\` (nothing after the slash) is still extracted.
+        # Windows 既要匹配盘符根路径，也要匹配普通绝对路径。
         win_paths = re.findall(r"[A-Za-z]:\\[^\s\"'|><;]*", command)
-        posix_paths = re.findall(r"(?:^|[\s|>'\"])(/[^\s\"'>;|<]+)", command) # POSIX: /absolute only
-        home_paths = re.findall(r"(?:^|[\s|>'\"])(~[^\s\"'>;|<]*)", command) # POSIX/Windows home shortcut: ~
+        posix_paths = re.findall(r"(?:^|[\s|>'\"])(/[^\s\"'>;|<]+)", command)  # POSIX 只匹配绝对路径。
+        home_paths = re.findall(r"(?:^|[\s|>'\"])(~[^\s\"'>;|<]*)", command)  # 同时兼容家目录缩写形式。
         return win_paths + posix_paths + home_paths

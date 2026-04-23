@@ -1,4 +1,4 @@
-"""Convert Chat Completions messages/tools to Responses API format."""
+"""把聊天补全风格的消息与工具定义转换为 Responses API 格式。"""
 
 from __future__ import annotations
 
@@ -7,11 +7,13 @@ from typing import Any
 
 
 def convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
-    """Convert Chat Completions messages to Responses API input items.
+    """把消息列表转换为 Responses API 的输入结构。
 
-    Returns ``(system_prompt, input_items)`` where *system_prompt* is extracted
-    from any ``system`` role message and *input_items* is the Responses API
-    ``input`` array.
+    参数:
+        messages: 聊天补全风格的消息列表。
+
+    返回:
+        二元组 ``(system_prompt, input_items)``，分别表示系统提示词与 Responses API 的 ``input`` 数组。
     """
     system_prompt = ""
     input_items: list[dict[str, Any]] = []
@@ -56,10 +58,13 @@ def convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str
 
 
 def convert_user_message(content: Any) -> dict[str, Any]:
-    """Convert a user message's content to Responses API format.
+    """把单条用户消息内容转换为 Responses API 结构。
 
-    Handles plain strings, ``text`` blocks -> ``input_text``, and
-    ``image_url`` blocks -> ``input_image``.
+    参数:
+        content: 用户消息的 ``content`` 字段。
+
+    返回:
+        符合 Responses API 要求的用户消息字典。
     """
     if isinstance(content, str):
         return {"role": "user", "content": [{"type": "input_text", "text": content}]}
@@ -80,7 +85,14 @@ def convert_user_message(content: Any) -> dict[str, Any]:
 
 
 def convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert OpenAI function-calling tool schema to Responses API flat format."""
+    """把工具定义转换为 Responses API 需要的扁平格式。
+
+    参数:
+        tools: OpenAI 风格的工具定义列表。
+
+    返回:
+        Responses API 可直接使用的工具列表。
+    """
     converted: list[dict[str, Any]] = []
     for tool in tools:
         fn = (tool.get("function") or {}) if tool.get("type") == "function" else tool
@@ -98,9 +110,13 @@ def convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def split_tool_call_id(tool_call_id: Any) -> tuple[str, str | None]:
-    """Split a compound ``call_id|item_id`` string.
+    """拆分复合形式的工具调用标识。
 
-    Returns ``(call_id, item_id)`` where *item_id* may be ``None``.
+    参数:
+        tool_call_id: 可能形如 ``call_id|item_id`` 的标识值。
+
+    返回:
+        二元组 ``(call_id, item_id)``，其中 ``item_id`` 可能为 ``None``。
     """
     if isinstance(tool_call_id, str) and tool_call_id:
         if "|" in tool_call_id:

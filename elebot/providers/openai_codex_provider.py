@@ -1,4 +1,4 @@
-"""OpenAI Codex Responses Provider."""
+"""OpenAI Codex 提供方，使用 OAuth 调用 Responses API。"""
 
 from __future__ import annotations
 
@@ -24,9 +24,17 @@ DEFAULT_ORIGINATOR = "elebot"
 
 
 class OpenAICodexProvider(LLMProvider):
-    """Use Codex OAuth to call the Responses API."""
+    """封装基于 Codex OAuth 的 Responses API 调用。"""
 
     def __init__(self, default_model: str = "openai-codex/gpt-5.1-codex"):
+        """初始化 Codex 提供方。
+
+        参数:
+            default_model: 默认使用的 Codex 模型名称。
+
+        返回:
+            无返回值。
+        """
         super().__init__(api_key=None, api_base=None)
         self.default_model = default_model
 
@@ -39,7 +47,19 @@ class OpenAICodexProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
-        """Shared request logic for both chat() and chat_stream()."""
+        """复用 chat 与 chat_stream 的底层调用逻辑。
+
+        参数:
+            messages: 消息列表。
+            tools: 可选工具定义。
+            model: 指定模型名称。
+            reasoning_effort: 推理强度配置。
+            tool_choice: 工具选择策略。
+            on_content_delta: 文本流回调。
+
+        返回:
+            标准化后的模型响应。
+        """
         model = model or self.default_model
         system_prompt, input_items = convert_messages(messages)
 
@@ -89,6 +109,20 @@ class OpenAICodexProvider(LLMProvider):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> LLMResponse:
+        """执行一次非流式 Codex 请求。
+
+        参数:
+            messages: 消息列表。
+            tools: 可选工具定义。
+            model: 指定模型名称。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: 推理强度配置。
+            tool_choice: 工具选择策略。
+
+        返回:
+            标准化后的模型响应。
+        """
         return await self._call_codex(messages, tools, model, reasoning_effort, tool_choice)
 
     async def chat_stream(
@@ -98,9 +132,29 @@ class OpenAICodexProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
+        """执行一次流式 Codex 请求。
+
+        参数:
+            messages: 消息列表。
+            tools: 可选工具定义。
+            model: 指定模型名称。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: 推理强度配置。
+            tool_choice: 工具选择策略。
+            on_content_delta: 文本流回调。
+
+        返回:
+            标准化后的模型响应。
+        """
         return await self._call_codex(messages, tools, model, reasoning_effort, tool_choice, on_content_delta)
 
     def get_default_model(self) -> str:
+        """返回 Codex 提供方的默认模型。
+
+        返回:
+            当前默认模型名称。
+        """
         return self.default_model
 
 
@@ -124,6 +178,15 @@ def _build_headers(account_id: str, token: str) -> dict[str, str]:
 
 class _CodexHTTPError(RuntimeError):
     def __init__(self, message: str, retry_after: float | None = None):
+        """初始化 Codex HTTP 错误。
+
+        参数:
+            message: 错误消息。
+            retry_after: 建议重试等待秒数。
+
+        返回:
+            无返回值。
+        """
         super().__init__(message)
         self.retry_after = retry_after
 

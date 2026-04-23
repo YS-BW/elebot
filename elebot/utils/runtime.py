@@ -1,4 +1,4 @@
-"""Runtime-specific helper functions and constants."""
+"""运行时辅助函数与常量。"""
 
 from __future__ import annotations
 
@@ -26,12 +26,12 @@ LENGTH_RECOVERY_PROMPT = (
 
 
 def empty_tool_result_message(tool_name: str) -> str:
-    """Short prompt-safe marker for tools that completed without visible output."""
+    """生成工具无可见输出时的占位文本。"""
     return f"({tool_name} completed with no output)"
 
 
 def ensure_nonempty_tool_result(tool_name: str, content: Any) -> Any:
-    """Replace semantically empty tool results with a short marker string."""
+    """将语义为空的工具结果替换为占位文本。"""
     if content is None:
         return empty_tool_result_message(tool_name)
     if isinstance(content, str) and not content.strip():
@@ -46,22 +46,22 @@ def ensure_nonempty_tool_result(tool_name: str, content: Any) -> Any:
 
 
 def is_blank_text(content: str | None) -> bool:
-    """True when *content* is missing or only whitespace."""
+    """判断文本是否为空或仅包含空白字符。"""
     return content is None or not content.strip()
 
 
 def build_finalization_retry_message() -> dict[str, str]:
-    """A short no-tools-allowed prompt for final answer recovery."""
+    """构造最终答复补救提示。"""
     return {"role": "user", "content": FINALIZATION_RETRY_PROMPT}
 
 
 def build_length_recovery_message() -> dict[str, str]:
-    """Prompt the model to continue after hitting output token limit."""
+    """构造输出超长后的续写提示。"""
     return {"role": "user", "content": LENGTH_RECOVERY_PROMPT}
 
 
 def external_lookup_signature(tool_name: str, arguments: dict[str, Any]) -> str | None:
-    """Stable signature for repeated external lookups we want to throttle."""
+    """为外部查询生成稳定签名。"""
     if tool_name == "web_fetch":
         url = str(arguments.get("url") or "").strip()
         if url:
@@ -78,7 +78,7 @@ def repeated_external_lookup_error(
     arguments: dict[str, Any],
     seen_counts: dict[str, int],
 ) -> str | None:
-    """Block repeated external lookups after a small retry budget."""
+    """在外部查询重复过多时返回阻断错误。"""
     signature = external_lookup_signature(tool_name, arguments)
     if signature is None:
         return None

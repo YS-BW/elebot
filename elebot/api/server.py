@@ -18,7 +18,7 @@ API_CHAT_ID = "default"
 
 
 # ---------------------------------------------------------------------------
-# 中文说明：Response helpers
+# 响应辅助
 # ---------------------------------------------------------------------------
 
 def _error_json(status: int, message: str, err_type: str = "invalid_request_error") -> web.Response:
@@ -46,7 +46,11 @@ def _chat_completion_response(content: str, model: str) -> dict[str, Any]:
 
 
 def _response_text(value: Any) -> str:
-    """Normalize process_direct output to plain assistant text."""
+    """把主链路返回值统一压成纯文本。
+
+    API 兼容层最终只需要一个字符串正文，
+    所以这里把 SDK 对象、空值和普通字符串都收口成同一种返回形态。
+    """
     if value is None:
         return ""
     if hasattr(value, "content"):
@@ -55,21 +59,19 @@ def _response_text(value: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 中文说明：Route handlers
+# 路由处理
 # ---------------------------------------------------------------------------
 
 async def handle_chat_completions(request: web.Request) -> web.Response:
-    """中文说明：handle_chat_completions。
+    """处理最小化的 OpenAI 兼容聊天请求。
 
-    参数:
-        request: 待补充参数说明。
-
-    返回:
-        待补充返回值说明。
+    当前冻结实现只保留最核心的单轮文本链路：
+    - 只接受一条 `user` 消息
+    - 不支持流式返回
+    - 会按 `session_id` 串回已有会话，避免 API 调用丢上下文
     """
-    """POST /v1/chat/completions"""
 
-    # --- Parse body ---
+    # 这里只接受 JSON 请求体，避免兼容层继续扩展多种输入协议。
     try:
         body = await request.json()
     except Exception:
@@ -79,7 +81,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response:
     if not isinstance(messages, list) or len(messages) != 1:
         return _error_json(400, "Only a single user message is supported")
 
-    # 中文说明：Stream not yet supported
+    # 冻结阶段不扩流式兼容，避免 API 层再分叉出第二套输出协议。
     if body.get("stream", False):
         return _error_json(400, "stream=true is not supported yet. Set stream=false or omit it.")
 
@@ -88,7 +90,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response:
         return _error_json(400, "Only a single user message is supported")
     user_content = message.get("content", "")
     if isinstance(user_content, list):
-        # 中文说明：Multi-modal content array — extract text parts
+        # 兼容多模态数组时只抽取文本，避免在冻结模块里继续承接媒体协议细节。
         user_content = " ".join(
             part.get("text", "") for part in user_content if part.get("type") == "text"
         )
@@ -156,15 +158,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response:
 
 
 async def handle_models(request: web.Request) -> web.Response:
-    """中文说明：handle_models。
-
-    参数:
-        request: 待补充参数说明。
-
-    返回:
-        待补充返回值说明。
-    """
-    """GET /v1/models"""
+    """返回当前 API 兼容层对外暴露的模型列表。"""
     model_name = request.app.get("model_name", "elebot")
     return web.json_response({
         "object": "list",
@@ -180,45 +174,25 @@ async def handle_models(request: web.Request) -> web.Response:
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    """中文说明：handle_health。
-
-    参数:
-        request: 待补充参数说明。
-
-    返回:
-        待补充返回值说明。
-    """
-    """GET /health"""
+    """返回进程级健康检查结果。"""
     return web.json_response({"status": "ok"})
 
 
 # ---------------------------------------------------------------------------
-# 中文说明：App factory
+# 应用装配
 # ---------------------------------------------------------------------------
 
 def create_app(agent_loop, model_name: str = "elebot", request_timeout: float = 120.0) -> web.Application:
-    """中文说明：create_app。
+    """装配冻结态 API 服务。
 
-    参数:
-        agent_loop: 待补充参数说明。
-        model_name: 待补充参数说明。
-        request_timeout: 待补充参数说明。
-
-    返回:
-        待补充返回值说明。
-    """
-    """Create the aiohttp application.
-
-    Args:
-        agent_loop: An initialized AgentLoop instance.
-        model_name: Model name reported in responses.
-        request_timeout: Per-request timeout in seconds.
+    这里只负责把 HTTP 请求转进现有 AgentLoop，
+    不额外引入鉴权、配额、流式协议或多租户逻辑。
     """
     app = web.Application()
     app["agent_loop"] = agent_loop
     app["model_name"] = model_name
     app["request_timeout"] = request_timeout
-    app["session_locks"] = {}  # 中文说明：per-user locks, keyed by session_key
+    app["session_locks"] = {}  # 同一会话串行处理，避免 API 并发把会话历史写乱。
 
     app.router.add_post("/v1/chat/completions", handle_chat_completions)
     app.router.add_get("/v1/models", handle_models)

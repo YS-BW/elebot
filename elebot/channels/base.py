@@ -14,12 +14,10 @@ from elebot.bus.queue import MessageBus
 
 
 class BaseChannel(ABC):
-    """中文说明：BaseChannel。"""
-    """
-    Abstract base class for chat channel implementations.
+    """所有通道实现都要遵守的最小抽象接口。
 
-    Each channel (Telegram, Discord, etc.) should implement this interface
-    to integrate with the elebot message bus.
+    这层只定义消息总线接入、发送和生命周期约束，
+    不关心具体平台是 Telegram、Discord 还是其他私有通道。
     """
 
     name: str = "base"
@@ -28,36 +26,17 @@ class BaseChannel(ABC):
     transcription_api_key: str = ""
 
     def __init__(self, config: Any, bus: MessageBus):
-        """中文说明：__init__。
-
-        参数:
-            config: 待补充参数说明。
-            bus: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
-        """
-        """
-        Initialize the channel.
-
-        Args:
-            config: Channel-specific configuration.
-            bus: The message bus for communication.
-        """
+        """绑定通道配置和消息总线。"""
         self.config = config
         self.bus = bus
         self._running = False
 
     async def transcribe_audio(self, file_path: str | Path) -> str:
-        """中文说明：transcribe_audio。
+        """把音频文件转成文本。
 
-        参数:
-            file_path: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
+        这里故意把失败收口为空字符串，
+        因为转写只是增强能力，不应该因为语音识别失败就把整条消息链路打断。
         """
-        """Transcribe an audio file via Whisper (OpenAI or Groq). Returns empty string on failure."""
         if not self.transcription_api_key:
             return ""
         try:
@@ -73,126 +52,49 @@ class BaseChannel(ABC):
             return ""
 
     async def login(self, force: bool = False) -> bool:
-        """中文说明：login。
+        """执行通道自己的登录流程。
 
-        参数:
-            force: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
-        """
-        """
-        Perform channel-specific interactive login (e.g. QR code scan).
-
-        Args:
-            force: If True, ignore existing credentials and force re-authentication.
-
-        Returns True if already authenticated or login succeeds.
-        Override in subclasses that support interactive login.
+        默认实现直接返回成功；
+        只有确实需要扫码或重新鉴权的通道才覆盖它。
         """
         return True
 
     @abstractmethod
     async def start(self) -> None:
-        """中文说明：start。
-
-        参数:
-            无。
-
-        返回:
-            待补充返回值说明。
-        """
-        """
-        Start the channel and begin listening for messages.
-
-        This should be a long-running async task that:
-        1. Connects to the chat platform
-        2. Listens for incoming messages
-        3. Forwards messages to the bus via _handle_message()
-        """
+        """启动通道并持续监听外部消息。"""
         pass
 
     @abstractmethod
     async def stop(self) -> None:
-        """中文说明：stop。
-
-        参数:
-            无。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Stop the channel and clean up resources."""
+        """停止通道并释放外部连接。"""
         pass
 
     @abstractmethod
     async def send(self, msg: OutboundMessage) -> None:
-        """中文说明：send。
+        """把一条出站消息发到对应平台。
 
-        参数:
-            msg: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
-        """
-        """
-        Send a message through this channel.
-
-        Args:
-            msg: The message to send.
-
-        Implementations should raise on delivery failure so the channel manager
-        can apply any retry policy in one place.
+        约定失败时直接抛异常，
+        这样统一重试策略只需要放在 ChannelManager 一处维护。
         """
         pass
 
     async def send_delta(self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None) -> None:
-        """中文说明：send_delta。
+        """发送一段流式增量文本。
 
-        参数:
-            chat_id: 待补充参数说明。
-            delta: 待补充参数说明。
-            metadata: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Deliver a streaming text chunk.
-
-        Override in subclasses to enable streaming. Implementations should
-        raise on delivery failure so the channel manager can retry.
-
-        Streaming contract: ``_stream_delta`` is a chunk, ``_stream_end`` ends
-        the current segment, and stateful implementations must key buffers by
-        ``_stream_id`` rather than only by ``chat_id``.
+        只有支持流式展示的通道才需要覆盖它。
+        同样要求把失败抛出去，让外层统一决定是否重试。
         """
         pass
 
     @property
     def supports_streaming(self) -> bool:
-        """中文说明：supports_streaming。
-
-        参数:
-            无。
-
-        返回:
-            待补充返回值说明。
-        """
-        """True when config enables streaming AND this subclass implements send_delta."""
+        """只有配置开启且子类真的实现了 `send_delta` 才算支持流式。"""
         cfg = self.config
         streaming = cfg.get("streaming", False) if isinstance(cfg, dict) else getattr(cfg, "streaming", False)
         return bool(streaming) and type(self).send_delta is not BaseChannel.send_delta
 
     def is_allowed(self, sender_id: str) -> bool:
-        """中文说明：is_allowed。
-
-        参数:
-            sender_id: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Check if *sender_id* is permitted.  Empty list → deny all; ``"*"`` → allow all."""
+        """检查当前发送者是否在白名单里。"""
         allow_list = getattr(self.config, "allow_from", [])
         if not allow_list:
             logger.warning("{}: allow_from is empty — all access denied", self.name)
@@ -210,18 +112,10 @@ class BaseChannel(ABC):
         metadata: dict[str, Any] | None = None,
         session_key: str | None = None,
     ) -> None:
-        """
-        Handle an incoming message from the chat platform.
+        """把通道侧收到的消息转成统一的总线事件。
 
-        This method checks permissions and forwards to the bus.
-
-        Args:
-            sender_id: The sender's identifier.
-            chat_id: The chat/channel identifier.
-            content: Message text content.
-            media: Optional list of media URLs.
-            metadata: Optional channel-specific metadata.
-            session_key: Optional session key override (e.g. thread-scoped sessions).
+        这里先做权限检查，再决定是否补 `_wants_stream` 标记，
+        这样所有具体通道都可以复用同一条入站收口逻辑。
         """
         if not self.is_allowed(sender_id):
             logger.warning(
@@ -249,26 +143,10 @@ class BaseChannel(ABC):
 
     @classmethod
     def default_config(cls) -> dict[str, Any]:
-        """中文说明：default_config。
-
-        参数:
-            无。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Return default config for onboard. Override in plugins to auto-populate config.json."""
+        """返回 onboarding 阶段使用的最小默认配置。"""
         return {"enabled": False}
 
     @property
     def is_running(self) -> bool:
-        """中文说明：is_running。
-
-        参数:
-            无。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Check if the channel is running."""
+        """返回当前通道是否处于运行态。"""
         return self._running

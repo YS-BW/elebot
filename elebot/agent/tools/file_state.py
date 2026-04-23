@@ -1,4 +1,4 @@
-"""Track file-read state for read-before-edit warnings and read deduplication."""
+"""跟踪文件读取状态，服务于编辑前检查与去重读取。"""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pathlib import Path
 
 @dataclass(slots=True)
 class ReadState:
+    """记录单个文件最近一次读取或写入后的状态快照。"""
     mtime: float
     offset: int
     limit: int | None
@@ -28,7 +29,16 @@ def _hash_file(p: str) -> str | None:
 
 
 def record_read(path: str | Path, offset: int = 1, limit: int | None = None) -> None:
-    """Record that a file was read (called after successful read)."""
+    """记录一次成功读取。
+
+    参数:
+        path: 文件路径。
+        offset: 读取起始行。
+        limit: 读取行数限制。
+
+    返回:
+        无返回值。
+    """
     p = str(Path(path).resolve())
     try:
         mtime = os.path.getmtime(p)
@@ -44,7 +54,14 @@ def record_read(path: str | Path, offset: int = 1, limit: int | None = None) -> 
 
 
 def record_write(path: str | Path) -> None:
-    """Record that a file was written (updates mtime in state)."""
+    """记录一次成功写入。
+
+    参数:
+        path: 文件路径。
+
+    返回:
+        无返回值。
+    """
     p = str(Path(path).resolve())
     try:
         mtime = os.path.getmtime(p)
@@ -61,11 +78,13 @@ def record_write(path: str | Path) -> None:
 
 
 def check_read(path: str | Path) -> str | None:
-    """Check if a file has been read and is fresh.
+    """检查文件是否读过且状态仍然新鲜。
 
-    Returns None if OK, or a warning string.
-    When mtime changed but file content is identical (e.g. touch, editor save),
-    the check passes to avoid false-positive staleness warnings.
+    参数:
+        path: 文件路径。
+
+    返回:
+        无警告时返回 ``None``，否则返回提示文本。
     """
     p = str(Path(path).resolve())
     entry = _state.get(p)
@@ -84,7 +103,16 @@ def check_read(path: str | Path) -> str | None:
 
 
 def is_unchanged(path: str | Path, offset: int = 1, limit: int | None = None) -> bool:
-    """Return True if file was previously read with same params and mtime is unchanged."""
+    """判断文件是否与上次相同参数读取时保持不变。
+
+    参数:
+        path: 文件路径。
+        offset: 读取起始行。
+        limit: 读取行数限制。
+
+    返回:
+        文件未变化时返回 ``True``。
+    """
     p = str(Path(path).resolve())
     entry = _state.get(p)
     if entry is None:
@@ -101,5 +129,9 @@ def is_unchanged(path: str | Path, offset: int = 1, limit: int | None = None) ->
 
 
 def clear() -> None:
-    """Clear all tracked state (useful for testing)."""
+    """清空全部读取状态记录。
+
+    返回:
+        无返回值。
+    """
     _state.clear()

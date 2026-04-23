@@ -1,4 +1,4 @@
-"""NotebookEditTool — edit Jupyter .ipynb notebooks."""
+"""Jupyter Notebook 编辑工具。"""
 
 from __future__ import annotations
 
@@ -54,17 +54,27 @@ def _make_empty_notebook() -> dict:
     )
 )
 class NotebookEditTool(_FsTool):
-    """Edit Jupyter notebook cells: replace, insert, or delete."""
+    """支持替换、插入、删除 Notebook 单元格的工具。"""
 
     _VALID_CELL_TYPES = frozenset({"code", "markdown"})
     _VALID_EDIT_MODES = frozenset({"replace", "insert", "delete"})
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            工具名称字符串。
+        """
         return "notebook_edit"
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            面向模型的工具描述文本。
+        """
         return (
             "Edit a Jupyter notebook (.ipynb) cell. "
             "Modes: replace (default) replaces cell content, "
@@ -82,6 +92,19 @@ class NotebookEditTool(_FsTool):
         edit_mode: str = "replace",
         **kwargs: Any,
     ) -> str:
+        """编辑 Notebook 单元格。
+
+        参数:
+            path: Notebook 文件路径。
+            cell_index: 目标单元格索引。
+            new_source: 新单元格内容。
+            cell_type: 单元格类型。
+            edit_mode: 编辑模式。
+            **kwargs: 兼容额外参数。
+
+        返回:
+            编辑结果文本。
+        """
         try:
             if not path:
                 return "Error: path is required"
@@ -103,7 +126,7 @@ class NotebookEditTool(_FsTool):
 
             fp = self._resolve(path)
 
-            # Create new notebook if file doesn't exist and mode is insert
+            # insert 模式允许在文件不存在时直接建空 Notebook，避免再引导模型走两步创建流程。
             if not fp.exists():
                 if edit_mode != "insert":
                     return f"Error: File not found: {path}"
@@ -139,7 +162,7 @@ class NotebookEditTool(_FsTool):
                 fp.write_text(json.dumps(nb, indent=1, ensure_ascii=False), encoding="utf-8")
                 return f"Successfully inserted cell at index {insert_at} in {fp}"
 
-            # Default: replace
+            # replace 作为默认路径，能兼容大多数“修改某个单元格内容”的调用意图。
             if cell_index < 0 or cell_index >= len(cells):
                 return f"Error: cell_index {cell_index} out of range (notebook has {len(cells)} cells)"
             cells[cell_index]["source"] = new_source

@@ -7,35 +7,32 @@ from typing import Literal
 
 @dataclass
 class CronSchedule:
-    """中文说明：CronSchedule。"""
-    """Schedule definition for a cron job."""
+    """描述任务何时触发。"""
     kind: Literal["at", "every", "cron"]
-    # 中文说明：For "at": timestamp in ms
+    # `at` 模式直接保存绝对时间戳，避免运行时再做二次推导。
     at_ms: int | None = None
-    # 中文说明：For "every": interval in ms
+    # `every` 模式只关心固定间隔，单位统一用毫秒。
     every_ms: int | None = None
-    # 中文说明：For "cron": cron expression (e.g. "0 9 * * *")
+    # `cron` 模式沿用标准表达式，交给 croniter 解析。
     expr: str | None = None
-    # 中文说明：Timezone for cron expressions
+    # 时区只对 cron 表达式生效，固定间隔和单次任务不需要。
     tz: str | None = None
 
 
 @dataclass
 class CronPayload:
-    """中文说明：CronPayload。"""
-    """What to do when the job runs."""
+    """描述任务触发后要执行什么。"""
     kind: Literal["system_event", "agent_turn"] = "agent_turn"
     message: str = ""
-    # 中文说明：Deliver response to channel
+    # 是否把执行结果主动投递回外部通道。
     deliver: bool = False
-    channel: str | None = None  # 中文说明：e.g. "whatsapp"
-    to: str | None = None  # 中文说明：e.g. phone number
+    channel: str | None = None  # 目标通道名，例如 `whatsapp`。
+    to: str | None = None  # 通道内目标标识，例如手机号或 chat id。
 
 
 @dataclass
 class CronRunRecord:
-    """中文说明：CronRunRecord。"""
-    """A single execution record for a cron job."""
+    """记录一次任务执行的结果快照。"""
     run_at_ms: int
     status: Literal["ok", "error", "skipped"]
     duration_ms: int = 0
@@ -44,8 +41,7 @@ class CronRunRecord:
 
 @dataclass
 class CronJobState:
-    """中文说明：CronJobState。"""
-    """Runtime state of a job."""
+    """保存任务运行过程中的可变状态。"""
     next_run_at_ms: int | None = None
     last_run_at_ms: int | None = None
     last_status: Literal["ok", "error", "skipped"] | None = None
@@ -55,8 +51,7 @@ class CronJobState:
 
 @dataclass
 class CronJob:
-    """中文说明：CronJob。"""
-    """A scheduled job."""
+    """表示一条完整的定时任务。"""
     id: str
     name: str
     enabled: bool = True
@@ -69,13 +64,10 @@ class CronJob:
 
     @classmethod
     def from_dict(cls, kwargs: dict):
-        """中文说明：from_dict。
+        """把持久化字典还原成完整的任务对象。
 
-        参数:
-            kwargs: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
+        这里会把嵌套的 schedule、payload、state 和 run_history
+        一次性恢复成 dataclass，避免上层到处判断字典结构。
         """
         state_kwargs = dict(kwargs.get("state", {}))
         state_kwargs["run_history"] = [
@@ -90,7 +82,6 @@ class CronJob:
 
 @dataclass
 class CronStore:
-    """中文说明：CronStore。"""
-    """Persistent store for cron jobs."""
+    """表示定时任务文件在内存里的完整状态。"""
     version: int = 1
     jobs: list[CronJob] = field(default_factory=list)

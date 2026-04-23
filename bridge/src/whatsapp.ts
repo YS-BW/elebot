@@ -1,6 +1,10 @@
 /**
- * WhatsApp client wrapper using Baileys.
- * Based on OpenClaw's working implementation.
+ * 基于 Baileys 的 WhatsApp 客户端封装。
+ *
+ * 这里只做三件事：
+ * - 维持登录与重连
+ * - 把入站消息整理成桥接层统一结构
+ * - 承接 Python 侧发来的发送请求
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -81,7 +85,7 @@ export class WhatsAppClient {
 
     console.log(`Using Baileys version: ${version.join('.')}`);
 
-    // Create socket following OpenClaw's pattern
+    // 这里尽量沿用已验证过的 Baileys 连接参数，减少桥接层自己的变量。
     this.sock = makeWASocket({
       auth: {
         creds: state.creds,
@@ -95,19 +99,19 @@ export class WhatsAppClient {
       markOnlineOnConnect: false,
     });
 
-    // Handle WebSocket errors
+    // 底层 ws 报错时单独记日志，便于和业务消息错误区分开。
     if (this.sock.ws && typeof this.sock.ws.on === 'function') {
       this.sock.ws.on('error', (err: Error) => {
         console.error('WebSocket error:', err.message);
       });
     }
 
-    // Handle connection updates
+    // 统一在 connection.update 里处理二维码、断线和重连状态。
     this.sock.ev.on('connection.update', async (update: any) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        // Display QR code in terminal
+        // 二维码直接打到终端，减少额外 UI 依赖。
         console.log('\n📱 Scan this QR code with WhatsApp (Linked Devices):\n');
         qrcode.generate(qr, { small: true });
         this.options.onQR(qr);
@@ -134,10 +138,10 @@ export class WhatsAppClient {
       }
     });
 
-    // Save credentials on update
+    // 认证状态变化后立刻落盘，避免进程中断后重新扫码。
     this.sock.ev.on('creds.update', saveCreds);
 
-    // Handle incoming messages
+    // 入站消息在这里统一拆文本和媒体，后面桥接层只处理一种结构。
     this.sock.ev.on('messages.upsert', async ({ messages, type }: { messages: any[]; type: string }) => {
       if (type !== 'notify') return;
 
@@ -196,12 +200,12 @@ export class WhatsAppClient {
 
       let outFilename: string;
       if (fileName) {
-        // Documents have a filename — use it with a unique prefix to avoid collisions
+        // 文档本身带文件名，但仍要加随机前缀，避免同名覆盖。
         const prefix = `wa_${Date.now()}_${randomBytes(4).toString('hex')}_`;
         outFilename = prefix + fileName;
       } else {
         const mime = mimetype || 'application/octet-stream';
-        // Derive extension from mimetype subtype (e.g. "image/png" → ".png", "application/pdf" → ".pdf")
+        // 没有显式文件名时只能从 MIME 推断扩展名，至少保证后续工具还能识别文件类型。
         const ext = '.' + (mime.split('/').pop()?.split(';')[0] || 'bin');
         outFilename = `wa_${Date.now()}_${randomBytes(4).toString('hex')}${ext}`;
       }
@@ -217,32 +221,32 @@ export class WhatsAppClient {
   }
 
   private getTextContent(message: any): string | null {
-    // Text message
+    // 纯文本消息直接取正文。
     if (message.conversation) {
       return message.conversation;
     }
 
-    // Extended text (reply, link preview)
+    // 扩展文本通常承载回复或链接预览，正文仍在 text 字段。
     if (message.extendedTextMessage?.text) {
       return message.extendedTextMessage.text;
     }
 
-    // Image with optional caption
+    // 图片优先带 caption，没有就回空字符串。
     if (message.imageMessage) {
       return message.imageMessage.caption || '';
     }
 
-    // Video with optional caption
+    // 视频和图片一样，正文只看 caption。
     if (message.videoMessage) {
       return message.videoMessage.caption || '';
     }
 
-    // Document with optional caption
+    // 文档消息如果用户附带说明文本，也从 caption 里取。
     if (message.documentMessage) {
       return message.documentMessage.caption || '';
     }
 
-    // Voice/Audio message
+    // 语音消息先给占位文本，真正转写交给 Python 主链路。
     if (message.audioMessage) {
       return `[Voice Message]`;
     }

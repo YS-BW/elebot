@@ -1,1 +1,1 @@
-"""CLI module for elebot."""
+"""EleBot 命令行入口模块。"""

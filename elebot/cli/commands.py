@@ -1,4 +1,4 @@
-"""CLI commands for elebot."""
+"""EleBot 命令行命令集合。"""
 
 import asyncio
 import os
@@ -6,11 +6,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Force UTF-8 encoding for Windows console
+# Windows 控制台默认编码不稳定，这里提前强制为 UTF-8，避免中文输出乱码。
 if sys.platform == "win32":
     if sys.stdout.encoding != "utf-8":
         os.environ["PYTHONIOENCODING"] = "utf-8"
-        # Re-open stdout/stderr with UTF-8 encoding
+        # 这里同步重绑 stdout/stderr，避免环境变量生效前已经拿到旧编码句柄。
         try:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
             sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -43,6 +43,14 @@ app = typer.Typer(
 
 
 def version_callback(value: bool):
+    """处理 `--version` 选项并在需要时立即退出。
+
+    参数:
+        value: 是否触发版本输出。
+
+    返回:
+        无返回值。
+    """
     if value:
         console.print(f"{__logo__} elebot v{__version__}")
         raise typer.Exit()
@@ -54,13 +62,18 @@ def main(
         None, "--version", "-v", callback=version_callback, is_eager=True
     ),
 ):
-    """elebot - Personal AI Assistant."""
+    """定义 CLI 根命令。
+
+    参数:
+        version: 是否输出版本并立即退出。
+
+    返回:
+        无返回值。
+    """
     pass
 
 
-# ============================================================================
-# Onboard / Setup
-# ============================================================================
+# 这里开始是初始化与向导相关命令。
 
 
 @app.command()
@@ -69,7 +82,16 @@ def onboard(
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
     wizard: bool = typer.Option(False, "--wizard", help="Use interactive wizard"),
 ):
-    """Initialize elebot configuration and workspace."""
+    """初始化配置文件与工作区。
+
+    参数:
+        workspace: 覆盖默认工作区目录。
+        config: 指定配置文件路径。
+        wizard: 是否启用交互式向导。
+
+    返回:
+        无返回值。
+    """
     from elebot.config.loader import get_config_path, load_config, save_config, set_config_path
     from elebot.config.schema import Config
 
@@ -85,7 +107,7 @@ def onboard(
             loaded.agents.defaults.workspace = workspace
         return loaded
 
-    # Create or update config
+    # 先决定是新建配置还是在原配置上补齐缺失字段，避免误覆盖用户已有值。
     if config_path.exists():
         if wizard:
             config = _apply_workspace_override(load_config(config_path))
@@ -109,12 +131,12 @@ def onboard(
                 )
     else:
         config = _apply_workspace_override(Config())
-        # In wizard mode, don't save yet - the wizard will handle saving if should_save=True
+        # 向导模式下由后续统一决定是否保存，避免用户中途取消却留下半成品配置。
         if not wizard:
             save_config(config, config_path)
             console.print(f"[green]✓[/green] Created config at {config_path}")
 
-    # Run interactive wizard if enabled
+    # 启用向导时，把最终是否落盘的决定权交给向导结果。
     if wizard:
         from elebot.cli.onboard import run_onboard
 
@@ -133,7 +155,7 @@ def onboard(
             raise typer.Exit(1)
     _onboard_plugins(config_path)
 
-    # Create workspace, preferring the configured workspace path.
+    # 工作区优先使用配置里的路径，这样命令行临时参数和配置文件能保持一致。
     workspace_path = get_workspace_path(config.workspace_path)
     if not workspace_path.exists():
         workspace_path.mkdir(parents=True, exist_ok=True)
@@ -194,9 +216,13 @@ def _onboard_plugins(config_path: Path) -> None:
 
 
 def _make_provider(config: Config):
-    """Create the appropriate LLM provider from config.
+    """根据当前配置实例化对应的 LLM 提供方。
 
-    Routing is driven by ``ProviderSpec.backend`` in the registry.
+    参数:
+        config: 已解析完成的运行时配置。
+
+    返回:
+        配置好默认生成参数的提供方实例。
     """
     from elebot.providers.base import GenerationSettings
     from elebot.providers.registry import find_by_name
@@ -211,7 +237,7 @@ def _make_provider(config: Config):
     spec = find_by_name(provider_name) if provider_name else None
     backend = spec.backend if spec else "openai_compat"
 
-    # --- validation ---
+    # 这里先做最小必需校验，避免把缺少关键配置的错误拖到真正发请求时才暴露。
     if backend == "azure_openai":
         if not p or not p.api_key or not p.api_base:
             console.print("[red]Error: Azure OpenAI requires api_key and api_base.[/red]")
@@ -226,7 +252,7 @@ def _make_provider(config: Config):
             console.print("Set one in ~/.elebot/config.json under providers section")
             raise typer.Exit(1)
 
-    # --- instantiation by backend ---
+    # 提供方选择完全由注册表 backend 决定，避免命令层自己维护分叉规则。
     if backend == "openai_codex":
         from elebot.providers.openai_codex_provider import OpenAICodexProvider
 
@@ -272,7 +298,15 @@ def _make_provider(config: Config):
 
 
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
-    """Load config and optionally override the active workspace."""
+    """加载运行时配置，并按需覆盖当前工作区。
+
+    参数:
+        config: 可选的配置文件路径。
+        workspace: 可选的工作区覆盖路径。
+
+    返回:
+        解析并展开环境变量后的配置对象。
+    """
     from elebot.config.loader import load_config, resolve_config_env_vars, set_config_path
 
     config_path = None
@@ -312,9 +346,7 @@ def _warn_deprecated_config_keys(config_path: Path | None) -> None:
             "and can be safely removed.[/dim]"
         )
 
-# ============================================================================
-# OpenAI-Compatible API Server
-# ============================================================================
+# 这里开始是隐藏的 OpenAI 兼容 API 服务入口。
 
 
 @app.command(hidden=True)
@@ -326,7 +358,19 @@ def serve(
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
 ):
-    """Start the OpenAI-compatible API server (/v1/chat/completions)."""
+    """启动 OpenAI 兼容 API 服务。
+
+    参数:
+        port: 服务端口。
+        host: 监听地址。
+        timeout: 单次请求超时时间。
+        verbose: 是否输出运行日志。
+        workspace: 工作区覆盖路径。
+        config: 配置文件路径。
+
+    返回:
+        无返回值。
+    """
     try:
         from aiohttp import web  # noqa: F401
     except ImportError:
@@ -391,9 +435,25 @@ def serve(
     api_app = create_app(agent_loop, model_name=model_name, request_timeout=timeout)
 
     async def on_startup(_app):
+        """在 API 服务启动时建立 MCP 连接。
+
+        参数:
+            _app: aiohttp 应用实例。
+
+        返回:
+            无返回值。
+        """
         await agent_loop._connect_mcp()
 
     async def on_cleanup(_app):
+        """在 API 服务退出时释放 MCP 连接。
+
+        参数:
+            _app: aiohttp 应用实例。
+
+        返回:
+            无返回值。
+        """
         await agent_loop.close_mcp()
 
     api_app.on_startup.append(on_startup)
@@ -402,9 +462,7 @@ def serve(
     web.run_app(api_app, host=host, port=port, print=lambda msg: logger.info(msg))
 
 
-# ============================================================================
-# Gateway / Server
-# ============================================================================
+# 这里开始是网关与渠道联动入口，当前不属于主链路验收重点，但命令仍保留。
 
 
 @app.command(hidden=True)
@@ -414,7 +472,17 @@ def gateway(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
 ):
-    """Start the elebot gateway."""
+    """启动 EleBot 网关服务。
+
+    参数:
+        port: 网关端口。
+        workspace: 工作区覆盖路径。
+        verbose: 是否输出详细日志。
+        config: 配置文件路径。
+
+    返回:
+        无返回值。
+    """
     from elebot.agent.loop import AgentLoop
     from elebot.bus.queue import MessageBus
     from elebot.channels.manager import ChannelManager
@@ -437,11 +505,11 @@ def gateway(
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
 
-    # Create cron service with workspace-scoped store
+    # cron 数据跟工作区强绑定，避免多个工作区共享同一份计划任务状态。
     cron_store_path = config.workspace_path / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
 
-    # Create agent with cron service
+    # 把 cron 服务注入 AgentLoop，保证计划任务和手动对话复用同一条主链路。
     agent = AgentLoop(
         bus=bus,
         provider=provider,
@@ -465,10 +533,17 @@ def gateway(
         session_ttl_minutes=config.agents.defaults.session_ttl_minutes,
     )
 
-    # Set cron callback (needs agent)
+    # cron 回调依赖 agent 实例，因此在创建完 AgentLoop 后再绑定。
     async def on_cron_job(job: CronJob) -> str | None:
-        """Execute a cron job through the agent."""
-        # Dream is an internal job — run directly, not through the agent loop.
+        """通过主代理执行定时任务。
+
+        参数:
+            job: 触发的定时任务对象。
+
+        返回:
+            任务生成的文本结果；无需返回时返回 ``None``。
+        """
+        # Dream 是内部维护任务，直接运行可以避免再走一轮代理调度。
         if job.name == "dream":
             try:
                 await agent.dream.run()
@@ -523,13 +598,13 @@ def gateway(
 
     cron.on_job = on_cron_job
 
-    # Create channel manager
+    # 渠道管理器负责把总线里的出入站消息路由到具体渠道实现。
     channels = ChannelManager(config, bus)
 
     def _pick_heartbeat_target() -> tuple[str, str]:
         """Pick a routable channel/chat target for heartbeat-triggered messages."""
         enabled = set(channels.enabled_channels)
-        # Prefer the most recently updated non-internal session on an enabled channel.
+        # 优先复用最近活跃的外部会话，这样心跳提醒更可能落到用户当前正在使用的入口。
         for item in session_manager.list_sessions():
             key = item.get("key") or ""
             if ":" not in key:
@@ -539,12 +614,18 @@ def gateway(
                 continue
             if channel in enabled and chat_id:
                 return channel, chat_id
-        # Fallback keeps prior behavior but remains explicit.
+        # 兜底仍回到 CLI 直连，会比隐式挑选一个未知渠道更可控。
         return "cli", "direct"
 
-    # Create heartbeat service
     async def on_heartbeat_execute(tasks: str) -> str:
-        """Phase 2: execute heartbeat tasks through the full agent loop."""
+        """通过完整代理链路执行心跳生成的任务。
+
+        参数:
+            tasks: 心跳阶段整理出的待执行任务文本。
+
+        返回:
+            代理最终产出的文本结果。
+        """
         channel, chat_id = _pick_heartbeat_target()
 
         async def _silent(*_args, **_kwargs):
@@ -558,8 +639,7 @@ def gateway(
             on_progress=_silent,
         )
 
-        # Keep a small tail of heartbeat history so the loop stays bounded
-        # without losing all short-term context between runs.
+        # 只保留少量近期心跳历史，既能维持上下文，又不会让会话无限膨胀。
         session = agent.sessions.get_or_create("heartbeat")
         session.retain_recent_legal_suffix(hb_cfg.keep_recent_messages)
         agent.sessions.save(session)
@@ -567,11 +647,18 @@ def gateway(
         return resp.content if resp else ""
 
     async def on_heartbeat_notify(response: str) -> None:
-        """Deliver a heartbeat response to the user's channel."""
+        """把心跳执行结果投递回用户渠道。
+
+        参数:
+            response: 待发送的回复文本。
+
+        返回:
+            无返回值。
+        """
         from elebot.bus.events import OutboundMessage
         channel, chat_id = _pick_heartbeat_target()
         if channel == "cli":
-            return  # No external channel available to deliver to
+            return  # 没有外部可达渠道时，不强行伪造投递目标。
         await bus.publish_outbound(OutboundMessage(channel=channel, chat_id=chat_id, content=response))
 
     hb_cfg = config.gateway.heartbeat
@@ -597,7 +684,7 @@ def gateway(
 
     console.print(f"[green]✓[/green] Heartbeat: every {hb_cfg.interval_s}s")
 
-    # Register Dream system job (always-on, idempotent on restart)
+    # Dream 系统任务始终注册；重复启动时依赖 cron 层的幂等性保证不重复生效。
     dream_cfg = config.agents.defaults.dream
     if dream_cfg.model_override:
         agent.dream.model = dream_cfg.model_override
@@ -613,6 +700,11 @@ def gateway(
     console.print(f"[green]✓[/green] Dream: {dream_cfg.describe_schedule()}")
 
     async def run():
+        """统一驱动网关内的后台服务。
+
+        返回:
+            无返回值。
+        """
         try:
             await cron.start()
             await heartbeat.start()
@@ -637,9 +729,7 @@ def gateway(
     asyncio.run(run())
 
 
-# ============================================================================
-# Agent Commands
-# ============================================================================
+# 这里开始是直接面向主链路的 agent 命令。
 
 
 @app.command()
@@ -651,7 +741,19 @@ def agent(
     markdown: bool = typer.Option(True, "--markdown/--no-markdown", help="Render assistant output as Markdown"),
     logs: bool = typer.Option(False, "--logs/--no-logs", help="Show elebot runtime logs during chat"),
 ):
-    """Interact with the agent directly."""
+    """直接与主代理交互。
+
+    参数:
+        message: 一次性发送给代理的消息。
+        session_id: 会话标识。
+        workspace: 工作区覆盖路径。
+        config: 配置文件路径。
+        markdown: 是否按 Markdown 渲染回复。
+        logs: 是否显示运行日志。
+
+    返回:
+        无返回值。
+    """
     from loguru import logger
 
     from elebot.agent.loop import AgentLoop
@@ -664,7 +766,7 @@ def agent(
     bus = MessageBus()
     provider = _make_provider(config)
 
-    # Create cron service with workspace-scoped store
+    # 直接对话命令也复用工作区内的 cron 存储，避免行为与网关模式分叉。
     cron_store_path = config.workspace_path / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
 
@@ -713,6 +815,11 @@ def agent(
 
     if message:
         async def run_once():
+            """执行单次 CLI 直连对话。
+
+            返回:
+                无返回值。
+            """
             nonlocal thinking
             renderer = StreamRenderer(render_markdown=markdown)
             thinking = renderer.spinner
@@ -745,9 +852,7 @@ def agent(
         )
 
 
-# ============================================================================
-# Channel Commands
-# ============================================================================
+# 这里开始是隐藏的渠道管理命令。
 
 
 channels_app = typer.Typer(help="Manage channels")
@@ -758,7 +863,14 @@ app.add_typer(channels_app, name="channels", hidden=True)
 def channels_status(
     config_path: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
 ):
-    """Show channel status."""
+    """显示各渠道当前启用状态。
+
+    参数:
+        config_path: 配置文件路径。
+
+    返回:
+        无返回值。
+    """
     from elebot.channels.registry import discover_all
     from elebot.config.loader import load_config, set_config_path
 
@@ -793,24 +905,24 @@ def _get_bridge_dir() -> Path:
     import shutil
     import subprocess
 
-    # User's bridge location
+    # bridge 会安装到用户侧目录，避免污染站点包里的只读内容。
     from elebot.config.paths import get_bridge_install_dir
 
     user_bridge = get_bridge_install_dir()
 
-    # Check if already built
+    # 已经存在构建产物时直接复用，避免每次登录命令都重新安装 Node 依赖。
     if (user_bridge / "dist" / "index.js").exists():
         return user_bridge
 
-    # Check for npm
+    # bridge 依赖 npm 构建，因此这里尽早失败给出清晰提示。
     npm_path = shutil.which("npm")
     if not npm_path:
         console.print("[red]npm not found. Please install Node.js >= 18.[/red]")
         raise typer.Exit(1)
 
-    # Find source bridge: first check package data, then source dir
-    pkg_bridge = Path(__file__).parent.parent / "bridge"  # elebot/bridge (installed)
-    src_bridge = Path(__file__).parent.parent.parent / "bridge"  # repo root/bridge (dev)
+    # 安装版和源码版目录结构不同，这里按优先级寻找 bridge 源目录。
+    pkg_bridge = Path(__file__).parent.parent / "bridge"  # 安装版包内的 bridge 目录。
+    src_bridge = Path(__file__).parent.parent.parent / "bridge"  # 仓库源码根目录下的 bridge 目录。
 
     source = None
     if (pkg_bridge / "package.json").exists():
@@ -825,13 +937,13 @@ def _get_bridge_dir() -> Path:
 
     console.print(f"{__logo__} Setting up bridge...")
 
-    # Copy to user directory
+    # 复制到用户目录后再构建，可以把运行期文件和源码目录隔离开。
     user_bridge.parent.mkdir(parents=True, exist_ok=True)
     if user_bridge.exists():
         shutil.rmtree(user_bridge)
     shutil.copytree(source, user_bridge, ignore=shutil.ignore_patterns("node_modules", "dist"))
 
-    # Install and build
+    # 构建失败时保留 stderr 片段，方便用户直接定位前端依赖问题。
     try:
         console.print("  Installing dependencies...")
         subprocess.run([npm_path, "install"], cwd=user_bridge, check=True, capture_output=True)
@@ -855,7 +967,16 @@ def channels_login(
     force: bool = typer.Option(False, "--force", "-f", help="Force re-authentication even if already logged in"),
     config_path: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
 ):
-    """Authenticate with a channel via QR code or other interactive login."""
+    """通过二维码或交互流程登录渠道。
+
+    参数:
+        channel_name: 渠道名称。
+        force: 是否强制重新登录。
+        config_path: 配置文件路径。
+
+    返回:
+        无返回值。
+    """
     from elebot.channels.registry import discover_all
     from elebot.config.loader import load_config, set_config_path
 
@@ -866,7 +987,7 @@ def channels_login(
     config = load_config(resolved_config_path)
     channel_cfg = getattr(config.channels, channel_name, None) or {}
 
-    # Validate channel exists
+    # 先校验渠道是否存在，避免进入登录流程后才发现配置名拼错。
     all_channels = discover_all()
     if channel_name not in all_channels:
         available = ", ".join(all_channels.keys())
@@ -884,9 +1005,7 @@ def channels_login(
         raise typer.Exit(1)
 
 
-# ============================================================================
-# Plugin Commands
-# ============================================================================
+# 这里开始是插件渠道相关命令。
 
 plugins_app = typer.Typer(help="Manage channel plugins")
 app.add_typer(plugins_app, name="plugins", hidden=True)
@@ -894,7 +1013,11 @@ app.add_typer(plugins_app, name="plugins", hidden=True)
 
 @plugins_app.command("list")
 def plugins_list():
-    """List all discovered channels (built-in and plugins)."""
+    """列出所有已发现的内置渠道和插件渠道。
+
+    返回:
+        无返回值。
+    """
     from elebot.channels.registry import discover_all, discover_channel_names
     from elebot.config.loader import load_config
 
@@ -926,14 +1049,16 @@ def plugins_list():
     console.print(table)
 
 
-# ============================================================================
-# Status Commands
-# ============================================================================
+# 这里开始是状态查看命令。
 
 
 @app.command()
 def status():
-    """Show elebot status."""
+    """显示 EleBot 当前状态。
+
+    返回:
+        无返回值。
+    """
     from elebot.config.loader import get_config_path, load_config
 
     config_path = get_config_path()
@@ -950,7 +1075,7 @@ def status():
 
         console.print(f"Model: {config.agents.defaults.model}")
 
-        # Check API keys from registry
+        # 直接遍历注册表比手写字段列表更稳，新增提供方时这里无需额外同步。
         for spec in PROVIDERS:
             p = getattr(config.providers, spec.name, None)
             if p is None:
@@ -958,7 +1083,7 @@ def status():
             if spec.is_oauth:
                 console.print(f"{spec.label}: [green]✓ (OAuth)[/green]")
             elif spec.is_local:
-                # Local deployments show api_base instead of api_key
+                # 本地部署通常不靠 key 鉴权，因此展示 api_base 更符合排查习惯。
                 if p.api_base:
                     console.print(f"{spec.label}: [green]✓ {p.api_base}[/green]")
                 else:
@@ -968,9 +1093,7 @@ def status():
                 console.print(f"{spec.label}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}")
 
 
-# ============================================================================
-# OAuth Login
-# ============================================================================
+# 这里开始是 OAuth 提供方登录命令。
 
 provider_app = typer.Typer(help="Manage providers")
 app.add_typer(provider_app, name="provider", hidden=True)
@@ -981,6 +1104,14 @@ _LOGIN_HANDLERS: dict[str, callable] = {}
 
 def _register_login(name: str):
     def decorator(fn):
+        """把登录处理函数注册到名称映射表。
+
+        参数:
+            fn: 实际登录处理函数。
+
+        返回:
+            原始处理函数。
+        """
         _LOGIN_HANDLERS[name] = fn
         return fn
 
@@ -991,7 +1122,14 @@ def _register_login(name: str):
 def provider_login(
     provider: str = typer.Argument(..., help="OAuth provider (e.g. 'openai-codex', 'github-copilot')"),
 ):
-    """Authenticate with an OAuth provider."""
+    """登录一个 OAuth 提供方。
+
+    参数:
+        provider: 提供方名称。
+
+    返回:
+        无返回值。
+    """
     from elebot.providers.registry import PROVIDERS
 
     key = provider.replace("-", "_")

@@ -1,4 +1,4 @@
-"""Shared execution loop for tool-using agents."""
+"""提供可复用的 Agent 工具调用执行循环。"""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ _BACKFILL_CONTENT = "[Tool result unavailable — call was interrupted or lost]"
 
 @dataclass(slots=True)
 class AgentRunSpec:
-    """Configuration for a single agent execution."""
+    """描述一次 AgentRunner 调用所需的全部运行参数。"""
 
     initial_messages: list[dict[str, Any]]
     tools: ToolRegistry
@@ -77,7 +77,7 @@ class AgentRunSpec:
 
 @dataclass(slots=True)
 class AgentRunResult:
-    """Outcome of a shared agent execution."""
+    """承载一次 AgentRunner 执行后的完整产物。"""
 
     final_content: str | None
     messages: list[dict[str, Any]]
@@ -90,9 +90,10 @@ class AgentRunResult:
 
 
 class AgentRunner:
-    """Run a tool-capable LLM loop without product-layer concerns."""
+    """执行独立于 CLI 和通道层的通用 Agent 主循环。"""
 
     def __init__(self, provider: LLMProvider):
+        """绑定本次执行所依赖的模型 Provider。"""
         self.provider = provider
 
     @staticmethod
@@ -180,6 +181,17 @@ class AgentRunner:
         return injected_messages
 
     async def run(self, spec: AgentRunSpec) -> AgentRunResult:
+        """执行完整的“模型回复 -> 工具调用 -> 再次追问”循环。
+
+        核心职责：
+        - 对发送给模型的消息做预算治理和结构修补
+        - 处理流式正文、工具调用、工具错误和空回复重试
+        - 维护检查点，保证中断后仍能恢复一轮未完成的工具链路
+        - 在必要时吸收中途注入的新消息，避免会话裂成多条竞争任务
+
+        返回：
+            包含最终文本、工具事件、累计用量和停止原因的执行结果。
+        """
         hook = spec.hook or AgentHook()
         messages = list(spec.initial_messages)
         final_content: str | None = None
@@ -196,16 +208,13 @@ class AgentRunner:
 
         for iteration in range(spec.max_iterations):
             try:
-                # Keep the persisted conversation untouched. Context governance
-                # may repair or compact historical messages for the model, but
-                # those synthetic edits must not shift the append boundary used
-                # later when the caller saves only the new turn.
+                # 持久化历史必须保持原样，避免模型侧的上下文修补影响后续落盘边界。
                 messages_for_model = self._drop_orphan_tool_results(messages)
                 messages_for_model = self._backfill_missing_tool_results(messages_for_model)
                 messages_for_model = self._microcompact(messages_for_model)
                 messages_for_model = self._apply_tool_result_budget(spec, messages_for_model)
                 messages_for_model = self._snip_history(spec, messages_for_model)
-                # Snipping may have created new orphans; clean them up.
+                # 历史裁剪后可能再次产生孤儿工具结果，需要二次修补。
                 messages_for_model = self._drop_orphan_tool_results(messages_for_model)
                 messages_for_model = self._backfill_missing_tool_results(messages_for_model)
             except Exception as exc:
@@ -301,7 +310,7 @@ class AgentRunner:
                 )
                 empty_content_retries = 0
                 length_recovery_count = 0
-                # Checkpoint 1: drain injections after tools, before next LLM call
+                # 工具执行后先吸收插入消息，再决定是否继续下一轮模型调用。
                 if injection_cycles < _MAX_INJECTION_CYCLES:
                     injections = await self._drain_injections(spec)
                     if injections:
@@ -376,9 +385,8 @@ class AgentRunner:
                     thinking_blocks=response.thinking_blocks,
                 )
 
-            # Check for mid-turn injections BEFORE signaling stream end.
-            # If injections are found we keep the stream alive (resuming=True)
-            # so streaming channels don't prematurely finalize the card.
+            # 先检查是否有中途插入消息，再决定是否真正结束当前流。
+            # 这样流式通道可以保持卡片未完结状态，避免过早收尾。
             _injected_after_final = False
             if injection_cycles < _MAX_INJECTION_CYCLES:
                 injections = await self._drain_injections(spec)
@@ -746,7 +754,7 @@ class AgentRunner:
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """Insert synthetic error results for orphaned tool_use blocks."""
-        declared: list[tuple[int, str, str]] = []  # (assistant_idx, call_id, name)
+        declared: list[tuple[int, str, str]] = []  # 记录声明过但尚未补齐结果的工具调用。
         fulfilled: set[str] = set()
         for idx, msg in enumerate(messages):
             role = msg.get("role")
@@ -912,4 +920,3 @@ class AgentRunner:
         if current:
             batches.append(current)
         return batches
-

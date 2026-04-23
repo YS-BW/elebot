@@ -1,4 +1,4 @@
-"""GitHub Copilot OAuth-backed provider."""
+"""GitHub Copilot 提供方与 OAuth 登录辅助。"""
 
 from __future__ import annotations
 
@@ -54,7 +54,11 @@ def _load_github_token() -> OAuthToken | None:
 
 
 def get_github_copilot_login_status() -> OAuthToken | None:
-    """Return the persisted GitHub OAuth token if available."""
+    """读取当前保存的 GitHub Copilot 登录状态。
+
+    返回:
+        已保存的 OAuthToken；如果尚未登录则返回 ``None``。
+    """
     return _load_github_token()
 
 
@@ -62,7 +66,15 @@ def login_github_copilot(
     print_fn: Callable[[str], None] | None = None,
     prompt_fn: Callable[[str], str] | None = None,
 ) -> OAuthToken:
-    """Run GitHub device flow and persist the GitHub OAuth token used for Copilot."""
+    """执行 GitHub 设备码登录并持久化令牌。
+
+    参数:
+        print_fn: 可选的输出函数。
+        prompt_fn: 兼容旧签名保留的输入函数，当前未使用。
+
+    返回:
+        登录成功后保存的 OAuthToken。
+    """
     del prompt_fn
     printer = print_fn or print
     timeout = httpx.Timeout(20.0, connect=20.0)
@@ -156,9 +168,17 @@ def login_github_copilot(
 
 
 class GitHubCopilotProvider(OpenAICompatProvider):
-    """Provider that exchanges a stored GitHub OAuth token for Copilot access tokens."""
+    """基于已保存 GitHub OAuth 令牌换取 Copilot 访问令牌。"""
 
     def __init__(self, default_model: str = "github-copilot/gpt-4.1"):
+        """初始化 GitHub Copilot 提供方。
+
+        参数:
+            default_model: 默认模型名称。
+
+        返回:
+            无返回值。
+        """
         from elebot.providers.registry import find_by_name
 
         self._copilot_access_token: str | None = None
@@ -222,6 +242,20 @@ class GitHubCopilotProvider(OpenAICompatProvider):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, object] | None = None,
     ):
+        """执行一次非流式 GitHub Copilot 请求。
+
+        参数:
+            messages: 消息列表。
+            tools: 可选工具定义。
+            model: 指定模型名称。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: 推理强度配置。
+            tool_choice: 工具选择策略。
+
+        返回:
+            标准化后的模型响应。
+        """
         await self._refresh_client_api_key()
         return await super().chat(
             messages=messages,
@@ -244,6 +278,21 @@ class GitHubCopilotProvider(OpenAICompatProvider):
         tool_choice: str | dict[str, object] | None = None,
         on_content_delta: Callable[[str], None] | None = None,
     ):
+        """执行一次流式 GitHub Copilot 请求。
+
+        参数:
+            messages: 消息列表。
+            tools: 可选工具定义。
+            model: 指定模型名称。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: 推理强度配置。
+            tool_choice: 工具选择策略。
+            on_content_delta: 文本流回调。
+
+        返回:
+            标准化后的模型响应。
+        """
         await self._refresh_client_api_key()
         return await super().chat_stream(
             messages=messages,

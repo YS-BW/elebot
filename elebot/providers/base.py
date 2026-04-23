@@ -1,4 +1,4 @@
-"""Base LLM provider interface."""
+"""LLM 提供方的通用抽象与重试辅助。"""
 
 import asyncio
 import json
@@ -17,7 +17,7 @@ from elebot.utils.helpers import image_placeholder_text
 
 @dataclass
 class ToolCallRequest:
-    """A tool call request from the LLM."""
+    """表示模型发起的一次工具调用请求。"""
     id: str
     name: str
     arguments: dict[str, Any]
@@ -26,7 +26,11 @@ class ToolCallRequest:
     function_provider_specific_fields: dict[str, Any] | None = None
 
     def to_openai_tool_call(self) -> dict[str, Any]:
-        """Serialize to an OpenAI-style tool_call payload."""
+        """转换为 OpenAI 风格的工具调用载荷。
+
+        返回:
+            可直接放入消息结构的 ``tool_call`` 字典。
+        """
         tool_call = {
             "id": self.id,
             "type": "function",
@@ -46,31 +50,35 @@ class ToolCallRequest:
 
 @dataclass
 class LLMResponse:
-    """Response from an LLM provider."""
+    """表示一次模型调用的标准化响应。"""
     content: str | None
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     finish_reason: str = "stop"
     usage: dict[str, int] = field(default_factory=dict)
-    retry_after: float | None = None  # Provider supplied retry wait in seconds.
-    reasoning_content: str | None = None  # Kimi, DeepSeek-R1, MiMo etc.
-    thinking_blocks: list[dict] | None = None  # Anthropic extended thinking
-    # Structured error metadata used by retry policy when finish_reason == "error".
+    retry_after: float | None = None  # 提供方返回的重试等待秒数。
+    reasoning_content: str | None = None  # 推理模型补充返回的思考文本。
+    thinking_blocks: list[dict] | None = None  # Anthropic 扩展 thinking 块。
+    # finish_reason == "error" 时，重试策略会优先使用这些结构化错误元数据。
     error_status_code: int | None = None
-    error_kind: str | None = None  # e.g. "timeout", "connection"
-    error_type: str | None = None  # Provider/type semantic, e.g. insufficient_quota.
-    error_code: str | None = None  # Provider/code semantic, e.g. rate_limit_exceeded.
+    error_kind: str | None = None  # 例如 "timeout"、"connection"。
+    error_type: str | None = None  # 提供方错误类型，例如 insufficient_quota。
+    error_code: str | None = None  # 提供方错误码，例如 rate_limit_exceeded。
     error_retry_after_s: float | None = None
     error_should_retry: bool | None = None
 
     @property
     def has_tool_calls(self) -> bool:
-        """Check if response contains tool calls."""
+        """判断响应里是否包含工具调用。
+
+        返回:
+            只要存在至少一条工具调用请求就返回 ``True``。
+        """
         return len(self.tool_calls) > 0
 
 
 @dataclass(frozen=True)
 class GenerationSettings:
-    """Default generation settings."""
+    """封装提供方默认生成参数。"""
 
     temperature: float = 0.7
     max_tokens: int = 4096
@@ -78,7 +86,7 @@ class GenerationSettings:
 
 
 class LLMProvider(ABC):
-    """Base class for LLM providers."""
+    """定义所有 LLM 提供方共享能力的抽象基类。"""
 
     _CHAT_RETRY_DELAYS = (1, 2, 4)
     _PERSISTENT_MAX_DELAY = 60
@@ -148,6 +156,15 @@ class LLMProvider(ABC):
     _SENTINEL = object()
 
     def __init__(self, api_key: str | None = None, api_base: str | None = None):
+        """初始化提供方基础配置。
+
+        参数:
+            api_key: 提供方访问凭证。
+            api_base: 提供方基础地址。
+
+        返回:
+            无返回值。
+        """
         self.api_key = api_key
         self.api_base = api_base
         self.generation: GenerationSettings = GenerationSettings()
@@ -258,19 +275,19 @@ class LLMProvider(ABC):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> LLMResponse:
-        """
-        Send a chat completion request.
+        """发起一次非流式对话请求。
 
-        Args:
-            messages: List of message dicts with 'role' and 'content'.
-            tools: Optional list of tool definitions.
-            model: Model identifier (provider-specific).
-            max_tokens: Maximum tokens in response.
-            temperature: Sampling temperature.
-            tool_choice: Tool selection strategy ("auto", "required", or specific tool dict).
+        参数:
+            messages: 发送给模型的消息列表。
+            tools: 可选的工具定义列表。
+            model: 模型标识，具体含义由提供方决定。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: 推理强度配置。
+            tool_choice: 工具选择策略。
 
-        Returns:
-            LLMResponse with content and/or tool calls.
+        返回:
+            标准化后的模型响应。
         """
         pass
 
@@ -350,7 +367,7 @@ class LLMProvider(ABC):
             return True
         if any(marker in content for marker in cls._RETRYABLE_429_TEXT_MARKERS):
             return True
-        # Unknown 429 defaults to WAIT+retry.
+        # 未识别的 429 默认按可重试处理，避免把临时限流误判成永久失败。
         return True
 
     @staticmethod
@@ -459,12 +476,20 @@ class LLMProvider(ABC):
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
-        """Stream a chat completion, calling *on_content_delta* for each text chunk.
+        """以流式方式执行对话请求。
 
-        Returns the same ``LLMResponse`` as :meth:`chat`.  The default
-        implementation falls back to a non-streaming call and delivers the
-        full content as a single delta.  Providers that support native
-        streaming should override this method.
+        参数:
+            messages: 发送给模型的消息列表。
+            tools: 可选的工具定义列表。
+            model: 模型标识。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: 推理强度配置。
+            tool_choice: 工具选择策略。
+            on_content_delta: 每次收到文本增量时调用的回调。
+
+        返回:
+            与 ``chat`` 形态一致的标准化响应。
         """
         response = await self.chat(
             messages=messages, tools=tools, model=model,
@@ -497,7 +522,23 @@ class LLMProvider(ABC):
         retry_mode: str = "standard",
         on_retry_wait: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
-        """Call chat_stream() with retry on transient provider failures."""
+        """在临时错误场景下重试流式对话请求。
+
+        参数:
+            messages: 发送给模型的消息列表。
+            tools: 可选的工具定义列表。
+            model: 模型标识。
+            max_tokens: 最大输出 token 数，未传时回退到默认生成配置。
+            temperature: 采样温度，未传时回退到默认生成配置。
+            reasoning_effort: 推理强度，未传时回退到默认生成配置。
+            tool_choice: 工具选择策略。
+            on_content_delta: 每次收到文本增量时调用的回调。
+            retry_mode: 重试模式。
+            on_retry_wait: 等待重试期间用于回传状态的回调。
+
+        返回:
+            标准化后的模型响应。
+        """
         if max_tokens is self._SENTINEL:
             max_tokens = self.generation.max_tokens
         if temperature is self._SENTINEL:
@@ -531,11 +572,21 @@ class LLMProvider(ABC):
         retry_mode: str = "standard",
         on_retry_wait: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
-        """Call chat() with retry on transient provider failures.
+        """在临时错误场景下重试非流式对话请求。
 
-        Parameters default to ``self.generation`` when not explicitly passed,
-        so callers no longer need to thread temperature / max_tokens /
-        reasoning_effort through every layer.
+        参数:
+            messages: 发送给模型的消息列表。
+            tools: 可选的工具定义列表。
+            model: 模型标识。
+            max_tokens: 最大输出 token 数，未传时回退到默认生成配置。
+            temperature: 采样温度，未传时回退到默认生成配置。
+            reasoning_effort: 推理强度，未传时回退到默认生成配置。
+            tool_choice: 工具选择策略。
+            retry_mode: 重试模式。
+            on_retry_wait: 等待重试期间用于回传状态的回调。
+
+        返回:
+            标准化后的模型响应。
         """
         if max_tokens is self._SENTINEL:
             max_tokens = self.generation.max_tokens
@@ -691,8 +742,7 @@ class LLMProvider(ABC):
                     retry_kw = dict(kw)
                     retry_kw["messages"] = stripped
                     result = await call(**retry_kw)
-                    # Permanently strip images from the original messages so
-                    # subsequent iterations do not repeat the error-retry cycle.
+                    # 一旦确认去图后可用，就同步更新原始消息，避免后续轮次重复进入同样的失败路径。
                     if result.finish_reason != "error":
                         self._strip_image_content_inplace(original_messages)
                     return result
@@ -732,5 +782,9 @@ class LLMProvider(ABC):
 
     @abstractmethod
     def get_default_model(self) -> str:
-        """Get the default model for this provider."""
+        """返回当前提供方的默认模型名称。
+
+        返回:
+            提供方默认使用的模型标识。
+        """
         pass

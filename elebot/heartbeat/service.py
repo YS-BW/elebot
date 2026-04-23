@@ -39,17 +39,14 @@ _HEARTBEAT_TOOL = [
 
 
 class HeartbeatService:
-    """中文说明：HeartbeatService。"""
-    """
-    Periodic heartbeat service that wakes the agent to check for tasks.
+    """定期唤醒 Agent 检查待办事项的心跳服务。
 
-    Phase 1 (decision): reads HEARTBEAT.md and asks the LLM — via a virtual
-    tool call — whether there are active tasks.  This avoids free-text parsing
-    and the unreliable HEARTBEAT_OK token.
+    核心分两步：
+    - 先读 `HEARTBEAT.md`，让模型只做“要不要执行”的判断
+    - 只有模型判断为需要执行时，才真的进入完整主链路
 
-    Phase 2 (execution): only triggered when Phase 1 returns ``run``.  The
-    ``on_execute`` callback runs the task through the full agent loop and
-    returns the result to deliver.
+    这样做是为了把“是否值得打扰主链路”前置，
+    避免每次心跳都直接触发一次完整任务执行。
     """
 
     def __init__(
@@ -63,21 +60,7 @@ class HeartbeatService:
         enabled: bool = True,
         timezone: str | None = None,
     ):
-        """中文说明：__init__。
-
-        参数:
-            workspace: 待补充参数说明。
-            provider: 待补充参数说明。
-            model: 待补充参数说明。
-            on_execute: 待补充参数说明。
-            on_notify: 待补充参数说明。
-            interval_s: 待补充参数说明。
-            enabled: 待补充参数说明。
-            timezone: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
-        """
+        """绑定心跳判断所需的工作区、模型和回调。"""
         self.workspace = workspace
         self.provider = provider
         self.model = model
@@ -91,14 +74,7 @@ class HeartbeatService:
 
     @property
     def heartbeat_file(self) -> Path:
-        """中文说明：heartbeat_file。
-
-        参数:
-            无。
-
-        返回:
-            待补充返回值说明。
-        """
+        """返回当前工作区里的心跳文件路径。"""
         return self.workspace / "HEARTBEAT.md"
 
     def _read_heartbeat_file(self) -> str | None:
@@ -136,15 +112,7 @@ class HeartbeatService:
         return args.get("action", "skip"), args.get("tasks", "")
 
     async def start(self) -> None:
-        """中文说明：start。
-
-        参数:
-            无。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Start the heartbeat service."""
+        """启动周期性心跳检查。"""
         if not self.enabled:
             logger.info("Heartbeat disabled")
             return
@@ -157,15 +125,7 @@ class HeartbeatService:
         logger.info("Heartbeat started (every {}s)", self.interval_s)
 
     def stop(self) -> None:
-        """中文说明：stop。
-
-        参数:
-            无。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Stop the heartbeat service."""
+        """停止心跳检查并取消后台任务。"""
         self._running = False
         if self._task:
             self._task.cancel()
@@ -218,15 +178,7 @@ class HeartbeatService:
             logger.exception("Heartbeat execution failed")
 
     async def trigger_now(self) -> str | None:
-        """中文说明：trigger_now。
-
-        参数:
-            无。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Manually trigger a heartbeat."""
+        """手动触发一次心跳判断并在需要时执行任务。"""
         content = self._read_heartbeat_file()
         if not content:
             return None

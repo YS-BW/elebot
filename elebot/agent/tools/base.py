@@ -1,4 +1,4 @@
-"""Base class for agent tools."""
+"""Agent 工具抽象与参数校验基础设施。"""
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -7,7 +7,7 @@ from typing import Any, TypeVar
 
 _ToolT = TypeVar("_ToolT", bound="Tool")
 
-# Matches :meth:`Tool._cast_value` / :meth:`Schema.validate_json_schema_value` behavior
+# 这里维护统一类型映射，保证参数预转换与校验阶段使用同一套判断规则。
 _JSON_TYPE_MAP: dict[str, type | tuple[type, ...]] = {
     "string": str,
     "integer": int,
@@ -19,29 +19,46 @@ _JSON_TYPE_MAP: dict[str, type | tuple[type, ...]] = {
 
 
 class Schema(ABC):
-    """Abstract base for JSON Schema fragments describing tool parameters.
-
-    Concrete types live in :mod:`elebot.agent.tools.schema`; all implement
-    :meth:`to_json_schema` and :meth:`validate_value`. Class methods
-    :meth:`validate_json_schema_value` and :meth:`fragment` are the shared validation and normalization entry points.
-    """
+    """描述工具参数 JSON Schema 片段的抽象基类。"""
 
     @staticmethod
     def resolve_json_schema_type(t: Any) -> str | None:
-        """Resolve the non-null type name from JSON Schema ``type`` (e.g. ``['string','null']`` -> ``'string'``)."""
+        """解析 JSON Schema ``type`` 中的非空主类型。
+
+        参数:
+            t: 原始 ``type`` 字段值。
+
+        返回:
+            解析出的主类型字符串；无法解析时返回 ``None``。
+        """
         if isinstance(t, list):
             return next((x for x in t if x != "null"), None)
         return t  # type: ignore[return-value]
 
     @staticmethod
     def subpath(path: str, key: str) -> str:
+        """拼接嵌套字段路径。
+
+        参数:
+            path: 当前路径前缀。
+            key: 子字段名。
+
+        返回:
+            拼接后的字段路径字符串。
+        """
         return f"{path}.{key}" if path else key
 
     @staticmethod
     def validate_json_schema_value(val: Any, schema: dict[str, Any], path: str = "") -> list[str]:
-        """Validate ``val`` against a JSON Schema fragment; returns error messages (empty means valid).
+        """按 JSON Schema 片段校验参数值。
 
-        Used by :class:`Tool` and each concrete Schema's :meth:`validate_value`.
+        参数:
+            val: 待校验的值。
+            schema: JSON Schema 片段。
+            path: 当前字段路径。
+
+        返回:
+            错误信息列表；为空表示校验通过。
         """
         raw_type = schema.get("type")
         nullable = (isinstance(raw_type, list) and "null" in raw_type) or schema.get("nullable", False)
@@ -95,8 +112,15 @@ class Schema(ABC):
 
     @staticmethod
     def fragment(value: Any) -> dict[str, Any]:
-        """Normalize a Schema instance or an existing JSON Schema dict to a fragment dict."""
-        # Try to_json_schema first: Schema instances must be distinguished from dicts that are already JSON Schema
+        """把 Schema 对象或现成字典统一转换为片段字典。
+
+        参数:
+            value: Schema 实例或 JSON Schema 字典。
+
+        返回:
+            统一后的 JSON Schema 片段字典。
+        """
+        # 先尝试 to_json_schema，避免把实现该方法的 Schema 对象误当成普通 dict。
         to_js = getattr(value, "to_json_schema", None)
         if callable(to_js):
             return to_js()
@@ -106,16 +130,28 @@ class Schema(ABC):
 
     @abstractmethod
     def to_json_schema(self) -> dict[str, Any]:
-        """Return a fragment dict compatible with :meth:`validate_json_schema_value`."""
+        """返回当前对象对应的 JSON Schema 片段。
+
+        返回:
+            可供统一校验逻辑使用的 Schema 字典。
+        """
         ...
 
     def validate_value(self, value: Any, path: str = "") -> list[str]:
-        """Validate a single value; returns error messages (empty means pass). Subclasses may override for extra rules."""
+        """校验单个参数值。
+
+        参数:
+            value: 待校验的值。
+            path: 当前字段路径。
+
+        返回:
+            错误信息列表；为空表示校验通过。
+        """
         return Schema.validate_json_schema_value(value, self.to_json_schema(), path)
 
 
 class Tool(ABC):
-    """Agent capability: read files, run commands, etc."""
+    """定义 Agent 可调用工具的统一抽象。"""
 
     _TYPE_MAP = {
         "string": str,
@@ -130,45 +166,83 @@ class Tool(ABC):
 
     @staticmethod
     def _resolve_type(t: Any) -> str | None:
-        """Pick first non-null type from JSON Schema unions like ``['string','null']``."""
+        """从联合类型里提取主类型。
+
+        参数:
+            t: 原始 ``type`` 字段值。
+
+        返回:
+            非空主类型名称。
+        """
         return Schema.resolve_json_schema_type(t)
 
     @property
     @abstractmethod
     def name(self) -> str:
-        """Tool name used in function calls."""
+        """返回工具调用使用的名称。
+
+        返回:
+            工具名称字符串。
+        """
         ...
 
     @property
     @abstractmethod
     def description(self) -> str:
-        """Description of what the tool does."""
+        """返回工具用途说明。
+
+        返回:
+            面向模型的工具描述文本。
+        """
         ...
 
     @property
     @abstractmethod
     def parameters(self) -> dict[str, Any]:
-        """JSON Schema for tool parameters."""
+        """返回工具参数的 JSON Schema。
+
+        返回:
+            参数约束字典。
+        """
         ...
 
     @property
     def read_only(self) -> bool:
-        """Whether this tool is side-effect free and safe to parallelize."""
+        """判断工具是否只读。
+
+        返回:
+            只读工具返回 ``True``。
+        """
         return False
 
     @property
     def concurrency_safe(self) -> bool:
-        """Whether this tool can run alongside other concurrency-safe tools."""
+        """判断工具是否适合与其它工具并发执行。
+
+        返回:
+            可并发时返回 ``True``。
+        """
         return self.read_only and not self.exclusive
 
     @property
     def exclusive(self) -> bool:
-        """Whether this tool should run alone even if concurrency is enabled."""
+        """判断工具是否需要独占执行。
+
+        返回:
+            需要独占时返回 ``True``。
+        """
         return False
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> Any:
-        """Run the tool; returns a string or list of content blocks."""
+        """执行工具主体逻辑。
+
+        参数:
+            **kwargs: 经过校验后的工具参数。
+
+        返回:
+            字符串结果或内容块列表。
+        """
         ...
 
     def _cast_object(self, obj: Any, schema: dict[str, Any]) -> dict[str, Any]:
@@ -178,7 +252,14 @@ class Tool(ABC):
         return {k: self._cast_value(v, props[k]) if k in props else v for k, v in obj.items()}
 
     def cast_params(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Apply safe schema-driven casts before validation."""
+        """在校验前按 Schema 做安全类型预转换。
+
+        参数:
+            params: 原始参数字典。
+
+        返回:
+            预转换后的参数字典。
+        """
         schema = self.parameters or {}
         if schema.get("type", "object") != "object":
             return params
@@ -223,7 +304,14 @@ class Tool(ABC):
         return val
 
     def validate_params(self, params: dict[str, Any]) -> list[str]:
-        """Validate against JSON schema; empty list means valid."""
+        """按参数 Schema 校验调用参数。
+
+        参数:
+            params: 待校验参数字典。
+
+        返回:
+            错误信息列表；为空表示校验通过。
+        """
         if not isinstance(params, dict):
             return [f"parameters must be an object, got {type(params).__name__}"]
         schema = self.parameters or {}
@@ -232,7 +320,11 @@ class Tool(ABC):
         return Schema.validate_json_schema_value(params, {**schema, "type": "object"}, "")
 
     def to_schema(self) -> dict[str, Any]:
-        """OpenAI function schema."""
+        """导出 OpenAI function calling 所需的工具定义。
+
+        返回:
+            OpenAI 风格工具描述字典。
+        """
         return {
             "type": "function",
             "function": {
@@ -244,27 +336,33 @@ class Tool(ABC):
 
 
 def tool_parameters(schema: dict[str, Any]) -> Callable[[type[_ToolT]], type[_ToolT]]:
-    """Class decorator: attach JSON Schema and inject a concrete ``parameters`` property.
+    """为工具类挂载参数 Schema 装饰器。
 
-    Use on ``Tool`` subclasses instead of writing ``@property def parameters``. The
-    schema is stored on the class and returned as a fresh copy on each access.
+    参数:
+        schema: 工具参数的根 Schema 字典。
 
-    Example::
-
-        @tool_parameters({
-            "type": "object",
-            "properties": {"path": {"type": "string"}},
-            "required": ["path"],
-        })
-        class ReadFileTool(Tool):
-            ...
+    返回:
+        一个类装饰器，用于注入 ``parameters`` 属性实现。
     """
 
     def decorator(cls: type[_ToolT]) -> type[_ToolT]:
+        """把 Schema 固化到工具类上并补齐 ``parameters`` 属性。
+
+        参数:
+            cls: 待装饰的工具类。
+
+        返回:
+            注入参数属性后的工具类。
+        """
         frozen = deepcopy(schema)
 
         @property
         def parameters(self: Any) -> dict[str, Any]:
+            """返回工具参数 Schema 的独立副本。
+
+            返回:
+                当前工具的参数 Schema 副本。
+            """
             return deepcopy(frozen)
 
         cls._tool_parameters_schema = deepcopy(frozen)

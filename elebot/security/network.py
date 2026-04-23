@@ -11,14 +11,14 @@ from urllib.parse import urlparse
 _BLOCKED_NETWORKS = [
     ipaddress.ip_network("0.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("100.64.0.0/10"),   # 中文说明：carrier-grade NAT
+    ipaddress.ip_network("100.64.0.0/10"),   # 运营商级 NAT，默认按内网处理。
     ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("169.254.0.0/16"),   # 中文说明：link-local / cloud metadata
+    ipaddress.ip_network("169.254.0.0/16"),   # 链路本地地址，也覆盖常见云元数据入口。
     ipaddress.ip_network("172.16.0.0/12"),
     ipaddress.ip_network("192.168.0.0/16"),
     ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),          # 中文说明：unique local
-    ipaddress.ip_network("fe80::/10"),         # 中文说明：link-local v6
+    ipaddress.ip_network("fc00::/7"),          # IPv6 本地唯一地址。
+    ipaddress.ip_network("fe80::/10"),         # IPv6 链路本地地址。
 ]
 
 _URL_RE = re.compile(r"https?://[^\s\"'`;|<>]+", re.IGNORECASE)
@@ -27,15 +27,11 @@ _allowed_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
 
 
 def configure_ssrf_whitelist(cidrs: list[str]) -> None:
-    """中文说明：configure_ssrf_whitelist。
+    """配置允许放行的网段白名单。
 
-    参数:
-        cidrs: 待补充参数说明。
-
-    返回:
-        待补充返回值说明。
+    默认规则会拦掉所有私网和本地地址。
+    如果部署环境必须访问特定内网段，可以在这里显式开口，而不是直接放松整体校验。
     """
-    """Allow specific CIDR ranges to bypass SSRF blocking (e.g. Tailscale's 100.64.0.0/10)."""
     global _allowed_networks
     nets = []
     for cidr in cidrs:
@@ -53,17 +49,10 @@ def _is_private(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
 
 
 def validate_url_target(url: str) -> tuple[bool, str]:
-    """中文说明：validate_url_target。
+    """校验某个 URL 是否适合发起外部请求。
 
-    参数:
-        url: 待补充参数说明。
-
-    返回:
-        待补充返回值说明。
-    """
-    """Validate a URL is safe to fetch: scheme, hostname, and resolved IPs.
-
-    Returns (ok, error_message).  When ok is True, error_message is empty.
+    这里不仅检查协议是否合法，还会把域名解析成 IP 再逐个过一遍内网规则，
+    避免攻击者用公开域名指向本地或私网地址绕过 SSRF 防护。
     """
     try:
         p = urlparse(url)
@@ -96,15 +85,11 @@ def validate_url_target(url: str) -> tuple[bool, str]:
 
 
 def validate_resolved_url(url: str) -> tuple[bool, str]:
-    """中文说明：validate_resolved_url。
+    """校验已经得到的跳转目标是否仍然安全。
 
-    参数:
-        url: 待补充参数说明。
-
-    返回:
-        待补充返回值说明。
+    这个入口主要用于处理重定向：
+    首次请求前会校验原始 URL，跳转后再补一次校验，避免被带进内网地址。
     """
-    """Validate an already-fetched URL (e.g. after redirect). Only checks the IP, skips DNS."""
     try:
         p = urlparse(url)
     except Exception:
@@ -119,7 +104,7 @@ def validate_resolved_url(url: str) -> tuple[bool, str]:
         if _is_private(addr):
             return False, f"Redirect target is a private address: {addr}"
     except ValueError:
-        # 中文说明：hostname is a domain name, resolve it
+        # 跳转目标不一定直接给 IP，因此域名场景仍要补一次解析校验。
         try:
             infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         except socket.gaierror:
@@ -136,15 +121,7 @@ def validate_resolved_url(url: str) -> tuple[bool, str]:
 
 
 def contains_internal_url(command: str) -> bool:
-    """中文说明：contains_internal_url。
-
-    参数:
-        command: 待补充参数说明。
-
-    返回:
-        待补充返回值说明。
-    """
-    """Return True if the command string contains a URL targeting an internal/private address."""
+    """判断一段命令文本里是否夹带了指向内网的 URL。"""
     for m in _URL_RE.finditer(command):
         url = m.group(0)
         ok, _ = validate_url_target(url)

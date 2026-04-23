@@ -1,4 +1,4 @@
-"""OpenAI-compatible provider for all non-Anthropic LLM APIs."""
+"""OpenAI 兼容提供方，统一承接非 Anthropic 的主流接口。"""
 
 from __future__ import annotations
 
@@ -128,11 +128,7 @@ def _is_direct_openai_base(api_base: str | None) -> bool:
 
 
 class OpenAICompatProvider(LLMProvider):
-    """Unified provider for all OpenAI-compatible APIs.
-
-    Receives a resolved ``ProviderSpec`` from the caller — no internal
-    registry lookups needed.
-    """
+    """统一封装 OpenAI 兼容接口的请求构造、解析与回退逻辑。"""
 
     def __init__(
         self,
@@ -142,6 +138,18 @@ class OpenAICompatProvider(LLMProvider):
         extra_headers: dict[str, str] | None = None,
         spec: ProviderSpec | None = None,
     ):
+        """初始化 OpenAI 兼容提供方。
+
+        参数:
+            api_key: 提供方 API Key。
+            api_base: 提供方基础地址。
+            default_model: 默认模型名称。
+            extra_headers: 额外请求头。
+            spec: 已解析好的提供方规格。
+
+        返回:
+            无返回值。
+        """
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
@@ -228,6 +236,14 @@ class OpenAICompatProvider(LLMProvider):
         id_map: dict[str, str] = {}
 
         def map_id(value: Any) -> Any:
+            """统一映射工具调用标识，避免同一请求内出现不同格式。
+
+            参数:
+                value: 原始工具调用标识。
+
+            返回:
+                标准化后的标识；非字符串值原样返回。
+            """
             if not isinstance(value, str):
                 return value
             return id_map.setdefault(value, self._normalize_tool_call_id(value))
@@ -244,16 +260,13 @@ class OpenAICompatProvider(LLMProvider):
                     normalized.append(tc_clean)
                 clean["tool_calls"] = normalized
                 if clean.get("role") == "assistant":
-                    # Some OpenAI-compatible gateways reject assistant messages
-                    # that mix non-empty content with tool_calls.
+                    # 某些兼容网关不接受带有 tool_calls 且 content 非空的 assistant 消息。
                     clean["content"] = None
             if "tool_call_id" in clean and clean["tool_call_id"]:
                 clean["tool_call_id"] = map_id(clean["tool_call_id"])
         return self._enforce_role_alternation(sanitized)
 
-    # ------------------------------------------------------------------
-    # Build kwargs
-    # ------------------------------------------------------------------
+    # 请求参数在这里一次性收口，避免上层散落处理不同兼容分支。
 
     @staticmethod
     def _supports_temperature(
@@ -296,8 +309,7 @@ class OpenAICompatProvider(LLMProvider):
             "messages": self._sanitize_messages(self._sanitize_empty_content(messages)),
         }
 
-        # GPT-5 and reasoning models (o1/o3/o4) reject temperature when
-        # reasoning_effort is active.  Only include it when safe.
+        # GPT-5 与推理模型在开启 reasoning_effort 时会拒绝 temperature，这里只在安全时发送。
         if self._supports_temperature(model_name, reasoning_effort):
             kwargs["temperature"] = temperature
 
@@ -316,9 +328,7 @@ class OpenAICompatProvider(LLMProvider):
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
 
-        # Provider-specific thinking parameters.
-        # Only sent when reasoning_effort is explicitly configured so that
-        # the provider default is preserved otherwise.
+        # 仅当显式配置 reasoning_effort 时才注入提供方特有思考参数，避免覆盖默认行为。
         if spec and reasoning_effort is not None:
             thinking_enabled = reasoning_effort.lower() != "minimal"
             extra: dict[str, Any] | None = None
@@ -422,9 +432,7 @@ class OpenAICompatProvider(LLMProvider):
 
         return body
 
-    # ------------------------------------------------------------------
-    # Response parsing
-    # ------------------------------------------------------------------
+    # 解析逻辑统一返回标准 LLMResponse，主循环无需了解各家字段差异。
 
     @staticmethod
     def _maybe_mapping(value: Any) -> dict[str, Any] | None:
@@ -469,7 +477,7 @@ class OpenAICompatProvider(LLMProvider):
         responses.  Provider-specific ``cached_tokens`` fields are normalised
         under a single key; see the priority chain inside for details.
         """
-        # --- resolve usage object ---
+        # 先把 usage 对象取出来，兼容原始字典和 SDK 模型对象两种形态。
         usage_obj = None
         response_map = cls._maybe_mapping(response)
         if response_map is not None:
@@ -493,13 +501,11 @@ class OpenAICompatProvider(LLMProvider):
         else:
             return {}
 
-        # --- cached_tokens (normalised across providers) ---
-        # Try nested paths first (dict), fall back to attribute (SDK object).
-        # Priority order ensures the most specific field wins.
+        # 再统一提取 cached_tokens，并按更具体的字段优先。
         for path in (
-            ("prompt_tokens_details", "cached_tokens"),  # OpenAI/Zhipu/MiniMax/Qwen/Mistral/xAI
-            ("cached_tokens",),                          # StepFun/Moonshot (top-level)
-            ("prompt_cache_hit_tokens",),                # DeepSeek/SiliconFlow
+            ("prompt_tokens_details", "cached_tokens"),  # 这组提供方把缓存命中量放在 prompt_tokens_details 下。
+            ("cached_tokens",),                          # 这组提供方直接把缓存命中量放在顶层 cached_tokens 字段。
+            ("prompt_cache_hit_tokens",),                # 这组提供方使用 prompt_cache_hit_tokens 命名。
         ):
             cached = cls._get_nested_int(usage_map, path)
             if not cached and usage_obj:
@@ -556,7 +562,7 @@ class OpenAICompatProvider(LLMProvider):
             finish_reason = str(choice0.get("finish_reason") or "stop")
 
             raw_tool_calls: list[Any] = []
-            # StepFun Plan: fallback to reasoning field when content is empty
+            # StepFun Plan 在 content 为空时可能把主要文本放进 reasoning 字段。
             if not content and msg0.get("reasoning"):
                 content = self._extract_text_content(msg0.get("reasoning"))
             reasoning_content = msg0.get("reasoning_content")
@@ -832,9 +838,7 @@ class OpenAICompatProvider(LLMProvider):
             **OpenAICompatProvider._extract_error_metadata(e),
         )
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    # 对外只暴露标准 chat / chat_stream 接口，方便主链路统一调度。
 
     async def chat(
         self,
@@ -846,6 +850,20 @@ class OpenAICompatProvider(LLMProvider):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> LLMResponse:
+        """执行一次非流式 OpenAI 兼容请求。
+
+        参数:
+            messages: 消息列表。
+            tools: 可选工具定义。
+            model: 指定模型名称。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: 推理强度配置。
+            tool_choice: 工具选择策略。
+
+        返回:
+            标准化后的模型响应。
+        """
         try:
             if self._should_use_responses_api(model, reasoning_effort):
                 try:
@@ -877,6 +895,21 @@ class OpenAICompatProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
+        """执行一次流式 OpenAI 兼容请求。
+
+        参数:
+            messages: 消息列表。
+            tools: 可选工具定义。
+            model: 指定模型名称。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: 推理强度配置。
+            tool_choice: 工具选择策略。
+            on_content_delta: 文本流回调。
+
+        返回:
+            标准化后的模型响应。
+        """
         idle_timeout_s = int(os.environ.get("NANOBOT_STREAM_IDLE_TIMEOUT_S", "90"))
         try:
             if self._should_use_responses_api(model, reasoning_effort):
@@ -950,4 +983,9 @@ class OpenAICompatProvider(LLMProvider):
             return self._handle_error(e, spec=self._spec, api_base=self.api_base)
 
     def get_default_model(self) -> str:
+        """返回 OpenAI 兼容提供方的默认模型。
+
+        返回:
+            当前默认模型名称。
+        """
         return self.default_model

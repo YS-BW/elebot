@@ -1,4 +1,4 @@
-"""Skills loader for agent capabilities."""
+"""加载并整理 Agent 可见技能。"""
 
 import json
 import os
@@ -6,10 +6,10 @@ import re
 import shutil
 from pathlib import Path
 
-# Default builtin skills directory (relative to this file)
+# 默认内置技能目录，按当前文件位置解析。
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
-# Opening ---, YAML body (group 1), closing --- on its own line; supports CRLF.
+# 提取标准 frontmatter，兼容独占行的 `---` 和 CRLF 换行。
 _STRIP_SKILL_FRONTMATTER = re.compile(
     r"^---\s*\r?\n(.*?)\r?\n---\s*\r?\n?",
     re.DOTALL,
@@ -21,14 +21,19 @@ def _escape_xml(text: str) -> str:
 
 
 class SkillsLoader:
-    """
-    Loader for agent skills.
-
-    Skills are markdown files (SKILL.md) that teach the agent how to use
-    specific tools or perform certain tasks.
-    """
+    """负责发现、读取和汇总技能文件。"""
 
     def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None, disabled_skills: set[str] | None = None):
+        """初始化技能加载器。
+
+        参数:
+            workspace: 当前工作区目录。
+            builtin_skills_dir: 内置技能目录；为空时使用默认目录。
+            disabled_skills: 需要过滤掉的技能名称集合。
+
+        返回:
+            None
+        """
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
@@ -51,14 +56,13 @@ class SkillsLoader:
         return entries
 
     def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
-        """
-        List all available skills.
+        """列出当前可见的技能清单。
 
-        Args:
-            filter_unavailable: If True, filter out skills with unmet requirements.
+        参数:
+            filter_unavailable: 为真时过滤掉依赖条件未满足的技能。
 
-        Returns:
-            List of skill info dicts with 'name', 'path', 'source'.
+        返回:
+            由技能名称、路径和来源组成的字典列表。
         """
         skills = self._skill_entries_from_dir(self.workspace_skills, "workspace")
         workspace_names = {entry["name"] for entry in skills}
@@ -75,14 +79,13 @@ class SkillsLoader:
         return skills
 
     def load_skill(self, name: str) -> str | None:
-        """
-        Load a skill by name.
+        """按名称读取技能正文。
 
-        Args:
-            name: Skill name (directory name).
+        参数:
+            name: 技能目录名称。
 
-        Returns:
-            Skill content or None if not found.
+        返回:
+            读取到的技能 Markdown 文本；不存在时返回 `None`。
         """
         roots = [self.workspace_skills]
         if self.builtin_skills:
@@ -94,14 +97,13 @@ class SkillsLoader:
         return None
 
     def load_skills_for_context(self, skill_names: list[str]) -> str:
-        """
-        Load specific skills for inclusion in agent context.
+        """读取指定技能并整理成可注入上下文的文本。
 
-        Args:
-            skill_names: List of skill names to load.
+        参数:
+            skill_names: 需要加载的技能名称列表。
 
-        Returns:
-            Formatted skills content.
+        返回:
+            适合直接注入系统提示词的技能文本。
         """
         parts = [
             f"### Skill: {name}\n\n{self._strip_frontmatter(markdown)}"
@@ -111,14 +113,13 @@ class SkillsLoader:
         return "\n\n---\n\n".join(parts)
 
     def build_skills_summary(self) -> str:
-        """
-        Build a summary of all skills (name, description, path, availability).
+        """构造全部技能的摘要视图。
 
-        This is used for progressive loading - the agent can read the full
-        skill content using read_file when needed.
+        参数:
+            无。
 
-        Returns:
-            XML-formatted skills summary.
+        返回:
+            供渐进式加载使用的 XML 摘要文本；无技能时返回空字符串。
         """
         all_skills = self.list_skills(filter_unavailable=False)
         if not all_skills:
@@ -160,7 +161,7 @@ class SkillsLoader:
         meta = self.get_skill_metadata(name)
         if meta and meta.get("description"):
             return meta["description"]
-        return name  # Fallback to skill name
+        return name  # 描述缺失时退回技能名，至少保证摘要仍可读。
 
     def _strip_frontmatter(self, content: str) -> str:
         """Remove YAML frontmatter from markdown content."""
@@ -197,7 +198,14 @@ class SkillsLoader:
         return self._parse_elebot_metadata(meta.get("metadata", ""))
 
     def get_always_skills(self) -> list[str]:
-        """Get skills marked as always=true that meet requirements."""
+        """返回默认总是启用且依赖满足的技能名称列表。
+
+        参数:
+            无。
+
+        返回:
+            需要自动注入上下文的技能名称列表。
+        """
         return [
             entry["name"]
             for entry in self.list_skills(filter_unavailable=True)
@@ -209,14 +217,13 @@ class SkillsLoader:
         ]
 
     def get_skill_metadata(self, name: str) -> dict | None:
-        """
-        Get metadata from a skill's frontmatter.
+        """读取技能 frontmatter 元数据。
 
-        Args:
-            name: Skill name.
+        参数:
+            name: 技能名称。
 
-        Returns:
-            Metadata dict or None.
+        返回:
+            解析后的元数据字典；缺失或格式不合法时返回 `None`。
         """
         content = self.load_skill(name)
         if not content or not content.startswith("---"):

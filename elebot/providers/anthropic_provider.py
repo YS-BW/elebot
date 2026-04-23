@@ -1,4 +1,4 @@
-"""Anthropic provider — direct SDK integration for Claude models."""
+"""Anthropic 提供方，实现 Claude 模型的原生 SDK 接入。"""
 
 from __future__ import annotations
 
@@ -22,11 +22,7 @@ def _gen_tool_id() -> str:
 
 
 class AnthropicProvider(LLMProvider):
-    """LLM provider using the native Anthropic SDK for Claude models.
-
-    Handles message format conversion (OpenAI → Anthropic Messages API),
-    prompt caching, extended thinking, tool calls, and streaming.
-    """
+    """封装 Claude 模型所需的消息转换、缓存与流式调用能力。"""
 
     def __init__(
         self,
@@ -35,6 +31,17 @@ class AnthropicProvider(LLMProvider):
         default_model: str = "claude-sonnet-4-20250514",
         extra_headers: dict[str, str] | None = None,
     ):
+        """初始化 Anthropic 提供方。
+
+        参数:
+            api_key: Anthropic API Key。
+            api_base: 自定义服务地址。
+            default_model: 默认模型名称。
+            extra_headers: 需要附加到请求中的额外请求头。
+
+        返回:
+            无返回值。
+        """
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
@@ -48,7 +55,7 @@ class AnthropicProvider(LLMProvider):
             client_kw["base_url"] = api_base
         if extra_headers:
             client_kw["default_headers"] = extra_headers
-        # Keep retries centralized in LLMProvider._run_with_retry to avoid retry amplification.
+        # 重试统一交给基类处理，避免 SDK 自带重试与外层重试叠加后放大请求量。
         client_kw["max_retries"] = 0
         self._client = AsyncAnthropic(**client_kw)
 
@@ -114,9 +121,7 @@ class AnthropicProvider(LLMProvider):
             return model[len("anthropic/"):]
         return model
 
-    # ------------------------------------------------------------------
-    # Message conversion: OpenAI chat format → Anthropic Messages API
-    # ------------------------------------------------------------------
+    # 这里集中完成 OpenAI 风格消息到 Anthropic Messages API 的转换。
 
     def _convert_messages(
         self, messages: list[dict[str, Any]],
@@ -264,9 +269,7 @@ class AnthropicProvider(LLMProvider):
                 merged.append(msg)
         return merged
 
-    # ------------------------------------------------------------------
-    # Tool definition conversion
-    # ------------------------------------------------------------------
+    # 工具定义也要在这一层统一转换，避免调用方感知 Anthropic 专用格式。
 
     @staticmethod
     def _convert_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
@@ -306,9 +309,7 @@ class AnthropicProvider(LLMProvider):
                 return {"type": "tool", "name": name}
         return {"type": "auto"}
 
-    # ------------------------------------------------------------------
-    # Prompt caching
-    # ------------------------------------------------------------------
+    # Prompt caching 标记只在本提供方内部维护，避免上层分散处理。
 
     @classmethod
     def _apply_cache_control(
@@ -344,9 +345,7 @@ class AnthropicProvider(LLMProvider):
 
         return system, new_msgs, new_tools
 
-    # ------------------------------------------------------------------
-    # Build API kwargs
-    # ------------------------------------------------------------------
+    # 请求参数构造需要和思考模式、缓存能力一起决策，因此收口在这里。
 
     def _build_kwargs(
         self,
@@ -381,9 +380,7 @@ class AnthropicProvider(LLMProvider):
             kwargs["system"] = system
 
         if reasoning_effort == "adaptive":
-            # Adaptive thinking: model decides when and how much to think
-            # Supported on claude-sonnet-4-6 and claude-opus-4-6.
-            # Also auto-enables interleaved thinking between tool calls.
+            # adaptive 会让模型自行决定思考强度，同时启用工具调用间的交错 thinking。
             kwargs["thinking"] = {"type": "adaptive"}
             kwargs["temperature"] = 1.0
         elif thinking_enabled:
@@ -406,9 +403,7 @@ class AnthropicProvider(LLMProvider):
 
         return kwargs
 
-    # ------------------------------------------------------------------
-    # Response parsing
-    # ------------------------------------------------------------------
+    # 响应解析统一收敛成标准 LLMResponse，方便上层复用同一套循环逻辑。
 
     @staticmethod
     def _parse_response(response: Any) -> LLMResponse:
@@ -450,7 +445,7 @@ class AnthropicProvider(LLMProvider):
                 val = getattr(response.usage, attr, 0)
                 if val:
                     usage[attr] = val
-            # Normalize to cached_tokens for downstream consistency.
+            # 统一折叠为 cached_tokens，避免下游区分 Anthropic 的专有字段名。
             if cache_read:
                 usage["cached_tokens"] = cache_read
 
@@ -462,9 +457,7 @@ class AnthropicProvider(LLMProvider):
             thinking_blocks=thinking_blocks or None,
         )
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    # 对外只暴露 chat、chat_stream 与默认模型查询接口。
 
     async def chat(
         self,
@@ -476,6 +469,20 @@ class AnthropicProvider(LLMProvider):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> LLMResponse:
+        """执行一次非流式 Anthropic 对话请求。
+
+        参数:
+            messages: 消息列表。
+            tools: 可选工具定义。
+            model: 指定模型名称。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: thinking 强度配置。
+            tool_choice: 工具选择策略。
+
+        返回:
+            标准化后的模型响应。
+        """
         kwargs = self._build_kwargs(
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,
@@ -497,6 +504,21 @@ class AnthropicProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
+        """执行一次流式 Anthropic 对话请求。
+
+        参数:
+            messages: 消息列表。
+            tools: 可选工具定义。
+            model: 指定模型名称。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: thinking 强度配置。
+            tool_choice: 工具选择策略。
+            on_content_delta: 文本流回调。
+
+        返回:
+            标准化后的模型响应。
+        """
         kwargs = self._build_kwargs(
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,
@@ -533,4 +555,9 @@ class AnthropicProvider(LLMProvider):
             return self._handle_error(e)
 
     def get_default_model(self) -> str:
+        """返回 Anthropic 提供方的默认模型。
+
+        返回:
+            当前默认模型名称。
+        """
         return self.default_model

@@ -1,9 +1,4 @@
-"""Azure OpenAI provider using the OpenAI SDK Responses API.
-
-Uses ``AsyncOpenAI`` pointed at ``https://{endpoint}/openai/v1/`` which
-routes to the Responses API (``/responses``).  Reuses shared conversion
-helpers from :mod:`elebot.providers.openai_responses`.
-"""
+"""Azure OpenAI 提供方，基于 OpenAI SDK 的 Responses API 实现。"""
 
 from __future__ import annotations
 
@@ -23,15 +18,7 @@ from elebot.providers.openai_responses import (
 
 
 class AzureOpenAIProvider(LLMProvider):
-    """Azure OpenAI provider backed by the Responses API.
-
-    Features:
-    - Uses the OpenAI Python SDK (``AsyncOpenAI``) with
-      ``base_url = {endpoint}/openai/v1/``
-    - Calls ``client.responses.create()`` (Responses API)
-    - Reuses shared message/tool/SSE conversion from
-      ``openai_responses``
-    """
+    """封装 Azure OpenAI 的 Responses API 调用能力。"""
 
     def __init__(
         self,
@@ -39,6 +26,16 @@ class AzureOpenAIProvider(LLMProvider):
         api_base: str = "",
         default_model: str = "gpt-5.2-chat",
     ):
+        """初始化 Azure OpenAI 提供方。
+
+        参数:
+            api_key: Azure OpenAI API Key。
+            api_base: Azure 终结点地址。
+            default_model: 默认部署或模型名称。
+
+        返回:
+            无返回值。
+        """
         super().__init__(api_key, api_base)
         self.default_model = default_model
 
@@ -47,12 +44,12 @@ class AzureOpenAIProvider(LLMProvider):
         if not api_base:
             raise ValueError("Azure OpenAI api_base is required")
 
-        # Normalise: ensure trailing slash
+        # 统一补齐末尾斜杠，避免后续拼接 base_url 时出现双路径分支。
         if not api_base.endswith("/"):
             api_base += "/"
         self.api_base = api_base
 
-        # SDK client targeting the Azure Responses API endpoint
+        # 这里直接指向 Azure 的 Responses API 前缀，避免上层再做地址推断。
         base_url = f"{api_base.rstrip('/')}/openai/v1/"
         self._client = AsyncOpenAI(
             api_key=api_key,
@@ -61,16 +58,22 @@ class AzureOpenAIProvider(LLMProvider):
             max_retries=0,
         )
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
+    # 请求体构造与错误转换统一放在这一层，调用方只关心标准接口。
 
     @staticmethod
     def _supports_temperature(
         deployment_name: str,
         reasoning_effort: str | None = None,
     ) -> bool:
-        """Return True when temperature is likely supported for this deployment."""
+        """判断当前部署是否支持 temperature 参数。
+
+        参数:
+            deployment_name: Azure 部署名称。
+            reasoning_effort: 推理强度配置。
+
+        返回:
+            支持时返回 ``True``。
+        """
         if reasoning_effort:
             return False
         name = deployment_name.lower()
@@ -86,7 +89,20 @@ class AzureOpenAIProvider(LLMProvider):
         reasoning_effort: str | None,
         tool_choice: str | dict[str, Any] | None,
     ) -> dict[str, Any]:
-        """Build the Responses API request body from Chat-Completions-style args."""
+        """把统一调用参数转换为 Azure Responses API 请求体。
+
+        参数:
+            messages: 消息列表。
+            tools: 可选工具定义。
+            model: 指定模型或部署名称。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: 推理强度配置。
+            tool_choice: 工具选择策略。
+
+        返回:
+            可直接传给 SDK 的请求体字典。
+        """
         deployment = model or self.default_model
         instructions, input_items = convert_messages(self._sanitize_empty_content(messages))
 
@@ -123,9 +139,7 @@ class AzureOpenAIProvider(LLMProvider):
             retry_after = LLMProvider._extract_retry_after(msg)
         return LLMResponse(content=msg, finish_reason="error", retry_after=retry_after)
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    # 对外接口保持与其他提供方一致，便于统一接入主循环。
 
     async def chat(
         self,
@@ -137,6 +151,20 @@ class AzureOpenAIProvider(LLMProvider):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> LLMResponse:
+        """执行一次非流式 Azure OpenAI 请求。
+
+        参数:
+            messages: 消息列表。
+            tools: 可选工具定义。
+            model: 指定模型或部署名称。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: 推理强度配置。
+            tool_choice: 工具选择策略。
+
+        返回:
+            标准化后的模型响应。
+        """
         body = self._build_body(
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,
@@ -158,6 +186,21 @@ class AzureOpenAIProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
+        """执行一次流式 Azure OpenAI 请求。
+
+        参数:
+            messages: 消息列表。
+            tools: 可选工具定义。
+            model: 指定模型或部署名称。
+            max_tokens: 最大输出 token 数。
+            temperature: 采样温度。
+            reasoning_effort: 推理强度配置。
+            tool_choice: 工具选择策略。
+            on_content_delta: 文本流回调。
+
+        返回:
+            标准化后的模型响应。
+        """
         body = self._build_body(
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,
@@ -180,4 +223,9 @@ class AzureOpenAIProvider(LLMProvider):
             return self._handle_error(e)
 
     def get_default_model(self) -> str:
+        """返回 Azure OpenAI 的默认模型或部署名。
+
+        返回:
+            当前默认模型名称。
+        """
         return self.default_model

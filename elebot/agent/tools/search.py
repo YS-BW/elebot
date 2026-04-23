@@ -1,4 +1,4 @@
-"""Search tools: grep and glob."""
+"""搜索工具，提供 glob 与 grep 两类能力。"""
 
 from __future__ import annotations
 
@@ -133,14 +133,24 @@ class _SearchTool(_FsTool):
 
 
 class GlobTool(_SearchTool):
-    """Find files matching a glob pattern."""
+    """按 glob 模式查找文件或目录。"""
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            工具名称字符串。
+        """
         return "glob"
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            面向模型的工具描述文本。
+        """
         return (
             "Find files matching a glob pattern (e.g. '*.py', 'tests/**/test_*.py'). "
             "Results are sorted by modification time (newest first). "
@@ -149,10 +159,20 @@ class GlobTool(_SearchTool):
 
     @property
     def read_only(self) -> bool:
+        """声明该工具为只读工具。
+
+        返回:
+            恒为 ``True``。
+        """
         return True
 
     @property
     def parameters(self) -> dict[str, Any]:
+        """返回工具参数 Schema。
+
+        返回:
+            glob 工具参数定义字典。
+        """
         return {
             "type": "object",
             "properties": {
@@ -202,6 +222,20 @@ class GlobTool(_SearchTool):
         entry_type: str = "files",
         **kwargs: Any,
     ) -> str:
+        """执行 glob 搜索。
+
+        参数:
+            pattern: glob 模式。
+            path: 搜索起点目录。
+            max_results: 旧版结果上限别名。
+            head_limit: 当前结果上限。
+            offset: 结果偏移量。
+            entry_type: 搜索文件、目录或两者。
+            **kwargs: 兼容额外参数。
+
+        返回:
+            搜索结果文本。
+        """
         try:
             root = self._resolve(path or ".")
             if not root.exists():
@@ -251,16 +285,26 @@ class GlobTool(_SearchTool):
 
 
 class GrepTool(_SearchTool):
-    """Search file contents using a regex-like pattern."""
+    """按正则或纯文本搜索文件内容。"""
     _MAX_RESULT_CHARS = 128_000
     _MAX_FILE_BYTES = 2_000_000
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            工具名称字符串。
+        """
         return "grep"
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            面向模型的工具描述文本。
+        """
         return (
             "Search file contents with a regex pattern. "
             "Default output_mode is files_with_matches (file paths only); "
@@ -270,10 +314,20 @@ class GrepTool(_SearchTool):
 
     @property
     def read_only(self) -> bool:
+        """声明该工具为只读工具。
+
+        返回:
+            恒为 ``True``。
+        """
         return True
 
     @property
     def parameters(self) -> dict[str, Any]:
+        """返回工具参数 Schema。
+
+        返回:
+            grep 工具参数定义字典。
+        """
         return {
             "type": "object",
             "properties": {
@@ -393,6 +447,27 @@ class GrepTool(_SearchTool):
         offset: int = 0,
         **kwargs: Any,
     ) -> str:
+        """执行内容搜索。
+
+        参数:
+            pattern: 搜索模式。
+            path: 搜索起点。
+            glob: 文件 glob 过滤。
+            type: 文件类型过滤。
+            case_insensitive: 是否忽略大小写。
+            fixed_strings: 是否按纯文本匹配。
+            output_mode: 输出模式。
+            context_before: 前置上下文行数。
+            context_after: 后置上下文行数。
+            max_matches: content 模式下的旧版上限别名。
+            max_results: files/count 模式下的旧版上限别名。
+            head_limit: 当前结果上限。
+            offset: 结果偏移量。
+            **kwargs: 兼容额外参数。
+
+        返回:
+            搜索结果文本。
+        """
         try:
             target = self._resolve(path or ".")
             if not target.exists():

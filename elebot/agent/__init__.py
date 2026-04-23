@@ -1,4 +1,4 @@
-"""Agent core module."""
+"""EleBot Agent 主链路核心导出。"""
 
 from elebot.agent.context import ContextBuilder
 from elebot.agent.hook import AgentHook, AgentHookContext, CompositeHook

@@ -1,4 +1,4 @@
-"""Built-in slash command handlers."""
+"""内置 slash 命令处理器。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from elebot.utils.restart import set_restart_notice_to_env
 
 
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
-    """Cancel all active tasks and subagents for the session."""
+    """停止当前会话下的活动任务与子代理。"""
     loop = ctx.loop
     msg = ctx.msg
     tasks = loop._active_tasks.pop(msg.session_key, [])
@@ -34,7 +34,7 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
 
 
 async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
-    """Restart the process in-place via os.execv."""
+    """通过 `os.execv` 原地重启当前进程。"""
     msg = ctx.msg
     set_restart_notice_to_env(channel=msg.channel, chat_id=msg.chat_id)
 
@@ -50,7 +50,7 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
 
 
 async def cmd_status(ctx: CommandContext) -> OutboundMessage:
-    """Build an outbound status message for a session."""
+    """生成当前会话的状态消息。"""
     loop = ctx.loop
     session = ctx.session or loop.sessions.get_or_create(ctx.key)
     ctx_est = 0
@@ -61,7 +61,7 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     if ctx_est <= 0:
         ctx_est = loop._last_usage.get("prompt_tokens", 0)
     
-    # Fetch web search provider usage (best-effort, never blocks the response)
+    # 搜索用量只是附加信息，失败时不能影响 /status 主响应。
     search_usage_text: str | None = None
     try:
         from elebot.utils.searchusage import fetch_search_usage
@@ -73,7 +73,7 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
             usage = await fetch_search_usage(provider=provider, api_key=api_key)
             search_usage_text = usage.format()
     except Exception:
-        pass  # Never let usage fetch break /status
+        pass  # /status 必须稳定返回，不能因为附加信息查询失败而中断。
     return OutboundMessage(
         channel=ctx.msg.channel,
         chat_id=ctx.msg.chat_id,
@@ -90,7 +90,7 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
 
 
 async def cmd_new(ctx: CommandContext) -> OutboundMessage:
-    """Start a fresh session."""
+    """开启全新会话。"""
     loop = ctx.loop
     session = ctx.session or loop.sessions.get_or_create(ctx.key)
     snapshot = session.messages[session.last_consolidated:]
@@ -107,7 +107,7 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
 
 
 async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
-    """Manually trigger a Dream consolidation run."""
+    """手动触发一次 Dream 整理任务。"""
     import time
 
     loop = ctx.loop
@@ -136,7 +136,7 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
 
 
 def _extract_changed_files(diff: str) -> list[str]:
-    """Extract changed file paths from a unified diff."""
+    """从 unified diff 中提取变更文件路径。"""
     files: list[str] = []
     seen: set[str] = set()
     for line in diff.splitlines():
@@ -156,6 +156,7 @@ def _extract_changed_files(diff: str) -> list[str]:
 
 
 def _format_changed_files(diff: str) -> str:
+    """把变更文件列表格式化为展示文本。"""
     files = _extract_changed_files(diff)
     if not files:
         return "No tracked memory files changed."
@@ -163,6 +164,7 @@ def _format_changed_files(diff: str) -> str:
 
 
 def _format_dream_log_content(commit, diff: str, *, requested_sha: str | None = None) -> str:
+    """构造 Dream 版本日志展示文本。"""
     files_line = _format_changed_files(diff)
     lines = [
         "## Dream Update",
@@ -191,6 +193,7 @@ def _format_dream_log_content(commit, diff: str, *, requested_sha: str | None = 
 
 
 def _format_dream_restore_list(commits: list) -> str:
+    """构造可恢复的 Dream 版本列表文本。"""
     lines = [
         "## Dream Restore",
         "",
@@ -208,11 +211,7 @@ def _format_dream_restore_list(commits: list) -> str:
 
 
 async def cmd_dream_log(ctx: CommandContext) -> OutboundMessage:
-    """Show what the last Dream changed.
-
-    Default: diff of the latest commit (HEAD~1 vs HEAD).
-    With /dream-log <sha>: diff of that specific commit.
-    """
+    """展示 Dream 最近一次或指定版本的变更内容。"""
     store = ctx.loop.consolidator.store
     git = store.git
 
@@ -229,7 +228,7 @@ async def cmd_dream_log(ctx: CommandContext) -> OutboundMessage:
     args = ctx.args.strip()
 
     if args:
-        # Show diff of a specific commit
+        # 显式指定提交时，优先展示用户要求的那个版本。
         sha = args.split()[0]
         result = git.show_commit_diff(sha)
         if not result:
@@ -242,7 +241,7 @@ async def cmd_dream_log(ctx: CommandContext) -> OutboundMessage:
             commit, diff = result
             content = _format_dream_log_content(commit, diff, requested_sha=sha)
     else:
-        # Default: show the latest commit's diff
+        # 默认展示最近一次 Dream 提交及其差异。
         commits = git.log(max_entries=1)
         result = git.show_commit_diff(commits[0].sha) if commits else None
         if result:
@@ -258,12 +257,7 @@ async def cmd_dream_log(ctx: CommandContext) -> OutboundMessage:
 
 
 async def cmd_dream_restore(ctx: CommandContext) -> OutboundMessage:
-    """Restore memory files from a previous dream commit.
-
-    Usage:
-        /dream-restore          — list recent commits
-        /dream-restore <sha>    — revert a specific commit
-    """
+    """从历史 Dream 提交恢复记忆文件。"""
     store = ctx.loop.consolidator.store
     git = store.git
     if not git.is_initialized():
@@ -274,7 +268,7 @@ async def cmd_dream_restore(ctx: CommandContext) -> OutboundMessage:
 
     args = ctx.args.strip()
     if not args:
-        # Show recent commits for the user to pick
+        # 不带参数时先列出可恢复版本，避免用户盲目回滚。
         commits = git.log(max_entries=10)
         if not commits:
             content = "Dream memory has no saved versions to restore yet."
@@ -304,7 +298,7 @@ async def cmd_dream_restore(ctx: CommandContext) -> OutboundMessage:
 
 
 async def cmd_help(ctx: CommandContext) -> OutboundMessage:
-    """Return available slash commands."""
+    """返回可用 slash 命令列表。"""
     return OutboundMessage(
         channel=ctx.msg.channel,
         chat_id=ctx.msg.chat_id,
@@ -314,7 +308,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
 
 
 def build_help_text() -> str:
-    """Build canonical help text shared across channels."""
+    """构造各渠道共用的帮助文本。"""
     lines = [
         "🐈 elebot commands:",
         "/new — Start a new conversation",
@@ -330,7 +324,7 @@ def build_help_text() -> str:
 
 
 def register_builtin_commands(router: CommandRouter) -> None:
-    """Register the default set of slash commands."""
+    """注册默认内置 slash 命令。"""
     router.priority("/stop", cmd_stop)
     router.priority("/restart", cmd_restart)
     router.priority("/status", cmd_status)

@@ -1,4 +1,4 @@
-"""Voice transcription providers (Groq and OpenAI Whisper)."""
+"""语音转写提供方，当前包含 OpenAI Whisper 与 Groq。"""
 
 import os
 from pathlib import Path
@@ -8,13 +8,29 @@ from loguru import logger
 
 
 class OpenAITranscriptionProvider:
-    """Voice transcription provider using OpenAI's Whisper API."""
+    """基于 OpenAI Whisper API 的语音转写提供方。"""
 
     def __init__(self, api_key: str | None = None):
+        """初始化 OpenAI 语音转写提供方。
+
+        参数:
+            api_key: OpenAI API Key，未传时从环境变量读取。
+
+        返回:
+            无返回值。
+        """
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
         self.api_url = "https://api.openai.com/v1/audio/transcriptions"
 
     async def transcribe(self, file_path: str | Path) -> str:
+        """转写音频文件。
+
+        参数:
+            file_path: 待转写音频文件路径。
+
+        返回:
+            转写得到的文本；失败时返回空字符串。
+        """
         if not self.api_key:
             logger.warning("OpenAI API key not configured for transcription")
             return ""
@@ -38,25 +54,28 @@ class OpenAITranscriptionProvider:
 
 
 class GroqTranscriptionProvider:
-    """
-    Voice transcription provider using Groq's Whisper API.
-
-    Groq offers extremely fast transcription with a generous free tier.
-    """
+    """基于 Groq Whisper API 的语音转写提供方。"""
 
     def __init__(self, api_key: str | None = None):
+        """初始化 Groq 语音转写提供方。
+
+        参数:
+            api_key: Groq API Key，未传时从环境变量读取。
+
+        返回:
+            无返回值。
+        """
         self.api_key = api_key or os.environ.get("GROQ_API_KEY")
         self.api_url = "https://api.groq.com/openai/v1/audio/transcriptions"
 
     async def transcribe(self, file_path: str | Path) -> str:
-        """
-        Transcribe an audio file using Groq.
+        """转写音频文件。
 
-        Args:
-            file_path: Path to the audio file.
+        参数:
+            file_path: 待转写音频文件路径。
 
-        Returns:
-            Transcribed text.
+        返回:
+            转写得到的文本；失败时返回空字符串。
         """
         if not self.api_key:
             logger.warning("Groq API key not configured for transcription")

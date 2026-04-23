@@ -1,4 +1,4 @@
-"""Web search provider usage fetchers for /status command."""
+"""为 `/status` 获取搜索服务用量信息。"""
 
 from __future__ import annotations
 
@@ -9,25 +9,25 @@ from typing import Any
 
 @dataclass
 class SearchUsageInfo:
-    """Structured usage info returned by a provider fetcher."""
+    """搜索服务用量信息。"""
 
     provider: str
-    supported: bool = False          # True if the provider has a usage API
-    error: str | None = None         # Set when the API call failed
+    supported: bool = False          # 当前 provider 是否提供用量查询接口
+    error: str | None = None         # 接口调用失败时的错误信息
 
-    # Usage counters (None = not available for this provider)
+    # 基础计数；None 表示该 provider 不提供对应字段
     used: int | None = None
     limit: int | None = None
     remaining: int | None = None
-    reset_date: str | None = None    # ISO date string, e.g. "2026-05-01"
+    reset_date: str | None = None    # ISO 日期字符串，例如 "2026-05-01"
 
-    # Tavily-specific breakdown
+    # Tavily 专属明细
     search_used: int | None = None
     extract_used: int | None = None
     crawl_used: int | None = None
 
     def format(self) -> str:
-        """Return a human-readable multi-line string for /status output."""
+        """把用量信息格式化为 `/status` 可展示文本。"""
         lines = [f"🔍 Web Search: {self.provider}"]
 
         if not self.supported:
@@ -43,7 +43,7 @@ class SearchUsageInfo:
         elif self.used is not None:
             lines.append(f"   Usage: {self.used} requests")
 
-        # Tavily breakdown
+        # Tavily 会额外暴露细分能力的消耗，需要单独展示。
         breakdown_parts = []
         if self.search_used is not None:
             breakdown_parts.append(f"Search: {self.search_used}")
@@ -67,31 +67,20 @@ async def fetch_search_usage(
     provider: str,
     api_key: str | None = None,
 ) -> SearchUsageInfo:
-    """
-    Fetch usage info for the configured web search provider.
-
-    Args:
-        provider: Provider name (e.g. "tavily", "brave", "duckduckgo").
-        api_key:  API key for the provider (falls back to env vars).
-
-    Returns:
-        SearchUsageInfo with populated fields where available.
-    """
+    """获取当前搜索 provider 的用量信息。"""
     p = (provider or "duckduckgo").strip().lower()
 
     if p == "tavily":
         return await _fetch_tavily_usage(api_key)
     else:
-        # brave, duckduckgo, searxng, jina, unknown — no usage API
+        # 这些 provider 当前没有统一可用的用量接口，直接返回不支持状态。
         return SearchUsageInfo(provider=p, supported=False)
 
 
-# ---------------------------------------------------------------------------
-# Tavily
-# ---------------------------------------------------------------------------
+# Tavily 用量查询
 
 async def _fetch_tavily_usage(api_key: str | None) -> SearchUsageInfo:
-    """Fetch usage from GET https://api.tavily.com/usage."""
+    """调用 Tavily 用量接口。"""
     import httpx
 
     key = api_key or os.environ.get("TAVILY_API_KEY", "")
@@ -126,30 +115,12 @@ async def _fetch_tavily_usage(api_key: str | None) -> SearchUsageInfo:
 
 
 def _parse_tavily_usage(data: dict[str, Any]) -> SearchUsageInfo:
-    """
-    Parse Tavily /usage response.
-
-    Actual API response shape:
-    {
-      "account": {
-        "current_plan": "Researcher",
-        "plan_usage": 20,
-        "plan_limit": 1000,
-        "search_usage": 20,
-        "crawl_usage": 0,
-        "extract_usage": 0,
-        "map_usage": 0,
-        "research_usage": 0,
-        "paygo_usage": 0,
-        "paygo_limit": null
-      }
-    }
-    """
+    """解析 Tavily `/usage` 响应。"""
     account = data.get("account") or {}
     used = account.get("plan_usage")
     limit = account.get("plan_limit")
 
-    # Compute remaining
+    # 在解析阶段直接补出 remaining，避免展示层重复推导。
     remaining = None
     if used is not None and limit is not None:
         remaining = max(0, limit - used)
@@ -164,5 +135,4 @@ def _parse_tavily_usage(data: dict[str, Any]) -> SearchUsageInfo:
         extract_used=account.get("extract_usage"),
         crawl_used=account.get("crawl_usage"),
     )
-
 

@@ -21,14 +21,14 @@ def _now_ms() -> int:
 
 
 def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
-    """Compute next run time in ms."""
+    """按调度规则计算下一次触发时间。"""
     if schedule.kind == "at":
         return schedule.at_ms if schedule.at_ms and schedule.at_ms > now_ms else None
 
     if schedule.kind == "every":
         if not schedule.every_ms or schedule.every_ms <= 0:
             return None
-        # 中文说明：Next interval from now
+        # 固定间隔任务从“当前时刻”往后推，避免受上次漂移影响越滚越偏。
         return now_ms + schedule.every_ms
 
     if schedule.kind == "cron" and schedule.expr:
@@ -36,7 +36,7 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
             from zoneinfo import ZoneInfo
 
             from croniter import croniter
-            # 中文说明：Use caller-provided reference time for deterministic scheduling
+            # 使用调用方传入的参考时间，便于测试和补算时保持结果稳定。
             base_time = now_ms / 1000
             tz = ZoneInfo(schedule.tz) if schedule.tz else datetime.now().astimezone().tzinfo
             base_dt = datetime.fromtimestamp(base_time, tz=tz)
@@ -50,7 +50,7 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
 
 
 def _validate_schedule_for_add(schedule: CronSchedule) -> None:
-    """Validate schedule fields that would otherwise create non-runnable jobs."""
+    """拦截明显不可运行的调度配置。"""
     if schedule.tz and schedule.kind != "cron":
         raise ValueError("tz can only be used with cron schedules")
 
@@ -64,8 +64,7 @@ def _validate_schedule_for_add(schedule: CronSchedule) -> None:
 
 
 class CronService:
-    """中文说明：CronService。"""
-    """Service for managing and executing scheduled jobs."""
+    """负责定时任务的持久化、调度和执行。"""
 
     _MAX_RUN_HISTORY = 20
 
@@ -73,17 +72,12 @@ class CronService:
         self,
         store_path: Path,
         on_job: Callable[[CronJob], Coroutine[Any, Any, str | None]] | None = None,
-        max_sleep_ms: int = 300_000,  # 中文说明：5 minutes
+        max_sleep_ms: int = 300_000,  # 最长休眠 5 分钟，避免空闲时仍频繁醒来。
     ):
-        """中文说明：__init__。
+        """绑定 cron 存储位置和任务执行回调。
 
-        参数:
-            store_path: 待补充参数说明。
-            on_job: 待补充参数说明。
-            max_sleep_ms: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
+        这层只负责调度，不直接理解业务任务内容；
+        真正的任务执行逻辑通过 `on_job` 回调注入。
         """
         self.store_path = store_path
         self._action_path = store_path.parent / "action.jsonl"
@@ -182,10 +176,10 @@ class CronService:
         return
 
     def _load_store(self) -> CronStore:
-        """Load jobs from disk. Reloads automatically if file was modified externally.
-        - Reload every time because it needs to merge operations on the jobs object from other instances.
-        - During _on_timer execution, return the existing store to prevent concurrent
-          _load_store calls (e.g. from list_jobs polling) from replacing it mid-execution.
+        """从磁盘加载任务，并在需要时合并 action 日志。
+
+        运行中的定时器回调会暂时锁定当前内存视图，
+        避免外部轮询在半执行状态下把 store 整体替换掉。
         """
         if self._timer_active and self._store:
             return self._store
@@ -249,15 +243,7 @@ class CronService:
         self.store_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     async def start(self) -> None:
-        """中文说明：start。
-
-        参数:
-            无。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Start the cron service."""
+        """启动定时服务并挂起下一次唤醒。"""
         self._running = True
         self._load_store()
         self._recompute_next_runs()
@@ -266,15 +252,7 @@ class CronService:
         logger.info("Cron service started with {} jobs", len(self._store.jobs if self._store else []))
 
     def stop(self) -> None:
-        """中文说明：stop。
-
-        参数:
-            无。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Stop the cron service."""
+        """停止定时服务并取消当前计时器。"""
         self._running = False
         if self._timer_task:
             self._timer_task.cancel()
@@ -313,14 +291,7 @@ class CronService:
         delay_s = delay_ms / 1000
 
         async def tick():
-            """中文说明：tick。
-
-            参数:
-                无。
-
-            返回:
-                待补充返回值说明。
-            """
+            """等待本轮休眠结束后触发统一调度入口。"""
             await asyncio.sleep(delay_s)
             if self._running:
                 await self._on_timer()
@@ -380,7 +351,7 @@ class CronService:
         ))
         job.state.run_history = job.state.run_history[-self._MAX_RUN_HISTORY:]
 
-        # 中文说明：Handle one-shot jobs
+        # 单次任务跑完后要么直接删掉，要么停用，不能继续留在可调度队列里。
         if job.schedule.kind == "at":
             if job.delete_after_run:
                 self._store.jobs = [j for j in self._store.jobs if j.id != job.id]
@@ -388,7 +359,7 @@ class CronService:
                 job.enabled = False
                 job.state.next_run_at_ms = None
         else:
-            # 中文说明：Compute next run
+            # 周期任务执行完成后立刻重算下一次触发时间，避免旧值重复命中。
             job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
 
     def _append_action(self, action: Literal["add", "del", "update"], params: dict):
@@ -397,19 +368,14 @@ class CronService:
             with open(self._action_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps({"action": action, "params": params}, ensure_ascii=False) + "\n")
 
-
-    # ========== Public API ==========
+    # ======== 对外接口 ========
 
     def list_jobs(self, include_disabled: bool = False) -> list[CronJob]:
-        """中文说明：list_jobs。
+        """列出当前已知的任务。
 
-        参数:
-            include_disabled: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
+        默认只返回启用中的任务，
+        因为禁用任务主要用于管理页查看，不影响正常调度。
         """
-        """List all jobs."""
         store = self._load_store()
         jobs = store.jobs if include_disabled else [j for j in store.jobs if j.enabled]
         return sorted(jobs, key=lambda j: j.state.next_run_at_ms or float('inf'))
@@ -424,21 +390,11 @@ class CronService:
         to: str | None = None,
         delete_after_run: bool = False,
     ) -> CronJob:
-        """中文说明：add_job。
+        """新增一条普通定时任务。
 
-        参数:
-            name: 待补充参数说明。
-            schedule: 待补充参数说明。
-            message: 待补充参数说明。
-            deliver: 待补充参数说明。
-            channel: 待补充参数说明。
-            to: 待补充参数说明。
-            delete_after_run: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
+        服务运行中时直接写主存储；
+        未运行时先记到 action 日志，等服务起来后再统一合并。
         """
-        """Add a new job."""
         _validate_schedule_for_add(schedule)
         now = _now_ms()
 
@@ -471,15 +427,11 @@ class CronService:
         return job
 
     def register_system_job(self, job: CronJob) -> CronJob:
-        """中文说明：register_system_job。
+        """注册系统内建任务。
 
-        参数:
-            job: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
+        系统任务在重启后允许覆盖同 id 的旧记录，
+        这样内建行为可以保持幂等，不会越注册越多。
         """
-        """Register an internal system job (idempotent on restart)."""
         store = self._load_store()
         now = _now_ms()
         job.state = CronJobState(next_run_at_ms=_compute_next_run(job.schedule, now))
@@ -493,15 +445,7 @@ class CronService:
         return job
 
     def remove_job(self, job_id: str) -> Literal["removed", "protected", "not_found"]:
-        """中文说明：remove_job。
-
-        参数:
-            job_id: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Remove a job by ID, unless it is a protected system job."""
+        """按 id 删除任务，但不会删除受保护的系统任务。"""
         store = self._load_store()
         job = next((j for j in store.jobs if j.id == job_id), None)
         if job is None:
@@ -526,16 +470,7 @@ class CronService:
         return "not_found"
 
     def enable_job(self, job_id: str, enabled: bool = True) -> CronJob | None:
-        """中文说明：enable_job。
-
-        参数:
-            job_id: 待补充参数说明。
-            enabled: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Enable or disable a job."""
+        """启用或停用一条已有任务。"""
         store = self._load_store()
         for job in store.jobs:
             if job.id == job_id:
@@ -565,25 +500,11 @@ class CronService:
         to: str | None = ...,
         delete_after_run: bool | None = None,
     ) -> CronJob | Literal["not_found", "protected"]:
-        """中文说明：update_job。
+        """更新一条普通任务的可变字段。
 
-        参数:
-            job_id: 待补充参数说明。
-            name: 待补充参数说明。
-            schedule: 待补充参数说明。
-            message: 待补充参数说明。
-            deliver: 待补充参数说明。
-            channel: 待补充参数说明。
-            to: 待补充参数说明。
-            delete_after_run: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Update mutable fields of an existing job. System jobs cannot be updated.
-
-        For ``channel`` and ``to``, pass an explicit value (including ``None``)
-        to update; omit (sentinel ``...``) to leave unchanged.
+        `channel` 和 `to` 使用显式传值语义：
+        - 传 `...` 表示保持不变
+        - 传 `None` 表示明确清空
         """
         store = self._load_store()
         job = next((j for j in store.jobs if j.id == job_id), None)
@@ -622,16 +543,7 @@ class CronService:
         return job
 
     async def run_job(self, job_id: str, force: bool = False) -> bool:
-        """中文说明：run_job。
-
-        参数:
-            job_id: 待补充参数说明。
-            force: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Manually run a job without disturbing the service's running state."""
+        """手动执行一条任务，同时尽量不打乱当前服务状态。"""
         was_running = self._running
         self._running = True
         try:
@@ -650,28 +562,12 @@ class CronService:
                 self._arm_timer()
 
     def get_job(self, job_id: str) -> CronJob | None:
-        """中文说明：get_job。
-
-        参数:
-            job_id: 待补充参数说明。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Get a job by ID."""
+        """按 id 获取任务详情。"""
         store = self._load_store()
         return next((j for j in store.jobs if j.id == job_id), None)
 
     def status(self) -> dict:
-        """中文说明：status。
-
-        参数:
-            无。
-
-        返回:
-            待补充返回值说明。
-        """
-        """Get service status."""
+        """返回服务是否运行、任务数量和下次唤醒时间。"""
         store = self._load_store()
         return {
             "enabled": self._running,

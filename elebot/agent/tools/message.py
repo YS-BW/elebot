@@ -1,4 +1,4 @@
-"""Message tool for sending messages to users."""
+"""消息投递工具，用于向用户发送文本与附件。"""
 
 from typing import Any, Awaitable, Callable
 
@@ -20,7 +20,7 @@ from elebot.bus.events import OutboundMessage
     )
 )
 class MessageTool(Tool):
-    """Tool to send messages to users on chat channels."""
+    """负责向各聊天渠道发送消息的工具。"""
 
     def __init__(
         self,
@@ -29,6 +29,17 @@ class MessageTool(Tool):
         default_chat_id: str = "",
         default_message_id: str | None = None,
     ):
+        """初始化消息工具。
+
+        参数:
+            send_callback: 真实发送消息的回调。
+            default_channel: 默认渠道名。
+            default_chat_id: 默认聊天对象标识。
+            default_message_id: 默认引用消息标识。
+
+        返回:
+            无返回值。
+        """
         self._send_callback = send_callback
         self._default_channel = default_channel
         self._default_chat_id = default_chat_id
@@ -36,25 +47,55 @@ class MessageTool(Tool):
         self._sent_in_turn: bool = False
 
     def set_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
-        """Set the current message context."""
+        """设置默认消息上下文。
+
+        参数:
+            channel: 默认渠道名。
+            chat_id: 默认聊天对象标识。
+            message_id: 默认引用消息标识。
+
+        返回:
+            无返回值。
+        """
         self._default_channel = channel
         self._default_chat_id = chat_id
         self._default_message_id = message_id
 
     def set_send_callback(self, callback: Callable[[OutboundMessage], Awaitable[None]]) -> None:
-        """Set the callback for sending messages."""
+        """更新消息发送回调。
+
+        参数:
+            callback: 新的发送回调。
+
+        返回:
+            无返回值。
+        """
         self._send_callback = callback
 
     def start_turn(self) -> None:
-        """Reset per-turn send tracking."""
+        """开始新一轮对话时重置发送标记。
+
+        返回:
+            无返回值。
+        """
         self._sent_in_turn = False
 
     @property
     def name(self) -> str:
+        """返回工具名称。
+
+        返回:
+            工具名称字符串。
+        """
         return "message"
 
     @property
     def description(self) -> str:
+        """返回工具用途说明。
+
+        返回:
+            面向模型的工具描述文本。
+        """
         return (
             "Send a message to the user, optionally with file attachments. "
             "This is the ONLY way to deliver files (images, documents, audio, video) to the user. "
@@ -71,16 +112,25 @@ class MessageTool(Tool):
         media: list[str] | None = None,
         **kwargs: Any
     ) -> str:
+        """发送一条消息到目标渠道。
+
+        参数:
+            content: 消息正文。
+            channel: 目标渠道名。
+            chat_id: 目标聊天对象标识。
+            message_id: 可选引用消息标识。
+            media: 附件路径列表。
+            **kwargs: 兼容额外参数。
+
+        返回:
+            发送结果文本。
+        """
         from elebot.utils.helpers import strip_think
         content = strip_think(content)
         
         channel = channel or self._default_channel
         chat_id = chat_id or self._default_chat_id
-        # Only inherit default message_id when targeting the same channel+chat.
-        # Cross-chat sends must not carry the original message_id, because
-        # some channels (e.g. Feishu) use it to determine the target
-        # conversation via their Reply API, which would route the message
-        # to the wrong chat entirely.
+        # 只有发回原会话时才继承默认 message_id，跨会话复用会把回复错误路由到旧会话。
         if channel == self._default_channel and chat_id == self._default_chat_id:
             message_id = message_id or self._default_message_id
         else:

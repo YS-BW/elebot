@@ -1,4 +1,4 @@
-"""Subagent manager for background task execution."""
+"""管理后台子 Agent 的创建与结果回传。"""
 
 import asyncio
 import json
@@ -24,13 +24,15 @@ from elebot.providers.base import LLMProvider
 
 
 class _SubagentHook(AgentHook):
-    """Logging-only hook for subagent execution."""
+    """只负责记录子 Agent 工具日志的轻量 Hook。"""
 
     def __init__(self, task_id: str) -> None:
+        """绑定当前子任务编号，方便把日志串回同一条后台任务。"""
         super().__init__()
         self._task_id = task_id
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
+        """在工具真正执行前先把调用信息记到日志里。"""
         for tool_call in context.tool_calls:
             args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
             logger.debug(
@@ -40,7 +42,7 @@ class _SubagentHook(AgentHook):
 
 
 class SubagentManager:
-    """Manages background subagent execution."""
+    """管理后台子 Agent 的生命周期和结果回流。"""
 
     def __init__(
         self,
@@ -54,6 +56,11 @@ class SubagentManager:
         restrict_to_workspace: bool = False,
         disabled_skills: list[str] | None = None,
     ):
+        """绑定后台任务运行所需的 Provider、工具配置和消息总线。
+
+        这里不复用主 Agent 的整套工具面，而是单独收口一份受限工具集，
+        目的是让后台任务保持聚焦，同时避免递归触发消息发送和再次拉起子 Agent。
+        """
         from elebot.config.schema import ExecToolConfig
 
         self.provider = provider
@@ -67,7 +74,7 @@ class SubagentManager:
         self.disabled_skills = set(disabled_skills or [])
         self.runner = AgentRunner(provider)
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
-        self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+        self._session_tasks: dict[str, set[str]] = {}  # 按会话索引任务，便于整体取消。
 
     async def spawn(
         self,
@@ -77,7 +84,14 @@ class SubagentManager:
         origin_chat_id: str = "direct",
         session_key: str | None = None,
     ) -> str:
-        """Spawn a subagent to execute a task in the background."""
+        """启动一个后台子 Agent，并返回可直接回显给用户的确认文本。
+
+        核心职责：
+        - 生成后台任务编号
+        - 建立运行中任务索引
+        - 把任务和会话键关联起来，方便后续整体取消
+        - 确保任务结束后自动清理注册表，避免状态泄漏
+        """
         task_id = str(uuid.uuid4())[:8]
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
         origin = {"channel": origin_channel, "chat_id": origin_chat_id}
@@ -112,7 +126,7 @@ class SubagentManager:
         logger.info("Subagent [{}] starting task: {}", task_id, label)
 
         try:
-            # Build subagent tools (no message tool, no spawn tool)
+            # 子 Agent 只暴露完成任务必需的工具，避免后台链路再次递归发消息或拉起新子任务。
             tools = ToolRegistry()
             allowed_dir = self.workspace if (self.restrict_to_workspace or self.exec_config.sandbox) else None
             extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
@@ -200,7 +214,7 @@ class SubagentManager:
             result=result,
         )
 
-        # Inject as system message to trigger main agent
+        # 统一走 system 通道，是为了复用主 Agent 已有的后台结果注入链路，而不是新造一套入口。
         msg = InboundMessage(
             channel="system",
             sender_id="subagent",
@@ -250,7 +264,11 @@ class SubagentManager:
         )
 
     async def cancel_by_session(self, session_key: str) -> int:
-        """Cancel all subagents for the given session. Returns count cancelled."""
+        """取消某个会话名下仍在运行的全部子任务。
+
+        返回：
+            实际进入取消流程的任务数量。
+        """
         tasks = [self._running_tasks[tid] for tid in self._session_tasks.get(session_key, [])
                  if tid in self._running_tasks and not self._running_tasks[tid].done()]
         for t in tasks:
@@ -260,5 +278,5 @@ class SubagentManager:
         return len(tasks)
 
     def get_running_count(self) -> int:
-        """Return the number of currently running subagents."""
+        """返回当前仍处于运行态的后台任务数量。"""
         return len(self._running_tasks)

@@ -1,4 +1,4 @@
-"""Git-backed version control for memory files, using dulwich."""
+"""基于 Git 的记忆文件版本存储。"""
 
 from __future__ import annotations
 
@@ -12,12 +12,14 @@ from loguru import logger
 
 @dataclass
 class CommitInfo:
-    sha: str  # Short SHA (8 chars)
+    """简化后的提交信息。"""
+
+    sha: str  # 短 SHA（8 位）
     message: str
-    timestamp: str  # Formatted datetime
+    timestamp: str  # 已格式化的时间字符串
 
     def format(self, diff: str = "") -> str:
-        """Format this commit for display, optionally with a diff."""
+        """格式化提交信息，必要时附带 diff。"""
         header = f"## {self.message.splitlines()[0]}\n`{self.sha}` — {self.timestamp}\n"
         if diff:
             return f"{header}\n```diff\n{diff}\n```"
@@ -25,24 +27,21 @@ class CommitInfo:
 
 
 class GitStore:
-    """Git-backed version control for memory files."""
+    """为记忆文件提供基于 Git 的版本控制能力。"""
 
     def __init__(self, workspace: Path, tracked_files: list[str]):
+        """初始化 Git 存储。"""
         self._workspace = workspace
         self._tracked_files = tracked_files
 
     def is_initialized(self) -> bool:
-        """Check if the git repo has been initialized."""
+        """判断工作区是否已经初始化为 Git 仓库。"""
         return (self._workspace / ".git").is_dir()
 
-    # -- init ------------------------------------------------------------------
+    # 初始化相关操作
 
     def init(self) -> bool:
-        """Initialize a git repo if not already initialized.
-
-        Creates .gitignore and makes an initial commit.
-        Returns True if a new repo was created, False if already exists.
-        """
+        """初始化 Git 仓库并写入首个提交。"""
         if self.is_initialized():
             return False
 
@@ -51,19 +50,18 @@ class GitStore:
 
             porcelain.init(str(self._workspace))
 
-            # Write .gitignore
+            # 这里的 .gitignore 只放行受控文件，避免记忆仓库被无关文件污染。
             gitignore = self._workspace / ".gitignore"
             gitignore.write_text(self._build_gitignore(), encoding="utf-8")
 
-            # Ensure tracked files exist (touch them if missing) so the initial
-            # commit has something to track.
+            # 初始提交不能是空仓，因此需要先补齐缺失的受控文件。
             for rel in self._tracked_files:
                 p = self._workspace / rel
                 p.parent.mkdir(parents=True, exist_ok=True)
                 if not p.exists():
                     p.write_text("", encoding="utf-8")
 
-            # Initial commit
+            # 初始化时直接提交，保证后续 Dream/restore 有明确基线。
             porcelain.add(str(self._workspace), paths=[".gitignore"] + self._tracked_files)
             porcelain.commit(
                 str(self._workspace),
@@ -77,21 +75,17 @@ class GitStore:
             logger.warning("Git store init failed for {}", self._workspace)
             return False
 
-    # -- daily operations ------------------------------------------------------
+    # 日常提交操作
 
     def auto_commit(self, message: str) -> str | None:
-        """Stage tracked memory files and commit if there are changes.
-
-        Returns the short commit SHA, or None if nothing to commit.
-        """
+        """在有变更时自动提交记忆文件。"""
         if not self.is_initialized():
             return None
 
         try:
             from dulwich import porcelain
 
-            # .gitignore excludes everything except tracked files,
-            # so any staged/unstaged change must be in our files.
+            # 仓库只追踪受控文件，因此这里只要发现变更就可以直接提交。
             st = porcelain.status(str(self._workspace))
             if not st.unstaged and not any(st.staged.values()):
                 return None
@@ -113,10 +107,10 @@ class GitStore:
             logger.warning("Git auto-commit failed: {}", message)
             return None
 
-    # -- internal helpers ------------------------------------------------------
+    # 内部辅助方法
 
     def _resolve_sha(self, short_sha: str) -> bytes | None:
-        """Resolve a short SHA prefix to the full SHA bytes."""
+        """将短 SHA 前缀解析为完整 SHA。"""
         try:
             from dulwich.repo import Repo
 
@@ -138,7 +132,7 @@ class GitStore:
             return None
 
     def _build_gitignore(self) -> str:
-        """Generate .gitignore content from tracked files."""
+        """根据受控文件生成 .gitignore 内容。"""
         dirs: set[str] = set()
         for f in self._tracked_files:
             parent = str(Path(f).parent)
@@ -152,10 +146,10 @@ class GitStore:
         lines.append("!.gitignore")
         return "\n".join(lines) + "\n"
 
-    # -- query -----------------------------------------------------------------
+    # 查询历史
 
     def log(self, max_entries: int = 20) -> list[CommitInfo]:
-        """Return simplified commit log."""
+        """返回简化后的提交历史。"""
         if not self.is_initialized():
             return []
 
@@ -192,7 +186,7 @@ class GitStore:
             return []
 
     def diff_commits(self, sha1: str, sha2: str) -> str:
-        """Show diff between two commits."""
+        """比较两个提交之间的差异。"""
         if not self.is_initialized():
             return ""
 
@@ -217,14 +211,14 @@ class GitStore:
             return ""
 
     def find_commit(self, short_sha: str, max_entries: int = 20) -> CommitInfo | None:
-        """Find a commit by short SHA prefix match."""
+        """按短 SHA 前缀查找提交。"""
         for c in self.log(max_entries=max_entries):
             if c.sha.startswith(short_sha):
                 return c
         return None
 
     def show_commit_diff(self, short_sha: str, max_entries: int = 20) -> tuple[CommitInfo, str] | None:
-        """Find a commit and return it with its diff vs the parent."""
+        """查找提交并返回它与父提交的差异。"""
         commits = self.log(max_entries=max_entries)
         for i, c in enumerate(commits):
             if c.sha.startswith(short_sha):
@@ -235,16 +229,10 @@ class GitStore:
                 return c, diff
         return None
 
-    # -- restore ---------------------------------------------------------------
+    # 恢复历史版本
 
     def revert(self, commit: str) -> str | None:
-        """Revert (undo) the changes introduced by the given commit.
-
-        Restores all tracked memory files to the state at the commit's parent,
-        then creates a new commit recording the revert.
-
-        Returns the new commit SHA, or None on failure.
-        """
+        """撤销指定提交带来的记忆文件变更。"""
         if not self.is_initialized():
             return None
 
@@ -265,7 +253,7 @@ class GitStore:
                     logger.warning("Git revert: cannot revert root commit {}", commit)
                     return None
 
-                # Use the parent's tree — this undoes the commit's changes
+                # 直接恢复父提交树，语义上才是真正撤销本次修改。
                 parent_obj = repo[commit_obj.parents[0]]
                 tree = repo[parent_obj.tree]
 
@@ -280,7 +268,7 @@ class GitStore:
             if not restored:
                 return None
 
-            # Commit the restored state
+            # 恢复完成后再补一条新提交，方便后续审计与再次回滚。
             msg = f"revert: undo {commit}"
             return self.auto_commit(msg)
         except Exception:
@@ -289,7 +277,7 @@ class GitStore:
 
     @staticmethod
     def _read_blob_from_tree(repo, tree, filepath: str) -> str | None:
-        """Read a blob's content from a tree object by walking path parts."""
+        """按路径逐层读取树中的文件内容。"""
         parts = Path(filepath).parts
         current = tree
         for part in parts:

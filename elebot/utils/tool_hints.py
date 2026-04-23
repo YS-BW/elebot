@@ -1,4 +1,4 @@
-"""Tool hint formatting for concise, human-readable tool call display."""
+"""工具提示格式化。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import re
 
 from elebot.utils.path import abbreviate_path
 
-# Registry: tool_name -> (key_args, template, is_path, is_command)
+# 工具名映射到格式化规则：(参数键、模板、是否路径、是否命令)
 _TOOL_FORMATS: dict[str, tuple[list[str], str, bool, bool]] = {
     "read_file":  (["path", "file_path"],              "read {}",     True,  False),
     "write_file": (["path", "file_path"],              "write {}",    True,  False),
@@ -19,7 +19,7 @@ _TOOL_FORMATS: dict[str, tuple[list[str], str, bool, bool]] = {
     "list_dir":   (["path"],                           "ls {}",       True,  False),
 }
 
-# Matches file paths embedded in shell commands, including quoted paths with spaces.
+# 匹配命令中的路径片段，兼容带引号且包含空格的路径。
 _PATH_IN_CMD_RE = re.compile(
     r'"(?P<double>(?:[A-Za-z]:[/\\]|~/|/)[^"]+)"'
     r"|'(?P<single>(?:[A-Za-z]:[/\\]|~/|/)[^']+)'"
@@ -28,7 +28,7 @@ _PATH_IN_CMD_RE = re.compile(
 
 
 def format_tool_hints(tool_calls: list) -> str:
-    """Format tool calls as concise hints with smart abbreviation."""
+    """把工具调用格式化为简洁提示文本。"""
     if not tool_calls:
         return ""
 
@@ -85,9 +85,9 @@ def _fmt_known(tc, fmt: tuple) -> str:
     val = _extract_arg(tc, fmt[0])
     if val is None:
         return tc.name
-    if fmt[2]:  # is_path
+    if fmt[2]:  # 路径参数需要额外缩写
         val = abbreviate_path(val)
-    elif fmt[3]:  # is_command
+    elif fmt[3]:  # 命令参数需要尽量保留结构
         val = _abbreviate_command(val)
     return fmt[1].format(val)
 

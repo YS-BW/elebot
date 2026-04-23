@@ -1,4 +1,4 @@
-"""Agent tools module."""
+"""Agent 工具模块的最小导出入口。"""
 
 from elebot.agent.tools.base import Schema, Tool, tool_parameters
 from elebot.agent.tools.registry import ToolRegistry

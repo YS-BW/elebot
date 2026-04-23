@@ -1,4 +1,4 @@
-"""Parse Responses API SSE streams and SDK response objects."""
+"""解析 Responses API 的流式事件与 SDK 响应对象。"""
 
 from __future__ import annotations
 
@@ -21,12 +21,26 @@ FINISH_REASON_MAP = {
 
 
 def map_finish_reason(status: str | None) -> str:
-    """Map a Responses API status string to a Chat-Completions-style finish_reason."""
+    """把 Responses API 状态映射为聊天补全风格的结束原因。
+
+    参数:
+        status: Responses API 返回的状态值。
+
+    返回:
+        统一后的 ``finish_reason`` 字符串。
+    """
     return FINISH_REASON_MAP.get(status or "completed", "stop")
 
 
 async def iter_sse(response: httpx.Response) -> AsyncGenerator[dict[str, Any], None]:
-    """Yield parsed JSON events from a Responses API SSE stream."""
+    """逐条产出 SSE 流中的 JSON 事件。
+
+    参数:
+        response: 已建立流式连接的 HTTP 响应对象。
+
+    返回:
+        异步生成器，逐条返回解析后的事件字典。
+    """
     buffer: list[str] = []
 
     def _flush() -> dict[str, Any] | None:
@@ -52,7 +66,7 @@ async def iter_sse(response: httpx.Response) -> AsyncGenerator[dict[str, Any], N
             continue
         buffer.append(line)
 
-    # Flush any remaining buffer at EOF (#10)
+    # 流在 EOF 结束时仍可能残留最后一个事件，因此这里补做一次冲刷。
     if buffer:
         event = _flush()
         if event is not None:
@@ -63,7 +77,15 @@ async def consume_sse(
     response: httpx.Response,
     on_content_delta: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[str, list[ToolCallRequest], str]:
-    """Consume a Responses API SSE stream into ``(content, tool_calls, finish_reason)``."""
+    """消费 SSE 流并提取核心响应结果。
+
+    参数:
+        response: 已建立流式连接的 HTTP 响应对象。
+        on_content_delta: 文本增量回调。
+
+    返回:
+        三元组 ``(content, tool_calls, finish_reason)``。
+    """
     content = ""
     tool_calls: list[ToolCallRequest] = []
     tool_call_buffers: dict[str, dict[str, Any]] = {}
@@ -132,7 +154,14 @@ async def consume_sse(
 
 
 def parse_response_output(response: Any) -> LLMResponse:
-    """Parse an SDK ``Response`` object into an ``LLMResponse``."""
+    """把 SDK 返回的 ``Response`` 对象解析成统一响应。
+
+    参数:
+        response: OpenAI SDK 返回的响应对象或同结构字典。
+
+    返回:
+        标准化后的 ``LLMResponse`` 实例。
+    """
     if not isinstance(response, dict):
         dump = getattr(response, "model_dump", None)
         response = dump() if callable(dump) else vars(response)
@@ -211,7 +240,15 @@ async def consume_sdk_stream(
     stream: Any,
     on_content_delta: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[str, list[ToolCallRequest], str, dict[str, int], str | None]:
-    """Consume an SDK async stream from ``client.responses.create(stream=True)``."""
+    """消费 SDK 异步流并汇总成统一结果。
+
+    参数:
+        stream: ``client.responses.create(stream=True)`` 返回的异步流。
+        on_content_delta: 文本增量回调。
+
+    返回:
+        五元组 ``(content, tool_calls, finish_reason, usage, reasoning_content)``。
+    """
     content = ""
     tool_calls: list[ToolCallRequest] = []
     tool_call_buffers: dict[str, dict[str, Any]] = {}

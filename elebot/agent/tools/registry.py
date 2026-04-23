@@ -1,4 +1,4 @@
-"""Tool registry for dynamic tool management."""
+"""工具注册表，负责动态管理与调度 Agent 工具。"""
 
 from typing import Any
 
@@ -6,29 +6,58 @@ from elebot.agent.tools.base import Tool
 
 
 class ToolRegistry:
-    """
-    Registry for agent tools.
-
-    Allows dynamic registration and execution of tools.
-    """
+    """维护工具实例并提供统一调用入口。"""
 
     def __init__(self):
+        """初始化空工具注册表。
+
+        返回:
+            无返回值。
+        """
         self._tools: dict[str, Tool] = {}
 
     def register(self, tool: Tool) -> None:
-        """Register a tool."""
+        """注册一个工具实例。
+
+        参数:
+            tool: 待注册工具。
+
+        返回:
+            无返回值。
+        """
         self._tools[tool.name] = tool
 
     def unregister(self, name: str) -> None:
-        """Unregister a tool by name."""
+        """按名称注销工具。
+
+        参数:
+            name: 工具名称。
+
+        返回:
+            无返回值。
+        """
         self._tools.pop(name, None)
 
     def get(self, name: str) -> Tool | None:
-        """Get a tool by name."""
+        """按名称获取工具。
+
+        参数:
+            name: 工具名称。
+
+        返回:
+            对应工具实例；不存在时返回 ``None``。
+        """
         return self._tools.get(name)
 
     def has(self, name: str) -> bool:
-        """Check if a tool is registered."""
+        """判断工具是否已注册。
+
+        参数:
+            name: 工具名称。
+
+        返回:
+            已注册时返回 ``True``。
+        """
         return name in self._tools
 
     @staticmethod
@@ -43,10 +72,10 @@ class ToolRegistry:
         return name if isinstance(name, str) else ""
 
     def get_definitions(self) -> list[dict[str, Any]]:
-        """Get tool definitions with stable ordering for cache-friendly prompts.
+        """按稳定顺序导出工具定义列表。
 
-        Built-in tools are sorted first as a stable prefix, then MCP tools are
-        sorted and appended.
+        返回:
+            先内置后 MCP 的工具定义字典列表。
         """
         definitions = [tool.to_schema() for tool in self._tools.values()]
         builtins: list[dict[str, Any]] = []
@@ -67,8 +96,16 @@ class ToolRegistry:
         name: str,
         params: dict[str, Any],
     ) -> tuple[Tool | None, dict[str, Any], str | None]:
-        """Resolve, cast, and validate one tool call."""
-        # Guard against invalid parameter types (e.g., list instead of dict)
+        """解析、预转换并校验一次工具调用。
+
+        参数:
+            name: 工具名称。
+            params: 原始参数字典。
+
+        返回:
+            三元组 ``(tool, cast_params, error)``。
+        """
+        # 这里先拦截明显错误的参数形态，避免把低质量错误信息泄露到更深层调用链。
         if not isinstance(params, dict) and name in ('write_file', 'read_file'):
             return None, params, (
                 f"Error: Tool '{name}' parameters must be a JSON object, got {type(params).__name__}. "
@@ -90,14 +127,22 @@ class ToolRegistry:
         return tool, cast_params, None
 
     async def execute(self, name: str, params: dict[str, Any]) -> Any:
-        """Execute a tool by name with given parameters."""
+        """按名称执行一个工具。
+
+        参数:
+            name: 工具名称。
+            params: 工具参数。
+
+        返回:
+            工具执行结果或错误提示。
+        """
         _HINT = "\n\n[Analyze the error above and try a different approach.]"
         tool, params, error = self.prepare_call(name, params)
         if error:
             return error + _HINT
 
         try:
-            assert tool is not None  # guarded by prepare_call()
+            assert tool is not None  # 这里能断言非空，是因为 prepare_call 已完成存在性校验。
             result = await tool.execute(**params)
             if isinstance(result, str) and result.startswith("Error"):
                 return result + _HINT
@@ -107,7 +152,11 @@ class ToolRegistry:
 
     @property
     def tool_names(self) -> list[str]:
-        """Get list of registered tool names."""
+        """返回当前已注册的工具名称列表。
+
+        返回:
+            工具名列表。
+        """
         return list(self._tools.keys())
 
     def __len__(self) -> int:
