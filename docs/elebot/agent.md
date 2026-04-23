@@ -1,1056 +1,746 @@
 # Agent 模块教程
 
-`elebot/agent` 是 EleBot 当前主链路里最核心的一层。  
-它的职责不是“展示 UI”，也不是“保存配置”，而是把一条消息变成一次完整执行：
-
-1. 读取会话历史
-2. 组装上下文
-3. 调模型
-4. 执行工具
-5. 把工具结果继续回给模型
-6. 保存最终结果
-
-如果你只想抓住一句话，可以先记住：
-
-> `AgentLoop` 负责编排，`AgentRunner` 负责执行，`ContextBuilder` 负责组装上下文。
-
----
-
 ## 文档索引
 
-- [1. 先建立整体心智模型](#1-先建立整体心智模型)
-- [2. 目录和文件怎么读](#2-目录和文件怎么读)
-- [3. 两种入口：总线模式与直连模式](#3-两种入口总线模式与直连模式)
-- [4. AgentLoop：主链路编排器](#4-agentloop主链路编排器)
-- [5. ContextBuilder：上下文是怎么拼出来的](#5-contextbuilder上下文是怎么拼出来的)
-- [6. AgentRunner：模型和工具怎么闭环](#6-agentrunner模型和工具怎么闭环)
-- [7. Hook：为什么流式输出和工具提示能插进主循环](#7-hook为什么流式输出和工具提示能插进主循环)
-- [8. Session、Checkpoint 和中断恢复](#8-sessioncheckpoint-和中断恢复)
-- [9. 中途追问为什么不会把会话打裂](#9-中途追问为什么不会把会话打裂)
-- [10. 记忆系统：Memory / Consolidator / Dream](#10-记忆系统memory--consolidator--dream)
-- [11. AutoCompact：空闲会话如何自动压缩](#11-autocompact空闲会话如何自动压缩)
-- [12. Skills：技能是怎么被发现和注入的](#12-skills技能是怎么被发现和注入的)
-- [13. Subagent：后台子 Agent 是怎么工作的](#13-subagent后台子-agent-是怎么工作的)
-- [14. 相关文档跳转](#14-相关文档跳转)
+- [agent/loop.py](../../elebot/agent/loop.py)
+- [agent/context.py](../../elebot/agent/context.py)
+- [agent/runner.py](../../elebot/agent/runner.py)
+- [agent/hook.py](../../elebot/agent/hook.py)
+- [agent/memory.py](../../elebot/agent/memory.py)
+- [agent/autocompact.py](../../elebot/agent/autocompact.py)
+- [agent/skills.py](../../elebot/agent/skills.py)
+- [agent/subagent.py](../../elebot/agent/subagent.py)
+- [facade.py](../../elebot/facade.py)
+- [cli/commands.py](../../elebot/cli/commands.py)
+- [bus/queue.py](../../elebot/bus/queue.py)
 
 ---
 
-## 1. 先建立整体心智模型
+## Agent 运行流程
 
-先不要急着读细节。先把 Agent 理解成下面这条流水线：
+整体链路可以先记成这一句：
 
 ```text
-用户输入
-  ↓
-AgentLoop
-  ↓
-ContextBuilder
-  ↓
-AgentRunner
-  ↓
-ToolRegistry（如有工具调用）
-  ↓
-AgentRunner
-  ↓
-AgentLoop 保存会话并返回结果
+用户消息 -> Bus -> AgentLoop -> _dispatch -> _process_message_result -> AgentRunner.run -> LLM -> 工具执行 -> 响应
 ```
 
-换一种更接近代码的写法：
-
-```python
-msg -> _process_message_result() -> build_messages() -> runner.run() -> save_turn()
-```
-
-主入口源码：
-
-- [loop.py#L50-L1047](loop.py#L50-L1047)
-- [runner.py:52-899](runner.py#L52-L899)
-- [context.py:17-214](context.py#L17-L214)
-
----
-
-## 2. 目录和文件怎么读
-
-`elebot/agent/` 里最关键的文件如下：
-
-| 文件 | 作用 |
-| --- | --- |
-| [loop.py:50-1047](loop.py#L50-L1047) | 主链路编排器，负责接消息、调命令、调 Runner、保存会话。 |
-| [runner.py:52-899](runner.py#L52-L899) | 单轮模型执行循环，负责”模型 -> 工具 -> 模型”。 |
-| [context.py:17-214](context.py#L17-L214) | system prompt、历史、runtime context、媒体内容拼装。 |
-| [hook.py:14-169](hook.py#L14-L169) | 生命周期 Hook 抽象。 |
-| [memory.py:31-778](memory.py#L31-L778) | 长期记忆、历史归档、Dream。 |
-| [autocompact.py:15-125](autocompact.py#L15-L125) | 空闲会话自动压缩。 |
-| [skills.py:23-219](skills.py#L23-L219) | 技能发现、过滤、摘要、always 技能注入。 |
-| [subagent.py:26-280](subagent.py#L26-L280) | 后台子 Agent 管理。 |
-| `tools/` | 真正能被模型调用的工具。 |
-
-如果你第一次读代码，建议顺序是：
-
-1. [loop.py:50-1047](loop.py#L50-L1047)
-2. [context.py:17-214](context.py#L17-L214)
-3. [runner.py:52-899](runner.py#L52-L899)
-4. [hook.py:14-169](hook.py#L14-L169)
-5. [memory.py:31-778](memory.py#L31-L778)
-6. [skills.py:23-219](skills.py#L23-L219)
-7. [subagent.py:26-280](subagent.py#L26-L280)
-
-原因很简单：
-
-- `loop.py` 决定“谁先调用谁”
-- `context.py` 决定“模型看到什么”
-- `runner.py` 决定“模型和工具怎么形成闭环”
-
----
-
-## 3. 两种入口：总线模式与直连模式
-
-Agent 目前有两种主要调用方式。
-
-### 3.1 总线模式
-
-交互式 CLI 和 channels 走总线模式。
+如果拆成阶段，当前主链路基本是：
 
 ```text
-CLI / Channel
-  -> MessageBus.publish_inbound()
-  -> AgentLoop.run()
-  -> AgentLoop._dispatch()
-  -> AgentLoop._process_message_result()
-  -> MessageBus.publish_outbound()
-  -> CLI / Channel 消费结果
+InboundMessage
+    ↓
+AgentLoop.run()
+    ↓
+AgentLoop._dispatch()
+    ↓
+AutoCompact.prepare_session()
+    ↓
+ContextBuilder.build_messages()
+    ↓
+AgentLoop._run_agent_loop()
+    ↓
+AgentRunner.run()
+    ↓
+LLM / tool_calls / tool_results
+    ↓
+AgentLoop._save_turn()
+    ↓
+OutboundMessage
 ```
 
-关键代码：
+---
 
-- [AgentLoop.run](../../elebot/agent/loop.py#L455)
-- [AgentLoop._dispatch](../../elebot/agent/loop.py#L522)
+## 1. 入口：AgentLoop.run()
 
-一个非常简化的理解版本：
+文件索引：
+
+- [loop.py](../../elebot/agent/loop.py)
+
+实现位置：
+
+- `elebot/agent/loop.py:455-520`
+
+示例代码：
 
 ```python
-async def run(self):
+async def run(self) -> None:
+    # 标记主循环进入运行态
+    self._running = True
+
+    # 先连接 MCP，后续每条消息就可以直接复用
+    await self._connect_mcp()
+    logger.info("Agent loop started")
+
     while self._running:
-        msg = await self.bus.consume_inbound()
+        try:
+            # 从消息总线拉取一条入站消息
+            msg = await asyncio.wait_for(
+                self.bus.consume_inbound(),
+                timeout=1.0,
+            )
+        except asyncio.TimeoutError:
+            # 没有新消息时顺手检查是否有会话已经空闲过久
+            self.auto_compact.check_expired(self._schedule_background)
+            continue
+
+        raw = msg.content.strip()
+
+        # 优先命令先处理，不进入正常模型链路
+        if self.commands.is_priority(raw):
+            ctx = CommandContext(
+                msg=msg,
+                session=None,
+                key=msg.session_key,
+                raw=raw,
+                loop=self,
+            )
+            result = await self.commands.dispatch_priority(ctx)
+            if result:
+                await self.bus.publish_outbound(result)
+            continue
+
+        # 根据统一会话模式等规则计算真实 session key
+        effective_key = self._effective_session_key(msg)
+
+        # 同会话已有活跃任务时，新消息先进待注入队列
+        if effective_key in self._pending_queues:
+            self._pending_queues[effective_key].put_nowait(pending_msg)
+            continue
+
+        # 为本条消息创建一个异步任务
         task = asyncio.create_task(self._dispatch(msg))
+        self._active_tasks.setdefault(effective_key, []).append(task)
 ```
 
-这个模式适合：
+代码讲解：
 
-- CLI 交互
-- 多通道入口
-- 需要 `/stop` 这类控制命令的场景
-
-### 3.2 直连模式
-
-`facade` 和单次调用更适合走直连模式：
-
-```text
-调用方
-  -> AgentLoop.process_direct_result()
-  -> AgentLoop._process_message_result()
-  -> AgentRunner.run()
-```
-
-关键代码：
-
-- [AgentLoop.process_direct](../../elebot/agent/loop.py#L1025)
-- [AgentLoop.process_direct_result](../../elebot/agent/loop.py#L1047)
-
-极简代码：
-
-```python
-async def process_direct_result(self, content: str, ...):
-    msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content)
-    return await self._process_message_result(msg, ...)
-```
-
-这个模式的好处是：
-
-- 不必启动常驻 `run()` 循环
-- 不必依赖全局总线
-- 将来如果做桌面 runtime，本地后端服务更适合走这条路
+- `run()` 是整个 Agent 的常驻入口，它持续从 `MessageBus` 消费 `InboundMessage`。
+- `_connect_mcp()` 只在启动时处理一次，后续消息直接复用已有连接。
+- 如果 1 秒内没有拿到消息，就不会空转等待，而是顺带执行一次空闲会话检查。
+- `self.commands.is_priority(raw)` 这层专门用来拦截 `/stop`、`/restart` 一类高优先级命令。
+- `effective_key` 不是简单等于 `msg.session_key`，它还会受统一会话模式等规则影响。
+- `_pending_queues` 表示某个会话已经有主任务在运行，新消息先排队，不会直接起第二条竞争任务。
+- 真正处理消息的任务由 `_dispatch()` 负责，`run()` 自己只做总线消费和调度。
 
 ---
 
-## 4. AgentLoop：主链路编排器
+## 2. 消息分发：_dispatch()
 
-`AgentLoop` 是 Agent 模块的总调度器。  
-初始化时，它会一次性装配几乎所有主链路依赖。
+文件索引：
 
-源码位置：
+- [loop.py](../../elebot/agent/loop.py)
 
-- [AgentLoop.__init__](../../elebot/agent/loop.py#L155)
+实现位置：
 
-你可以把它理解成：
+- `elebot/agent/loop.py:522-623`
 
-```python
-self.context = ContextBuilder(...)
-self.sessions = SessionManager(...)
-self.tools = ToolRegistry()
-self.runner = AgentRunner(provider)
-self.subagents = SubagentManager(...)
-self.consolidator = Consolidator(...)
-self.auto_compact = AutoCompact(...)
-self.dream = Dream(...)
-register_builtin_commands(self.commands)
-self._register_default_tools()
-```
-
-也就是说，`AgentLoop` 自己不做所有事情，但它知道：
-
-- 什么时候该读 session
-- 什么时候该处理 slash 命令
-- 什么时候该构造上下文
-- 什么时候该调用 Runner
-- 什么时候该保存结果
-
-### 4.1 AgentLoop 主要管什么
-
-可以把职责拆成 4 段：
-
-```text
-1. 接收与路由
-2. 会话准备
-3. 调用 Runner
-4. 收尾保存
-```
-
-再展开一点：
-
-```text
-收到消息
-  -> 判断是否是优先级命令
-  -> 计算 effective session key
-  -> 同 session 串行调度
-  -> 读取 session / 恢复 checkpoint
-  -> 执行普通命令或进入模型链路
-  -> 保存消息与结果
-  -> 发布 OutboundMessage
-```
-
-关键代码入口：
-
-- [AgentLoop.run](../../elebot/agent/loop.py#L455)
-- [AgentLoop._process_message_result](../../elebot/agent/loop.py#L660)
-- [AgentLoop._save_turn](../../elebot/agent/loop.py#L891)
-
-### 4.2 为什么有两个命令入口
-
-这里最容易看漏。
-
-`AgentLoop` 里其实有两层命令处理：
-
-1. `run()` 里的优先级命令
-2. `_process_message_result()` 里的普通命令
-
-相关代码：
-
-- [run() 中的 priority command 处理](../../elebot/agent/loop.py#L476)
-- [_process_message_result() 中的普通命令处理](../../elebot/agent/loop.py#L709)
-
-这样做的原因是：
-
-- `/stop`、`/restart` 这类命令必须尽量早处理，不能等当前任务完整跑完
-- `/status`、`/new`、`/dream` 这类命令则属于正常会话语义，可以在进入模型前统一分流
-
-### 4.3 默认工具是在哪里注册的
-
-所有主链路默认工具在 `_register_default_tools()` 中注册。
-
-源码：
-
-- [AgentLoop._register_default_tools](../../elebot/agent/loop.py#L274)
-
-简化后的结构大概是：
+示例代码：
 
 ```python
-self.tools.register(ReadFileTool(...))
-self.tools.register(WriteFileTool(...))
-self.tools.register(EditFileTool(...))
-self.tools.register(ListDirTool(...))
-self.tools.register(GlobTool(...))
-self.tools.register(GrepTool(...))
-self.tools.register(NotebookEditTool(...))
+async def _dispatch(self, msg: InboundMessage) -> None:
+    # 先把消息映射到真实会话键
+    session_key = self._effective_session_key(msg)
+    if session_key != msg.session_key:
+        msg = dataclasses.replace(msg, session_key_override=session_key)
 
-if self.exec_config.enable:
-    self.tools.register(ExecTool(...))
+    # 每个会话各自有锁，保证同会话串行
+    lock = self._session_locks.setdefault(session_key, asyncio.Lock())
+    gate = self._concurrency_gate or nullcontext()
 
-if self.web_config.enable:
-    self.tools.register(WebSearchTool(...))
-    self.tools.register(WebFetchTool(...))
+    # 为当前会话注册待注入队列
+    pending = asyncio.Queue(maxsize=20)
+    self._pending_queues[session_key] = pending
 
-self.tools.register(MessageTool(...))
-self.tools.register(SpawnTool(...))
+    try:
+        async with lock, gate:
+            response = await self._process_message(
+                msg,
+                on_stream=on_stream,
+                on_stream_end=on_stream_end,
+                pending_queue=pending,
+            )
+
+            # 把最终回复重新发布到出站总线
+            if response is not None:
+                await self.bus.publish_outbound(response)
+    finally:
+        # 如果本轮异常退出，把残留待注入消息重新塞回总线
+        queue = self._pending_queues.pop(session_key, None)
+        if queue is not None:
+            while True:
+                try:
+                    item = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                await self.bus.publish_inbound(item)
 ```
 
-所以工具面不是散落在 CLI 或 Provider 里，而是由 `AgentLoop` 统一装配。
+代码讲解：
+
+- `_dispatch()` 是“每条消息真正开始处理”的地方。
+- `session_key` 会被重新计算一次，确保后续锁、队列、会话读写都落在正确的会话上。
+- `_session_locks` 保证同一个会话内部严格串行，不会同时改同一份 history。
+- `_concurrency_gate` 是跨会话的并发闸门，它控制系统整体并发上限。
+- `_pending_queues` 用来临时存放同会话的后续追问，供当前主任务在内部继续吸收。
+- 真正的消息处理会继续进入 `_process_message()`，`_dispatch()` 自己主要负责并发和收尾。
+- `finally` 里的重新投递逻辑用于兜底，避免待注入消息在异常路径里丢失。
 
 ---
 
-## 5. ContextBuilder：上下文是怎么拼出来的
+## 3. 单条消息处理：_process_message_result()
 
-模型看到的不是“纯用户输入”，而是完整的 `messages` 数组。  
-这个数组由 `ContextBuilder` 负责构造。
+文件索引：
 
-源码：
+- [loop.py](../../elebot/agent/loop.py)
+- [context.py](../../elebot/agent/context.py)
+- [session.md](session.md)
 
-- [ContextBuilder](../../elebot/agent/context.py#L17)
-- [ContextBuilder.build_system_prompt](../../elebot/agent/context.py#L36)
-- [ContextBuilder.build_messages](../../elebot/agent/context.py#L135)
+实现位置：
 
-### 5.1 它会拼哪些东西
+- `elebot/agent/loop.py:660-821`
 
-`build_system_prompt()` 会按顺序拼这些内容：
-
-1. 身份模板
-2. 工作区启动文件
-3. 长期记忆
-4. always 技能
-5. 技能摘要
-6. 最近未被 Dream 吸收的历史
-
-代码中最值得看的几行：
+示例代码：
 
 ```python
-parts = [self._get_identity(channel=channel)]
+async def _process_message_result(
+    self,
+    msg: InboundMessage,
+    session_key: str | None = None,
+    ...,
+) -> DirectProcessResult:
+    # 先获取或创建当前会话
+    key = session_key or msg.session_key
+    session = self.sessions.get_or_create(key)
 
-bootstrap = self._load_bootstrap_files()
-memory = self.memory.get_memory_context()
-always_skills = self.skills.get_always_skills()
-skills_summary = self.skills.build_skills_summary()
-entries = self.memory.read_unprocessed_history(...)
+    # 如有上轮未完成的 checkpoint，先恢复到会话历史
+    if self._restore_runtime_checkpoint(session):
+        self.sessions.save(session)
+
+    # 处理自动压缩，并取出可注入的恢复摘要
+    session, pending = self.auto_compact.prepare_session(session, key)
+
+    # 先尝试处理普通斜杠命令
+    raw = msg.content.strip()
+    ctx = CommandContext(msg=msg, session=session, key=key, raw=raw, loop=self)
+    if result := await self.commands.dispatch(ctx):
+        return DirectProcessResult(
+            outbound=result,
+            final_content=result.content,
+            stop_reason="command",
+            session_key=key,
+        )
+
+    # 视情况做一次 token 压缩
+    await self.consolidator.maybe_consolidate_by_tokens(session)
+
+    # 读取历史并构造完整消息
+    history = session.get_history(max_messages=0)
+    initial_messages = self.context.build_messages(
+        history=history,
+        current_message=msg.content,
+        session_summary=pending,
+        media=msg.media if msg.media else None,
+        channel=msg.channel,
+        chat_id=msg.chat_id,
+    )
+
+    # 进入真正的 agent 循环
+    final_content, tools_used, all_msgs, stop_reason, had_injections = \
+        await self._run_agent_loop(initial_messages, ...)
+
+    # 保存新增消息到 session
+    self._save_turn(session, all_msgs, 1 + len(history))
+    self._clear_runtime_checkpoint(session)
+    self.sessions.save(session)
 ```
 
-对应源码：
+代码讲解：
 
-- [ContextBuilder._get_identity](../../elebot/agent/context.py#L82)
-- [ContextBuilder._load_bootstrap_files](../../elebot/agent/context.py#L123)
-
-### 5.2 什么是 runtime context
-
-每轮消息前还会拼一小段运行时元信息：
-
-源码：
-
-- [ContextBuilder._build_runtime_context](../../elebot/agent/context.py#L96)
-
-它长这样：
-
-```text
-[Runtime Context — metadata only, not instructions]
-Current Time: ...
-Channel: cli
-Chat ID: direct
-[/Runtime Context]
-```
-
-它的作用是：
-
-- 给模型提供当前时间
-- 告诉模型当前消息来自哪个 channel / chat
-- 在恢复会话时带上 session summary
-
-但这不是长期历史，所以保存会话时会被剥掉。
-
-### 5.3 为什么要把 runtime context 和用户正文合成一条消息
-
-关键逻辑：
-
-- [ContextBuilder.build_messages](../../elebot/agent/context.py#L135)
-- [ContextBuilder._merge_message_content](../../elebot/agent/context.py#L109)
-
-核心代码：
-
-```python
-if isinstance(user_content, str):
-    merged = f"{runtime_ctx}\n\n{user_content}"
-else:
-    merged = [{"type": "text", "text": runtime_ctx}] + user_content
-```
-
-原因在注释里也写得很清楚：
-
-> 避免部分 Provider 拒绝连续出现相同 role 的消息。
-
-也就是说，这不是文档技巧，而是 Provider 协议兼容问题。
-
-### 5.4 图片消息怎么进模型
-
-如果 `media` 里有图片路径，`ContextBuilder._build_user_content()` 会：
-
-1. 读取本地文件
-2. 判断 MIME
-3. 转成 base64 data URL
-4. 生成 `image_url` 内容块
-
-源码：
-
-- [ContextBuilder._build_user_content](../../elebot/agent/context.py#L177)
-
-简化代码：
-
-```python
-raw = p.read_bytes()
-mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
-images.append({
-    "type": "image_url",
-    "image_url": {"url": f"data:{mime};base64,{b64}"},
-})
-```
+- `_process_message_result()` 是单条消息进入模型链路前的总收口入口。
+- 它会先拿到当前会话，并尝试把上轮未完成的 checkpoint 恢复进历史。
+- `auto_compact.prepare_session()` 会决定是否重载会话，并返回一段一次性 summary。
+- 普通斜杠命令会在进入模型前被拦截处理，所以不是所有输入都会走 LLM。
+- `maybe_consolidate_by_tokens()` 用来在上下文过长时先做历史压缩。
+- `history + current_message + session_summary + media` 会统一交给 `ContextBuilder.build_messages()`。
+- `_run_agent_loop()` 返回的是整轮执行结果，不只是最终文本，还包含工具和消息轨迹。
+- `_save_turn()` 最后只保存本轮新增部分，不会重复写入旧历史。
 
 ---
 
-## 6. AgentRunner：模型和工具怎么闭环
+## 4. AgentRunner.run()：核心循环
 
-如果说 `AgentLoop` 是调度器，那么 `AgentRunner` 就是“真正跑一轮模型循环的人”。
+文件索引：
 
-源码：
+- [runner.py](../../elebot/agent/runner.py)
+- [hook.py](../../elebot/agent/hook.py)
 
-- [AgentRunSpec](../../elebot/agent/runner.py#L51)
-- [AgentRunResult](../../elebot/agent/runner.py#L78)
-- [AgentRunner.run](../../elebot/agent/runner.py#L183)
+实现位置：
 
-### 6.1 先看输入和输出
+- `elebot/agent/runner.py:183-480`
 
-Runner 的输入是 `AgentRunSpec`：
-
-```python
-AgentRunSpec(
-    initial_messages=...,
-    tools=...,
-    model=...,
-    max_iterations=...,
-    hook=...,
-    checkpoint_callback=...,
-    injection_callback=...,
-)
-```
-
-Runner 的输出是 `AgentRunResult`：
+示例代码：
 
 ```python
-AgentRunResult(
-    final_content=...,
-    messages=...,
-    tools_used=...,
-    usage=...,
-    stop_reason=...,
-)
+async def run(self, spec: AgentRunSpec) -> AgentRunResult:
+    # 初始消息通常已经包含 system、history、user
+    messages = list(spec.initial_messages)
+    final_content = None
+    tools_used = []
+
+    for iteration in range(spec.max_iterations):
+        # 每次调模型前，都会先对上下文做治理
+        messages_for_model = self._drop_orphan_tool_results(messages)
+        messages_for_model = self._backfill_missing_tool_results(messages_for_model)
+        messages_for_model = self._microcompact(messages_for_model)
+        messages_for_model = self._apply_tool_result_budget(spec, messages_for_model)
+        messages_for_model = self._snip_history(spec, messages_for_model)
+
+        context = AgentHookContext(iteration=iteration, messages=messages)
+        await hook.before_iteration(context)
+
+        # 真正调用模型
+        response = await self._request_model(spec, messages_for_model, hook, context)
+
+        # 有工具调用时，先执行工具，再继续下一轮
+        if response.has_tool_calls:
+            assistant_message = build_assistant_message(...)
+            messages.append(assistant_message)
+            tools_used.extend(tc.name for tc in response.tool_calls)
+
+            await hook.before_execute_tools(context)
+            results, events, fatal_error = await self._execute_tools(
+                spec,
+                response.tool_calls,
+                external_lookup_counts,
+            )
+
+            for tool_call, result in zip(response.tool_calls, results):
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "content": self._normalize_tool_result(...),
+                })
+
+            injections = await self._drain_injections(spec)
+            if injections:
+                self._append_injected_messages(messages, injections)
+
+            continue
+
+        # 没有工具调用时，进入最终文本收口
+        clean = hook.finalize_content(context, response.content)
+        final_content = clean
+        break
 ```
 
-你可以把它理解成：
+代码讲解：
 
-> 给我上下文和工具，我帮你跑完；最后把最终文本、完整消息轨迹和停止原因还给你。
-
-### 6.2 一轮循环内部到底做什么
-
-`AgentRunner.run()` 的结构其实很清晰，可以压缩成下面这段伪代码：
-
-```python
-for iteration in range(max_iterations):
-    messages_for_model = 治理后的消息副本
-    response = 请求模型
-
-    if response.has_tool_calls:
-        记录 assistant tool call 消息
-        执行工具
-        追加 tool 消息
-        如有中途追问则注入
-        continue
-
-    clean = finalize_content(response.content)
-
-    if 空回复:
-        重试或走最终收口补救
-
-    if 被截断:
-        追加恢复提示并继续
-
-    if 最终阶段又注入了新消息:
-        continue
-
-    结束并返回最终结果
-```
-
-### 6.3 每轮调模型前，为什么要先“治理上下文”
-
-源码：
-
-- [run() 中的消息治理逻辑](../../elebot/agent/runner.py#L209)
-
-相关函数：
-
-- [AgentRunner._drop_orphan_tool_results](../../elebot/agent/runner.py#L727)
-- [AgentRunner._backfill_missing_tool_results](../../elebot/agent/runner.py#L753)
-- [AgentRunner._microcompact](../../elebot/agent/runner.py#L794)
-- [AgentRunner._apply_tool_result_budget](../../elebot/agent/runner.py#L819)
-- [AgentRunner._snip_history](../../elebot/agent/runner.py#L840)
-
-这一步的核心目的不是“美化消息”，而是：
-
-- 保证协议合法
-- 控制上下文长度
-- 防止 tool 结果太大把 prompt 撑爆
-- 尽量保住最近的重要消息
-
-文档上要特别注意这一点：
-
-> 持久化历史保持原样，发给模型的是治理后的副本。
-
-这是当前实现里一个很重要的边界。
-
-### 6.4 工具调用是怎么闭环的
-
-最关键的一段逻辑在：
-
-- [response.has_tool_calls 分支](../../elebot/agent/runner.py#L241)
-
-核心代码可以浓缩成：
-
-```python
-assistant_message = build_assistant_message(...tool_calls...)
-messages.append(assistant_message)
-
-results, new_events, fatal_error = await self._execute_tools(...)
-
-for tool_call, result in zip(response.tool_calls, results):
-    messages.append({
-        "role": "tool",
-        "tool_call_id": tool_call.id,
-        "name": tool_call.name,
-        "content": normalized_result,
-    })
-```
-
-然后下一轮再把 `messages + tool results` 发给模型。
-
-这就是“工具闭环”的真实含义：
-
-```text
-模型请求工具
-  -> Agent 执行工具
-  -> Agent 把工具结果回填成 role=tool 消息
-  -> 模型继续生成
-```
-
-### 6.5 空回复、截断和错误怎么收口
-
-这一块是很多人读代码时会跳过的，但其实很重要。
-
-相关代码：
-
-- [空回复重试](../../elebot/agent/runner.py#L285)
-- [长度截断恢复](../../elebot/agent/runner.py#L317)
-- [模型错误收口](../../elebot/agent/runner.py#L425)
-
-当前策略不是“模型给什么就信什么”，而是：
-
-- 如果文本空了，先重试
-- 如果还是空，再尝试 finalization retry
-- 如果输出被截断，追加恢复消息继续生成
-- 如果模型报错，返回统一错误文案并落 placeholder
-
-这说明 `AgentRunner` 不只是“转发 Provider”，而是在做运行时收口。
+- `messages` 是当前整轮执行中不断增长的消息列表。
+- 每轮开始都会先生成一个 `messages_for_model`，这个副本会做协议修补、压缩、截断。
+- `hook.before_iteration()`、`hook.before_execute_tools()` 等调用把生命周期事件暴露给外层。
+- `_request_model()` 返回的 `response` 里可能只有正文，也可能包含 `tool_calls`。
+- 一旦模型发起工具调用，就先把 assistant 的工具请求写进消息链路。
+- `_execute_tools()` 会执行工具，并返回结果、事件和致命错误。
+- 每条工具结果会以 `role="tool"` 的消息继续追加到 `messages` 里。
+- `_drain_injections()` 负责吸收同会话中途插入的新消息。
+- 当本轮没有工具调用时，`finalize_content()` 会产出最终对外正文。
 
 ---
 
-## 7. Hook：为什么流式输出和工具提示能插进主循环
+## 5. 工具执行：_execute_tools()
 
-Hook 的作用是：
+文件索引：
 
-> 在不改动 `AgentRunner.run()` 主流程的前提下，把一些“额外观察和回调能力”接进去。
+- [runner.py](../../elebot/agent/runner.py)
 
-源码：
+实现位置：
 
-- [AgentHookContext](../../elebot/agent/hook.py#L13)
-- [AgentHook](../../elebot/agent/hook.py#L29)
-- [CompositeHook](../../elebot/agent/hook.py#L69)
+- `elebot/agent/runner.py:568-636`
 
-### 7.1 Hook 生命周期很简单
-
-```text
-before_iteration
-  -> on_stream
-  -> on_stream_end
-  -> before_execute_tools
-  -> after_iteration
-  -> finalize_content
-```
-
-### 7.2 主链路里真正使用的是 _LoopHook
-
-源码：
-
-- [_LoopHook](../../elebot/agent/loop.py#L61)
-- [AgentLoop._run_agent_loop](../../elebot/agent/loop.py#L364)
-
-`_LoopHook` 干了几件关键事情：
-
-1. 把流式正文转发到外层 UI
-2. 把工具提示转成 progress 输出
-3. 设置路由相关工具上下文
-4. 记录 token usage
-5. 去掉 `<think>...</think>` 再落盘
-
-其中一个非常关键的细节在这里：
-
-- [_LoopHook.on_stream](../../elebot/agent/loop.py#L94)
-
-核心代码：
+示例代码：
 
 ```python
-prev_clean = strip_think(self._stream_buf)
-self._stream_buf += delta
-new_clean = strip_think(self._stream_buf)
-incremental = new_clean[len(prev_clean):]
+async def _execute_tools(
+    self,
+    spec: AgentRunSpec,
+    tool_calls: list[ToolCallRequest],
+    external_lookup_counts: dict[str, int],
+) -> tuple[list[Any], list[dict[str, str]], BaseException | None]:
+    # 先把工具调用划分成可以并发和必须串行的批次
+    batches = self._partition_tool_batches(spec, tool_calls)
+    tool_results = []
+
+    for batch in batches:
+        if spec.concurrent_tools and len(batch) > 1:
+            # 可并发批次直接 gather
+            tool_results.extend(await asyncio.gather(*(
+                self._run_tool(spec, tool_call, external_lookup_counts)
+                for tool_call in batch
+            )))
+        else:
+            # 不安全或需要保序时按顺序执行
+            for tool_call in batch:
+                tool_results.append(
+                    await self._run_tool(spec, tool_call, external_lookup_counts)
+                )
+
+    results = []
+    events = []
+    fatal_error = None
+    for result, event, error in tool_results:
+        results.append(result)
+        events.append(event)
+        if error is not None and fatal_error is None:
+            fatal_error = error
+
+    return results, events, fatal_error
 ```
 
-也就是说：
+代码讲解：
 
-> 流式回调给 UI 的不是原始 delta，而是剥掉 think 后的可见增量。
-
-### 7.3 CompositeHook 为什么要存在
-
-因为主链路可能有多个 Hook：
-
-- 内置 `_LoopHook`
-- 外部通过 facade 传进来的 hooks
-
-相关代码：
-
-- [CompositeHook](../../elebot/agent/hook.py#L69)
-- [_run_agent_loop 中组合 hook](../../elebot/agent/loop.py#L385)
-
-它的策略是：
-
-- 异步阶段：尽量异常隔离
-- `finalize_content`：按顺序串行处理
+- `_partition_tool_batches()` 先决定哪些工具可以并发、哪些必须串行。
+- `spec.concurrent_tools` 是总开关，不开时所有工具都走顺序执行。
+- 并发批次通过 `asyncio.gather()` 一次执行整组工具。
+- 串行批次会逐个执行 `_run_tool()`，保持顺序和副作用可控。
+- `_run_tool()` 的返回值不是单纯的结果，还包含事件信息和错误对象。
+- `results` 用于继续回填到消息链路，`events` 用于记录执行过程，`fatal_error` 用于决定是否终止本轮。
 
 ---
 
-## 8. Session、Checkpoint 和中断恢复
+## 6. 上下文治理（每次 LLM 调用前）
 
-Agent 并不是每次都只处理内存态消息。  
-它会持续把本轮结果写回 `SessionManager`。
+文件索引：
 
-关键代码：
+- [runner.py](../../elebot/agent/runner.py)
 
-- [_save_turn](../../elebot/agent/loop.py#L891)
-- [AgentLoop._set_runtime_checkpoint](../../elebot/agent/loop.py#L935)
-- [AgentLoop._restore_runtime_checkpoint](../../elebot/agent/loop.py#L972)
+实现位置：
 
-### 8.1 为什么要有 checkpoint
+- `elebot/agent/runner.py:204-231`
+- `elebot/agent/runner.py:727-840`
 
-一轮工具调用不一定能原子完成。
-
-比如：
-
-```text
-模型先返回 tool_calls
-  -> agent 还没来得及执行完全部工具
-  -> 进程中断
-```
-
-如果没有 checkpoint，会话历史就会残缺：
-
-- 有 assistant 的 tool call
-- 没有对应 tool result
-
-所以 AgentLoop 会把运行中的阶段状态写进：
+示例代码：
 
 ```python
-session.metadata["runtime_checkpoint"] = payload
+# 1. 丢弃没有配对 assistant tool_call 的 tool 结果
+messages_for_model = self._drop_orphan_tool_results(messages)
+
+# 2. 给缺失的 tool 结果补一条错误消息
+messages_for_model = self._backfill_missing_tool_results(messages_for_model)
+
+# 3. 把旧的长工具结果替换成简短摘要
+messages_for_model = self._microcompact(messages_for_model)
+
+# 4. 对单条工具结果应用长度预算
+messages_for_model = self._apply_tool_result_budget(spec, messages_for_model)
+
+# 5. 按 context window 截断历史
+messages_for_model = self._snip_history(spec, messages_for_model)
 ```
 
-源码：
+代码讲解：
 
-- [AgentLoop._set_runtime_checkpoint](../../elebot/agent/loop.py#L935)
+- `_drop_orphan_tool_results()` 清掉那些没有前置 assistant tool_call 的工具结果。
+- `_backfill_missing_tool_results()` 会给缺失结果的工具调用补一条合成错误消息。
+- `_microcompact()` 会把旧的长工具结果压成一句短摘要。
+- `_apply_tool_result_budget()` 会限制每条工具结果的长度。
+- `_snip_history()` 按上下文窗口裁掉较旧消息。
+- 这些治理只作用于发给模型的副本，不直接改动持久化历史。
 
-### 8.2 恢复时会怎么做
+---
 
-恢复逻辑在：
+## 7. ContextBuilder：构建完整消息
 
-- [AgentLoop._restore_runtime_checkpoint](../../elebot/agent/loop.py#L972)
+文件索引：
 
-它会：
+- [context.py](../../elebot/agent/context.py)
 
-1. 恢复 assistant tool call 消息
-2. 恢复已完成工具结果
-3. 给未完成工具补一条中断错误消息
-4. 做 overlap 去重，避免重复写入
-5. 清掉 checkpoint
+实现位置：
 
-补未完成工具结果的关键代码：
+- `elebot/agent/context.py:36-200`
+
+示例代码：
 
 ```python
-restored_messages.append(
-    {
+def build_system_prompt(self, skill_names=None, channel=None) -> str:
+    # 身份模板是 system prompt 的开头
+    parts = [self._get_identity(channel=channel)]
+
+    # 启动文件、长期记忆、技能、近期历史按顺序拼接
+    bootstrap = self._load_bootstrap_files()
+    memory = self.memory.get_memory_context()
+    always_skills = self.skills.get_always_skills()
+    skills_summary = self.skills.build_skills_summary()
+    entries = self.memory.read_unprocessed_history(...)
+
+    return "\n\n---\n\n".join(parts)
+```
+
+```python
+def build_messages(...):
+    runtime_ctx = self._build_runtime_context(...)
+    user_content = self._build_user_content(current_message, media)
+
+    # 把运行时上下文和本轮输入合成一条 user 消息
+    if isinstance(user_content, str):
+        merged = f"{runtime_ctx}\n\n{user_content}"
+    else:
+        merged = [{"type": "text", "text": runtime_ctx}] + user_content
+
+    messages = [
+        {"role": "system", "content": self.build_system_prompt(...)},
+        *history,
+    ]
+    messages.append({"role": current_role, "content": merged})
+    return messages
+```
+
+代码讲解：
+
+- `build_system_prompt()` 负责把身份、启动文件、记忆、技能和近期历史拼成 system 内容。
+- `_build_runtime_context()` 负责构造当前时间、channel、chat_id 这类运行时信息。
+- `_build_user_content()` 会把文本和图片统一成 Provider 可接受的内容结构。
+- `build_messages()` 最终产出的是完整消息数组，不是单独一条用户消息。
+- 当前实现会把 runtime context 和本轮输入合并到同一条 user 消息里。
+
+---
+
+## 8. Session 保存与 Checkpoint 恢复
+
+文件索引：
+
+- [loop.py](../../elebot/agent/loop.py)
+- [session.md](session.md)
+
+实现位置：
+
+- `elebot/agent/loop.py:842-1009`
+
+示例代码：
+
+```python
+def _save_turn(self, session: Session, messages: list[dict], skip: int) -> None:
+    for m in messages[skip:]:
+        entry = dict(m)
+
+        # 空 assistant 消息不保存
+        if role == "assistant" and not content and not entry.get("tool_calls"):
+            continue
+
+        # tool 结果过长时先截断
+        if role == "tool" and isinstance(content, str):
+            entry["content"] = truncate_text_fn(content, self.max_tool_result_chars)
+
+        # user 消息里的 runtime context 会在落盘前剥掉
+        if role == "user" and isinstance(content, str):
+            ...
+
+        session.messages.append(entry)
+```
+
+```python
+def _restore_runtime_checkpoint(self, session: Session) -> bool:
+    checkpoint = session.metadata.get(self._RUNTIME_CHECKPOINT_KEY)
+
+    # 恢复 assistant 的 tool_calls 消息
+    restored_messages.append(assistant_message)
+
+    # 恢复已经完成的 tool 结果
+    restored_messages.extend(completed_tool_results)
+
+    # 给未完成工具补一条中断错误
+    restored_messages.append({
         "role": "tool",
         "tool_call_id": tool_id,
         "name": name,
         "content": "Error: Task interrupted before this tool finished.",
-    }
+    })
+```
+
+代码讲解：
+
+- `_save_turn()` 不会把整轮消息原样全部落盘，而是只保存当前新增部分。
+- 用户消息里的 runtime context 只用于本轮提示词构造，落盘前会被去掉。
+- 工具结果如果过长，会先裁剪再写入会话历史。
+- `_set_runtime_checkpoint()` 会把运行中的工具阶段状态写进 `session.metadata`。
+- `_restore_runtime_checkpoint()` 会把中断前的 tool_call、已完成工具结果和未完成工具错误一起补回历史。
+- `_clear_runtime_checkpoint()` 会在本轮收尾时把 checkpoint 清掉。
+
+---
+
+## 9. Hook、Memory、AutoCompact、Skills、Subagent
+
+这一组模块不是主循环本身，但都会影响主链路行为。
+
+### 9.1 Hook
+
+文件索引：
+
+- [hook.py](../../elebot/agent/hook.py)
+
+示例代码：
+
+```python
+class AgentHook:
+    async def before_iteration(self, context): ...
+    async def on_stream(self, context, delta): ...
+    async def on_stream_end(self, context, *, resuming): ...
+    async def before_execute_tools(self, context): ...
+    async def after_iteration(self, context): ...
+    def finalize_content(self, context, content): ...
+```
+
+代码讲解：
+
+- `Hook` 定义了主循环暴露给外层的生命周期接口。
+- `_LoopHook` 是主链路内部使用的 hook，负责流式输出、工具提示和内容清洗。
+- `CompositeHook` 会把多组 hook 串成一条执行管线。
+
+### 9.2 Memory / Consolidator / Dream
+
+文件索引：
+
+- [memory.py](../../elebot/agent/memory.py)
+
+示例代码：
+
+```python
+estimated, source = self.estimate_session_prompt_tokens(session)
+if estimated < budget:
+    return
+
+boundary = self.pick_consolidation_boundary(session, max(1, estimated - target))
+chunk = session.messages[session.last_consolidated:end_idx]
+if not await self.archive(chunk):
+    return
+```
+
+代码讲解：
+
+- `MemoryStore` 负责管理 `MEMORY.md`、`SOUL.md`、`USER.md` 和历史文件。
+- `Consolidator` 负责在上下文过长时把旧消息压成摘要。
+- `Dream` 负责更长期的记忆整理和文件更新。
+
+### 9.3 AutoCompact
+
+文件索引：
+
+- [autocompact.py](../../elebot/agent/autocompact.py)
+
+示例代码：
+
+```python
+def check_expired(self, schedule_background):
+    for info in self.sessions.list_sessions():
+        if key and key not in self._archiving and self._is_expired(info.get("updated_at")):
+            self._archiving.add(key)
+            schedule_background(self._archive(key))
+```
+
+代码讲解：
+
+- `AutoCompact` 按空闲时间检查会话，而不是按 token 大小。
+- 过期会话会进入后台归档流程。
+- `prepare_session()` 会在新消息进入前决定是否重载会话，并返回一次性 summary。
+
+### 9.4 Skills
+
+文件索引：
+
+- [skills.py](../../elebot/agent/skills.py)
+
+示例代码：
+
+```python
+skills = self._skill_entries_from_dir(self.workspace_skills, "workspace")
+workspace_names = {entry["name"] for entry in skills}
+skills.extend(
+    self._skill_entries_from_dir(
+        self.builtin_skills,
+        "builtin",
+        skip_names=workspace_names,
+    )
 )
 ```
 
-这就是为什么中断后再次进入同一会话时，历史仍能保持协议完整。
+代码讲解：
 
-### 8.3 保存历史时会做哪些清理
+- 技能来源分为工作区技能和内置技能。
+- 工作区同名技能会覆盖内置技能。
+- `build_skills_summary()` 负责生成技能摘要，`get_always_skills()` 负责找出总是自动注入的技能。
 
-`_save_turn()` 不是原样把所有消息 dump 进 session。
+### 9.5 Subagent
 
-它会做这些事情：
+文件索引：
 
-- 丢掉空 assistant 消息
-- 截断过长工具结果
-- 清洗不适合持久化的多模态块
-- 去掉 runtime context
+- [subagent.py](../../elebot/agent/subagent.py)
 
-源码：
-
-- [_sanitize_persisted_blocks](../../elebot/agent/loop.py#L842)
-- [_save_turn](../../elebot/agent/loop.py#L891)
-
-所以这里要建立一个正确认知：
-
-> 会话历史不是“原始请求日志”，而是“适合后续继续对话的持久化版本”。
-
----
-
-## 9. 中途追问为什么不会把会话打裂
-
-这是当前 Agent 设计里一个很重要但不太显眼的点。
-
-相关代码：
-
-- [AgentLoop._effective_session_key](../../elebot/agent/loop.py#L358)
-- [run() 中 pending queue 逻辑](../../elebot/agent/loop.py#L455)
-- [_run_agent_loop() 中的 _drain_pending](../../elebot/agent/loop.py#L404)
-- [AgentRunner._drain_injections](../../elebot/agent/runner.py#L138)
-
-### 9.1 核心结构
-
-`AgentLoop` 维护两组结构：
-
-- `_session_locks`
-- `_pending_queues`
-
-意思是：
-
-- 同一个 session 同时只跑一个主任务
-- 新消息先进入 pending queue，而不是立即并发跑第二个任务
-
-### 9.2 整体流程
-
-```text
-第一条消息进入
-  -> 创建当前 session 的 pending queue
-  -> 开始跑 AgentRunner
-
-同 session 第二条消息进入
-  -> 不新建竞争任务
-  -> 放进 pending queue
-
-AgentRunner 在工具后或最终回复前
-  -> drain 注入消息
-  -> 合并进当前 messages
-  -> 继续下一轮模型调用
-```
-
-### 9.3 为什么这很重要
-
-如果没有这层机制，会出现两个问题：
-
-1. 同一份 session history 被两个任务并发修改
-2. 用户追问被拆成完全独立的另一轮，语义断裂
-
-当前实现选择的是：
-
-> 优先把追问吸收到当前执行链路里。
-
-不过要注意：
-
-- Agent 内核已经支持这种注入
-- 但 CLI 交互层目前还没有把“生成中继续输入”做成可用体验
-
-这两件事不是一回事。
-
----
-
-## 10. 记忆系统：Memory / Consolidator / Dream
-
-`agent/memory.py` 里其实是三块能力叠在一起：
-
-1. `MemoryStore`
-2. `Consolidator`
-3. `Dream`
-
-源码：
-
-- [MemoryStore](../../elebot/agent/memory.py#L31)
-- [Consolidator](../../elebot/agent/memory.py#L463)
-- [Dream](../../elebot/agent/memory.py#L701)
-
-### 10.1 MemoryStore：纯文件存储层
-
-它的定位很明确：
-
-> 维护记忆目录里的文件事实，不承担模型决策逻辑。
-
-它负责的文件包括：
-
-- `memory/MEMORY.md`
-- `memory/history.jsonl`
-- `SOUL.md`
-- `USER.md`
-
-关键代码：
-
-- [MemoryStore.__init__](../../elebot/agent/memory.py#L41)
-
-你可以把它理解成“记忆文件仓库”。
-
-### 10.2 Consolidator：旧消息归档
-
-`Consolidator` 的职责是：
-
-- 估算 prompt token
-- 决定是否需要压缩
-- 把旧消息归档到长期历史或摘要
-
-相关入口：
-
-- [estimate_session_prompt_tokens](../../elebot/agent/memory.py#L548)
-- [MemoryStore.archive](../../elebot/agent/memory.py#L572)
-- [Consolidator.maybe_consolidate_by_tokens](../../elebot/agent/memory.py#L608)
-
-所以 AgentLoop 在处理消息前后都会调用它：
-
-- 处理前：判断是否需要先压缩
-- 处理后：后台调度一次 `maybe_consolidate_by_tokens`
-
-### 10.3 Dream：长期记忆整理器
-
-`Dream` 不是普通会话摘要，它更接近：
-
-> 定期用模型整理长期记忆文件，并通过 GitStore 留版本。
-
-入口：
-
-- [Dream.__init__](../../elebot/agent/memory.py#L701)
-- [Dream.run](../../elebot/agent/memory.py#L778)
-
-从主链路角度看：
-
-- `ContextBuilder` 会消费 Dream 整理后的结果
-- `Dream` 本身不直接参与每一轮普通对话
-
----
-
-## 11. AutoCompact：空闲会话如何自动压缩
-
-`AutoCompact` 不是按 token 压缩，而是按“空闲时间”压缩。
-
-源码：
-
-- [AutoCompact](../../elebot/agent/autocompact.py#L15)
-- [AutoCompact.check_expired](../../elebot/agent/autocompact.py#L75)
-- [AutoCompact.prepare_session](../../elebot/agent/autocompact.py#L125)
-
-### 11.1 它在干嘛
-
-逻辑可以简单理解成：
-
-```text
-如果一个会话长时间没动
-  -> 后台归档旧前缀
-  -> 只保留最近合法后缀
-  -> 如有摘要，下次恢复会话时注入 summary
-```
-
-### 11.2 它和 Consolidator 的区别
-
-不要把它和 `Consolidator` 混在一起。
-
-- `Consolidator`：按上下文压力压缩
-- `AutoCompact`：按空闲时间压缩
-
-一个解决“当前 prompt 太大”，一个解决“旧会话长期堆积”。
-
----
-
-## 12. Skills：技能是怎么被发现和注入的
-
-`SkillsLoader` 负责两类技能来源：
-
-1. 工作区技能
-2. 内置技能
-
-源码：
-
-- [SkillsLoader](../../elebot/agent/skills.py#L23)
-- [SkillsLoader.list_skills](../../elebot/agent/skills.py#L58)
-- [SkillsLoader.build_skills_summary](../../elebot/agent/skills.py#L115)
-- [SkillsLoader.get_always_skills](../../elebot/agent/skills.py#L200)
-
-### 12.1 发现规则
-
-技能目录约定是：
-
-```text
-<workspace>/skills/<name>/SKILL.md
-elebot/skills/<name>/SKILL.md
-```
-
-工作区技能优先，同名时覆盖内置技能。
-
-对应代码：
-
-- [SkillsLoader._skill_entries_from_dir](../../elebot/agent/skills.py#L42)
-- [SkillsLoader.list_skills](../../elebot/agent/skills.py#L58)
-
-### 12.2 为什么不是所有技能都完整注入
-
-因为太大。
-
-当前策略是：
-
-- `always` 技能：完整注入
-- 其他技能：只进摘要
-
-摘要构造入口：
-
-- [SkillsLoader.build_skills_summary](../../elebot/agent/skills.py#L115)
-
-always 技能入口：
-
-- [SkillsLoader.get_always_skills](../../elebot/agent/skills.py#L200)
-
-### 12.3 依赖检查怎么做
-
-技能可以声明：
-
-- 需要某个 CLI 命令
-- 需要某个环境变量
-
-依赖检查逻辑：
-
-- [SkillsLoader._check_requirements](../../elebot/agent/skills.py#L186)
-- [SkillsLoader._get_missing_requirements](../../elebot/agent/skills.py#L149)
-
-所以技能不是简单的“目录里有就可用”，而是会做环境过滤。
-
----
-
-## 13. Subagent：后台子 Agent 是怎么工作的
-
-当主 Agent 调用 `spawn` 工具时，真正负责后台任务的是 `SubagentManager`。
-
-源码：
-
-- [SubagentManager](../../elebot/agent/subagent.py#L44)
-- [SubagentManager.spawn](../../elebot/agent/subagent.py#L79)
-- [SubagentManager._run_subagent](../../elebot/agent/subagent.py#L118)
-- [SubagentManager._announce_result](../../elebot/agent/subagent.py#L197)
-
-### 13.1 它的设计目标
-
-核心目标不是“复制一个主 Agent”，而是：
-
-> 起一个聚焦、受限、后台运行的子任务执行器。
-
-所以它不会复用主 Agent 的整套工具面。
-
-从代码能看出来，子 Agent 只注册了受限工具集：
+示例代码：
 
 ```python
-tools.register(ReadFileTool(...))
-tools.register(WriteFileTool(...))
-tools.register(EditFileTool(...))
-tools.register(ListDirTool(...))
-tools.register(GlobTool(...))
-tools.register(GrepTool(...))
+async def spawn(...):
+    bg_task = asyncio.create_task(
+        self._run_subagent(task_id, task, display_label, origin)
+    )
+    self._running_tasks[task_id] = bg_task
 ```
 
-有条件时再注册：
-
-- `ExecTool`
-- `WebSearchTool`
-- `WebFetchTool`
-
-但它不会注册 `message` 和 `spawn`，这是有意为之。
-
-原因在源码注释里写得很清楚：
-
-> 避免后台链路再次递归发消息或再次拉起子 Agent。
-
-### 13.2 子 Agent 结果怎么回到主链路
-
-子 Agent 完成后不会直接写 session，也不会直接去改主 Agent 的 messages。
-
-它走的是：
-
-```text
-SubagentManager
-  -> 构造一条 system 通道的 InboundMessage
-  -> publish_inbound()
-  -> 主 Agent 再按 system 消息路径统一处理
+```python
+msg = InboundMessage(
+    channel="system",
+    sender_id="subagent",
+    chat_id=f"{origin['channel']}:{origin['chat_id']}",
+    content=announce_content,
+)
+await self.bus.publish_inbound(msg)
 ```
 
-相关代码：
+代码讲解：
 
-- [SubagentManager._announce_result](../../elebot/agent/subagent.py#L197)
-- [system 消息分支](../../elebot/agent/loop.py#L670)
-
-也就是说，后台结果注入没有新造一套旁路，而是复用了主链路。
-
-### 13.3 `/stop` 为什么能取消子 Agent
-
-因为 `SubagentManager` 自己维护了：
-
-- `_running_tasks`
-- `_session_tasks`
-
-并提供：
-
-- [SubagentManager.cancel_by_session](../../elebot/agent/subagent.py#L266)
-
-所以主链路的 `/stop` 不只是取消主任务，也能顺便取消同会话下的后台子任务。
+- `SubagentManager` 负责后台子任务的创建、跟踪和回流。
+- 子 Agent 运行结束后，不直接改主会话，而是重新发一条 `system` 消息回到主链路。
+- `cancel_by_session()` 可以取消某个会话下的后台子任务。
 
 ---
 
-## 14. 相关文档跳转
+## 10. 关键组件关系
 
-如果你继续顺着 Agent 读，建议配合这些文档：
-
-- [文档总览](../README.md)
-- [Tools 模块文档](./tools.md)
-- [Session 模块文档](./session.md)
-- [Providers 模块文档](./providers.md)
-- [Command 模块文档](./command.md)
-- [Bus 模块文档](./bus.md)
-- [CLI 模块文档](./cli.md)
-- [Facade 模块文档](./facade.md)
-- [Agent 测试文档](../test/agent.md)
+```text
+AgentLoop
+├── context: ContextBuilder       # 构建 prompt 和 messages
+├── sessions: SessionManager      # 会话读写
+├── tools: ToolRegistry           # 工具注册表
+├── runner: AgentRunner           # 模型与工具循环执行器
+├── consolidator: Consolidator    # token 压力下的历史摘要
+├── auto_compact: AutoCompact     # 空闲会话自动压缩
+├── dream: Dream                  # 长期记忆整理
+└── subagents: SubagentManager    # 后台子 Agent 管理
+```
 
 ---
 
-## 最后再压缩成一句话
-
-你读完整个 `agent` 目录后，应该建立起这样一个判断：
+## 11. 消息流程图
 
 ```text
-AgentLoop 负责编排整个运行时，
-ContextBuilder 负责告诉模型“现在有什么上下文”，
-AgentRunner 负责把“模型回复”和“工具执行”闭成一条链，
-Memory / Skills / Subagent 则分别负责长期记忆、能力扩展和后台任务。
+用户输入
+    ↓
+InboundMessage -> AgentLoop._dispatch()
+    ↓
+auto_compact.prepare_session() -> 检查是否需要压缩
+    ↓
+context.build_messages() -> 构建完整消息列表
+    ↓
+AgentRunner.run() -> 循环直到最终响应或达到最大迭代
+    ↓
+┌─────────────────────────────────────────┐
+│  while iteration < max_iterations:      │
+│    1. 上下文治理                        │
+│    2. 调用 LLM                          │
+│    3. 有 tool_calls -> 执行工具 -> 继续 │
+│    4. 无 tool_calls -> 返回响应         │
+└─────────────────────────────────────────┘
+    ↓
+_save_turn() -> 保存到 session
+    ↓
+OutboundMessage -> bus.publish_outbound()
 ```
-
-如果你以后要继续追代码，最值得反复看的 5 个入口是：
-
-- [AgentLoop.__init__](../../elebot/agent/loop.py#L155)
-- [AgentLoop._process_message_result](../../elebot/agent/loop.py#L660)
-- [AgentLoop._run_agent_loop](../../elebot/agent/loop.py#L364)
-- [ContextBuilder.build_messages](../../elebot/agent/context.py#L135)
-- [AgentRunner.run](../../elebot/agent/runner.py#L183)
