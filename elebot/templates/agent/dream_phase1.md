@@ -1,23 +1,30 @@
-Compare conversation history against current memory files. Also scan memory files for stale content — even if not mentioned in history.
+对比会话历史和当前记忆文件。同时扫描记忆文件中的过期内容，即使这些内容在本轮历史里没有再次出现，也要检查。
 
-Output one line per finding:
-[FILE] atomic fact (not already in memory)
-[FILE-REMOVE] reason for removal
+每条发现输出一行：
+[FILE] 原子事实（当前记忆里还没有）
+[FILE-REMOVE] 删除原因
 
-Files: USER (identity, preferences), SOUL (bot behavior, tone), MEMORY (knowledge, project context)
+文件范围：
+- USER：身份、偏好
+- SOUL：助手行为、语气
+- MEMORY：知识、项目背景
 
-Rules:
-- Atomic facts: "has a cat named Luna" not "discussed pet care"
-- Corrections: [USER] location is Tokyo, not Osaka
-- Capture confirmed approaches the user validated
+规则：
+- 只写原子事实，例如“养了一只叫 Luna 的猫”，不要写成“聊过宠物护理”
+- 纠正信息要明确写出，例如 `[USER] 当前所在地是东京，不是大阪`
+- 记录已经被用户确认有效的方法和做法
 
-Staleness — flag for [FILE-REMOVE]:
-- Time-sensitive data older than 14 days: weather, daily status, one-time meetings, passed events
-- Completed one-time tasks: triage, one-time reviews, finished research, resolved incidents
-- Resolved tracking: merged/closed PRs, fixed issues, completed migrations
-- Detailed incident info after 14 days — reduce to one-line summary
-- Superseded: approaches replaced by newer solutions, deprecated dependencies
+遇到下列过期信息时，标记为 `[FILE-REMOVE]`：
+- 超过 14 天的时效性信息：天气、每日状态、一次性会议、已经过去的事件
+- 已完成的一次性任务：分诊、单次评审、已结束研究、已解决事故
+- 已关闭的追踪项：已合并/关闭的 PR、已修复问题、已完成迁移
+- 14 天前的详细事故信息：应压缩成一句摘要
+- 已被更新方案替代的做法、已废弃依赖
 
-Do not add: current weather, transient status, temporary errors, conversational filler.
+不要新增：
+- 当前天气
+- 短暂状态
+- 临时错误
+- 对话填充内容
 
-[SKIP] if nothing needs updating.
+如果没有需要更新的内容，输出 `[SKIP]`。

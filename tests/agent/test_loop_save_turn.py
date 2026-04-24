@@ -14,7 +14,7 @@ def _mk_loop() -> AgentLoop:
 def test_save_turn_skips_multimodal_user_when_only_runtime_context() -> None:
     loop = _mk_loop()
     session = Session(key="test:runtime-only")
-    runtime = ContextBuilder._RUNTIME_CONTEXT_TAG + "\nCurrent Time: now (UTC)"
+    runtime = ContextBuilder._RUNTIME_CONTEXT_TAG + "\n当前时间：now (UTC)"
 
     loop._save_turn(
         session,
@@ -27,7 +27,7 @@ def test_save_turn_skips_multimodal_user_when_only_runtime_context() -> None:
 def test_save_turn_keeps_image_placeholder_with_path_after_runtime_strip() -> None:
     loop = _mk_loop()
     session = Session(key="test:image")
-    runtime = ContextBuilder._RUNTIME_CONTEXT_TAG + "\nCurrent Time: now (UTC)"
+    runtime = ContextBuilder._RUNTIME_CONTEXT_TAG + "\n当前时间：now (UTC)"
 
     loop._save_turn(
         session,
@@ -46,7 +46,7 @@ def test_save_turn_keeps_image_placeholder_with_path_after_runtime_strip() -> No
 def test_save_turn_keeps_image_placeholder_without_meta() -> None:
     loop = _mk_loop()
     session = Session(key="test:image-no-meta")
-    runtime = ContextBuilder._RUNTIME_CONTEXT_TAG + "\nCurrent Time: now (UTC)"
+    runtime = ContextBuilder._RUNTIME_CONTEXT_TAG + "\n当前时间：now (UTC)"
 
     loop._save_turn(
         session,

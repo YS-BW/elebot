@@ -234,8 +234,8 @@ async def test_runner_returns_max_iterations_fallback():
 
     assert result.stop_reason == "max_iterations"
     assert result.final_content == (
-        "I reached the maximum number of tool call iterations (2) "
-        "without completing the task. You can try breaking the task into smaller steps."
+        "我已经达到工具调用的最大迭代次数（2），但仍未完成任务。"
+        "你可以尝试把任务拆成更小的步骤后再执行。"
     )
     assert result.messages[-1]["role"] == "assistant"
     assert result.messages[-1]["content"] == result.final_content
@@ -800,8 +800,8 @@ async def test_loop_max_iterations_message_stays_stable(tmp_path):
     final_content, _, _, _, _ = await loop._run_agent_loop([])
 
     assert final_content == (
-        "I reached the maximum number of tool call iterations (2) "
-        "without completing the task. You can try breaking the task into smaller steps."
+        "我已经达到工具调用的最大迭代次数（2），但仍未完成任务。"
+        "你可以尝试把任务拆成更小的步骤后再执行。"
     )
 
 

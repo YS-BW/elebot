@@ -13,14 +13,14 @@ from elebot.utils.helpers import build_status_content
 from elebot.utils.restart import set_restart_notice_to_env
 
 SLASH_COMMAND_SPECS: list[tuple[str, str]] = [
-    ("/new", "Start a new conversation"),
-    ("/stop", "Stop the current task"),
-    ("/restart", "Restart the bot"),
-    ("/status", "Show bot status"),
-    ("/dream", "Manually trigger Dream consolidation"),
-    ("/dream-log", "Show what the last Dream changed"),
-    ("/dream-restore", "Revert memory to a previous state"),
-    ("/help", "Show available commands"),
+    ("/new", "开始新会话"),
+    ("/stop", "停止当前任务"),
+    ("/restart", "重启 elebot"),
+    ("/status", "查看当前状态"),
+    ("/dream", "手动触发 Dream 整理"),
+    ("/dream-log", "查看最近一次 Dream 变更"),
+    ("/dream-restore", "恢复到之前的 Dream 版本"),
+    ("/help", "查看可用命令"),
 ]
 
 
@@ -35,7 +35,7 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
             await t
         except (asyncio.CancelledError, Exception):
             pass
-    content = f"Stopped {cancelled} task(s)." if cancelled else "No active task to stop."
+    content = f"已停止 {cancelled} 个任务。" if cancelled else "当前没有可停止的任务。"
     return OutboundMessage(
         channel=msg.channel, chat_id=msg.chat_id, content=content,
         metadata=dict(msg.metadata or {})
@@ -53,7 +53,7 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
 
     asyncio.create_task(_do_restart())
     return OutboundMessage(
-        channel=msg.channel, chat_id=msg.chat_id, content="Restarting...",
+        channel=msg.channel, chat_id=msg.chat_id, content="正在重启……",
         metadata=dict(msg.metadata or {})
     )
 
@@ -110,7 +110,7 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
         loop._schedule_background(loop.consolidator.archive(snapshot))
     return OutboundMessage(
         channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
-        content="New session started.",
+        content="已开始新会话。",
         metadata=dict(ctx.msg.metadata or {})
     )
 
@@ -128,19 +128,19 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
             did_work = await loop.dream.run()
             elapsed = time.monotonic() - t0
             if did_work:
-                content = f"Dream completed in {elapsed:.1f}s."
+                content = f"Dream 已完成，耗时 {elapsed:.1f}s。"
             else:
-                content = "Dream: nothing to process."
+                content = "Dream：没有需要处理的内容。"
         except Exception as e:
             elapsed = time.monotonic() - t0
-            content = f"Dream failed after {elapsed:.1f}s: {e}"
+            content = f"Dream 执行失败，耗时 {elapsed:.1f}s：{e}"
         await loop.bus.publish_outbound(OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=content,
         ))
 
     asyncio.create_task(_run_dream())
     return OutboundMessage(
-        channel=msg.channel, chat_id=msg.chat_id, content="Dreaming...",
+        channel=msg.channel, chat_id=msg.chat_id, content="Dream 执行中…",
     )
 
 
@@ -168,7 +168,7 @@ def _format_changed_files(diff: str) -> str:
     """把变更文件列表格式化为展示文本。"""
     files = _extract_changed_files(diff)
     if not files:
-        return "No tracked memory files changed."
+        return "没有检测到已跟踪记忆文件的变更。"
     return ", ".join(f"`{path}`" for path in files)
 
 
@@ -176,18 +176,18 @@ def _format_dream_log_content(commit, diff: str, *, requested_sha: str | None = 
     """构造 Dream 版本日志展示文本。"""
     files_line = _format_changed_files(diff)
     lines = [
-        "## Dream Update",
+        "## Dream 更新",
         "",
-        "Here is the selected Dream memory change." if requested_sha else "Here is the latest Dream memory change.",
+        "下面是你指定的 Dream 记忆变更。" if requested_sha else "下面是最近一次 Dream 记忆变更。",
         "",
-        f"- Commit: `{commit.sha}`",
-        f"- Time: {commit.timestamp}",
-        f"- Changed files: {files_line}",
+        f"- 提交：`{commit.sha}`",
+        f"- 时间：{commit.timestamp}",
+        f"- 变更文件：{files_line}",
     ]
     if diff:
         lines.extend([
             "",
-            f"Use `/dream-restore {commit.sha}` to undo this change.",
+            f"如果要撤销这次变更，可以执行 `/dream-restore {commit.sha}`。",
             "",
             "```diff",
             diff.rstrip(),
@@ -196,7 +196,7 @@ def _format_dream_log_content(commit, diff: str, *, requested_sha: str | None = 
     else:
         lines.extend([
             "",
-            "Dream recorded this version, but there is no file diff to display.",
+            "Dream 已记录这个版本，但当前没有可展示的文件差异。",
         ])
     return "\n".join(lines)
 
@@ -204,17 +204,17 @@ def _format_dream_log_content(commit, diff: str, *, requested_sha: str | None = 
 def _format_dream_restore_list(commits: list) -> str:
     """构造可恢复的 Dream 版本列表文本。"""
     lines = [
-        "## Dream Restore",
+        "## Dream 恢复",
         "",
-        "Choose a Dream memory version to restore. Latest first:",
+        "请选择要恢复的 Dream 记忆版本，最新的排在最前面：",
         "",
     ]
     for c in commits:
         lines.append(f"- `{c.sha}` {c.timestamp} - {c.message.splitlines()[0]}")
     lines.extend([
         "",
-        "Preview a version with `/dream-log <sha>` before restoring it.",
-        "Restore a version with `/dream-restore <sha>`.",
+        "恢复前可以先用 `/dream-log <sha>` 预览某个版本。",
+        "确认后可用 `/dream-restore <sha>` 执行恢复。",
     ])
     return "\n".join(lines)
 
@@ -226,9 +226,9 @@ async def cmd_dream_log(ctx: CommandContext) -> OutboundMessage:
 
     if not git.is_initialized():
         if store.get_last_dream_cursor() == 0:
-            msg = "Dream has not run yet. Run `/dream`, or wait for the next scheduled Dream cycle."
+            msg = "Dream 还没有运行过。可以手动执行 `/dream`，或等待下一次整理。"
         else:
-            msg = "Dream history is not available because memory versioning is not initialized."
+            msg = "当前无法查看 Dream 历史，因为记忆版本记录尚未初始化。"
         return OutboundMessage(
             channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
             content=msg, metadata={"render_as": "text"},
@@ -242,9 +242,9 @@ async def cmd_dream_log(ctx: CommandContext) -> OutboundMessage:
         result = git.show_commit_diff(sha)
         if not result:
             content = (
-                f"Couldn't find Dream change `{sha}`.\n\n"
-                "Use `/dream-restore` to list recent versions, "
-                "or `/dream-log` to inspect the latest one."
+                f"找不到 Dream 变更 `{sha}`。\n\n"
+                "可以先用 `/dream-restore` 查看最近版本列表，"
+                "或直接用 `/dream-log` 查看最新一次变更。"
             )
         else:
             commit, diff = result
@@ -257,7 +257,7 @@ async def cmd_dream_log(ctx: CommandContext) -> OutboundMessage:
             commit, diff = result
             content = _format_dream_log_content(commit, diff)
         else:
-            content = "Dream memory has no saved versions yet."
+            content = "Dream 记忆目前还没有保存过任何版本。"
 
     return OutboundMessage(
         channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
@@ -272,7 +272,7 @@ async def cmd_dream_restore(ctx: CommandContext) -> OutboundMessage:
     if not git.is_initialized():
         return OutboundMessage(
             channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
-            content="Dream history is not available because memory versioning is not initialized.",
+            content="当前无法查看 Dream 历史，因为记忆版本记录尚未初始化。",
         )
 
     args = ctx.args.strip()
@@ -280,25 +280,25 @@ async def cmd_dream_restore(ctx: CommandContext) -> OutboundMessage:
         # 不带参数时先列出可恢复版本，避免用户盲目回滚。
         commits = git.log(max_entries=10)
         if not commits:
-            content = "Dream memory has no saved versions to restore yet."
+            content = "Dream 记忆目前还没有可恢复的历史版本。"
         else:
             content = _format_dream_restore_list(commits)
     else:
         sha = args.split()[0]
         result = git.show_commit_diff(sha)
-        changed_files = _format_changed_files(result[1]) if result else "the tracked memory files"
+        changed_files = _format_changed_files(result[1]) if result else "已跟踪的记忆文件"
         new_sha = git.revert(sha)
         if new_sha:
             content = (
-                f"Restored Dream memory to the state before `{sha}`.\n\n"
-                f"- New safety commit: `{new_sha}`\n"
-                f"- Restored files: {changed_files}\n\n"
-                f"Use `/dream-log {new_sha}` to inspect the restore diff."
+                f"已将 Dream 记忆恢复到 `{sha}` 之前的状态。\n\n"
+                f"- 新的安全提交：`{new_sha}`\n"
+                f"- 已恢复文件：{changed_files}\n\n"
+                f"可以执行 `/dream-log {new_sha}` 查看这次恢复带来的差异。"
             )
         else:
             content = (
-                f"Couldn't restore Dream change `{sha}`.\n\n"
-                "It may not exist, or it may be the first saved version with no earlier state to restore."
+                f"无法恢复 Dream 变更 `{sha}`。\n\n"
+                "它可能不存在，或者它本身就是第一份保存版本，前面没有更早状态可供恢复。"
             )
     return OutboundMessage(
         channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
@@ -318,7 +318,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
 
 def build_help_text() -> str:
     """构造各渠道共用的帮助文本。"""
-    lines = ["🍌 elebot commands:"]
+    lines = ["🍌 elebot 命令："]
     lines.extend(f"{command} — {description}" for command, description in SLASH_COMMAND_SPECS)
     return "\n".join(lines)
 

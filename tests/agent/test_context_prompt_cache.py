@@ -55,8 +55,8 @@ def test_system_prompt_reflects_current_dream_memory_contract(tmp_path) -> None:
     prompt = builder.build_system_prompt()
 
     assert "memory/history.jsonl" in prompt
-    assert "automatically managed by Dream" in prompt
-    assert "do not edit directly" in prompt
+    assert "由 Dream 自动维护" in prompt
+    assert "不要直接手工编辑" in prompt
     assert "memory/HISTORY.md" not in prompt
     assert "write important facts here" not in prompt
 
@@ -81,9 +81,9 @@ def test_runtime_context_is_separate_untrusted_user_message(tmp_path) -> None:
     user_content = messages[-1]["content"]
     assert isinstance(user_content, str)
     assert ContextBuilder._RUNTIME_CONTEXT_TAG in user_content
-    assert "Current Time:" in user_content
-    assert "Channel: cli" in user_content
-    assert "Chat ID: direct" in user_content
+    assert "当前时间：" in user_content
+    assert "通道：cli" in user_content
+    assert "会话 ID：direct" in user_content
     assert "Return exactly: OK" in user_content
 
 
@@ -96,7 +96,7 @@ def test_unprocessed_history_injected_into_system_prompt(tmp_path) -> None:
     builder.memory.append_history("Agent fetched forecast via web_search")
 
     prompt = builder.build_system_prompt()
-    assert "# Recent History" in prompt
+    assert "# 最近历史" in prompt
     assert "User asked about weather in Tokyo" in prompt
     assert "Agent fetched forecast via web_search" in prompt
     assert re.search(r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]", prompt)
@@ -125,7 +125,7 @@ def test_no_recent_history_when_dream_has_processed_all(tmp_path) -> None:
     builder.memory.set_last_dream_cursor(cursor)
 
     prompt = builder.build_system_prompt()
-    assert "# Recent History" not in prompt
+    assert "# 最近历史" not in prompt
 
 
 def test_partial_dream_processing_shows_only_remainder(tmp_path) -> None:
@@ -141,7 +141,7 @@ def test_partial_dream_processing_shows_only_remainder(tmp_path) -> None:
     builder.memory.set_last_dream_cursor(c2)
 
     prompt = builder.build_system_prompt()
-    assert "# Recent History" in prompt
+    assert "# 最近历史" in prompt
     assert "old conversation about Python" not in prompt
     assert "old conversation about Rust" not in prompt
     assert "recent question about Docker" in prompt
@@ -154,9 +154,9 @@ def test_execution_rules_in_system_prompt(tmp_path) -> None:
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
-    assert "Act, don't narrate" in prompt
-    assert "Read before you write" in prompt
-    assert "verify the result" in prompt
+    assert "能做就直接做" in prompt
+    assert "先读后写" in prompt
+    assert "一定要验证结果" in prompt
 
 
 def test_channel_format_hint_telegram(tmp_path) -> None:
@@ -165,8 +165,8 @@ def test_channel_format_hint_telegram(tmp_path) -> None:
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt(channel="telegram")
-    assert "Format Hint" in prompt
-    assert "messaging app" in prompt
+    assert "格式提示" in prompt
+    assert "消息应用" in prompt
 
 
 def test_channel_format_hint_whatsapp(tmp_path) -> None:
@@ -175,8 +175,8 @@ def test_channel_format_hint_whatsapp(tmp_path) -> None:
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt(channel="whatsapp")
-    assert "Format Hint" in prompt
-    assert "plain text only" in prompt
+    assert "格式提示" in prompt
+    assert "只使用纯文本" in prompt
 
 
 def test_channel_format_hint_absent_for_unknown(tmp_path) -> None:
@@ -185,10 +185,10 @@ def test_channel_format_hint_absent_for_unknown(tmp_path) -> None:
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt(channel=None)
-    assert "Format Hint" not in prompt
+    assert "格式提示" not in prompt
 
     prompt2 = builder.build_system_prompt(channel="feishu")
-    assert "Format Hint" not in prompt2
+    assert "格式提示" not in prompt2
 
 
 def test_build_messages_passes_channel_to_system_prompt(tmp_path) -> None:
@@ -201,8 +201,8 @@ def test_build_messages_passes_channel_to_system_prompt(tmp_path) -> None:
         channel="telegram", chat_id="123",
     )
     system = messages[0]["content"]
-    assert "Format Hint" in system
-    assert "messaging app" in system
+    assert "格式提示" in system
+    assert "消息应用" in system
 
 
 def test_assistant_followup_does_not_create_consecutive_assistant_messages(tmp_path) -> None:

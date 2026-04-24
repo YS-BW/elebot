@@ -68,11 +68,11 @@ async def test_dream_log_latest_is_more_user_friendly() -> None:
 
     out = await cmd_dream_log(_make_ctx("/dream-log", git))
 
-    assert "## Dream Update" in out.content
-    assert "Here is the latest Dream memory change." in out.content
-    assert "- Commit: `abcd1234`" in out.content
-    assert "- Changed files: `SOUL.md`" in out.content
-    assert "Use `/dream-restore abcd1234` to undo this change." in out.content
+    assert "## Dream 更新" in out.content
+    assert "下面是最近一次 Dream 记忆变更。" in out.content
+    assert "- 提交：`abcd1234`" in out.content
+    assert "- 变更文件：`SOUL.md`" in out.content
+    assert "如果要撤销这次变更，可以执行 `/dream-restore abcd1234`。" in out.content
     assert "```diff" in out.content
 
 
@@ -82,8 +82,8 @@ async def test_dream_log_missing_commit_guides_user() -> None:
 
     out = await cmd_dream_log(_make_ctx("/dream-log deadbeef", git, args="deadbeef"))
 
-    assert "Couldn't find Dream change `deadbeef`." in out.content
-    assert "Use `/dream-restore` to list recent versions" in out.content
+    assert "找不到 Dream 变更 `deadbeef`。" in out.content
+    assert "可以先用 `/dream-restore` 查看最近版本列表" in out.content
 
 
 @pytest.mark.asyncio
@@ -92,8 +92,8 @@ async def test_dream_log_before_first_run_is_clear() -> None:
 
     out = await cmd_dream_log(_make_ctx("/dream-log", git, last_dream_cursor=0))
 
-    assert "Dream has not run yet." in out.content
-    assert "Run `/dream`" in out.content
+    assert "Dream 还没有运行过。" in out.content
+    assert "手动执行 `/dream`" in out.content
 
 
 @pytest.mark.asyncio
@@ -106,11 +106,11 @@ async def test_dream_restore_lists_versions_with_next_steps() -> None:
 
     out = await cmd_dream_restore(_make_ctx("/dream-restore", git))
 
-    assert "## Dream Restore" in out.content
-    assert "Choose a Dream memory version to restore." in out.content
+    assert "## Dream 恢复" in out.content
+    assert "请选择要恢复的 Dream 记忆版本" in out.content
     assert "`abcd1234` 2026-04-04 12:00 - dream: latest" in out.content
-    assert "Preview a version with `/dream-log <sha>`" in out.content
-    assert "Restore a version with `/dream-restore <sha>`." in out.content
+    assert "恢复前可以先用 `/dream-log <sha>` 预览某个版本。" in out.content
+    assert "确认后可用 `/dream-restore <sha>` 执行恢复。" in out.content
 
 
 @pytest.mark.asyncio
@@ -137,7 +137,7 @@ async def test_dream_restore_success_mentions_files_and_followup() -> None:
 
     out = await cmd_dream_restore(_make_ctx("/dream-restore abcd1234", git, args="abcd1234"))
 
-    assert "Restored Dream memory to the state before `abcd1234`." in out.content
-    assert "- New safety commit: `eeee9999`" in out.content
-    assert "- Restored files: `SOUL.md`, `memory/MEMORY.md`" in out.content
-    assert "Use `/dream-log eeee9999` to inspect the restore diff." in out.content
+    assert "已将 Dream 记忆恢复到 `abcd1234` 之前的状态。" in out.content
+    assert "- 新的安全提交：`eeee9999`" in out.content
+    assert "- 已恢复文件：`SOUL.md`, `memory/MEMORY.md`" in out.content
+    assert "可以执行 `/dream-log eeee9999` 查看这次恢复带来的差异。" in out.content

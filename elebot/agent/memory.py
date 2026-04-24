@@ -281,7 +281,7 @@ class MemoryStore:
             带标题的长期记忆文本；为空时返回空字符串。
         """
         long_term = self.read_memory()
-        return f"## Long-term Memory\n{long_term}" if long_term else ""
+        return f"## 长期记忆\n{long_term}" if long_term else ""
 
     # -- history.jsonl：追加写入的 JSONL 历史 --------------------------------
 
@@ -771,15 +771,15 @@ class Dream:
         current_user = self.store.read_user() or "(empty)"
 
         file_context = (
-            f"## Current Date\n{current_date}\n\n"
-            f"## Current MEMORY.md ({len(current_memory)} chars)\n{current_memory}\n\n"
-            f"## Current SOUL.md ({len(current_soul)} chars)\n{current_soul}\n\n"
-            f"## Current USER.md ({len(current_user)} chars)\n{current_user}"
+            f"## 当前日期\n{current_date}\n\n"
+            f"## 当前 MEMORY.md（{len(current_memory)} 个字符）\n{current_memory}\n\n"
+            f"## 当前 SOUL.md（{len(current_soul)} 个字符）\n{current_soul}\n\n"
+            f"## 当前 USER.md（{len(current_user)} 个字符）\n{current_user}"
         )
 
         # 第一阶段只做分析，第二阶段只负责把结论增量写回记忆文件。
         phase1_prompt = (
-            f"## Conversation History\n{history_text}\n\n{file_context}"
+            f"## 对话历史\n{history_text}\n\n{file_context}"
         )
 
         try:
@@ -802,7 +802,7 @@ class Dream:
             return False
 
         # 第二阶段交给 AgentRunner 做增量修改，避免整体覆盖文件。
-        phase2_prompt = f"## Analysis Result\n{analysis}\n\n{file_context}"
+        phase2_prompt = f"## 分析结果\n{analysis}\n\n{file_context}"
 
         tools = self._tools
         messages: list[dict[str, Any]] = [

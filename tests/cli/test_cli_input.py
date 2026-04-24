@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.shortcuts.prompt import CompleteStyle
 
 from elebot.cli import history
 from elebot.cli import render
@@ -59,6 +60,7 @@ def test_init_prompt_session_creates_session(monkeypatch, tmp_path):
     assert kwargs["multiline"] is False
     assert kwargs["enable_open_in_editor"] is False
     assert kwargs["complete_while_typing"] is True
+    assert kwargs["complete_style"] is CompleteStyle.COLUMN
     assert isinstance(kwargs["completer"], history.SlashCommandCompleter)
 
 
@@ -74,6 +76,7 @@ def test_slash_command_completer_returns_all_commands_on_slash() -> None:
     assert "/help" in texts
     assert "/new" in texts
     assert "/dream-restore" in texts
+    assert all(completion.display_meta for completion in completions)
 
 
 def test_slash_command_completer_filters_by_prefix() -> None:
@@ -181,7 +184,7 @@ def test_response_renderable_preserves_normal_markdown_rendering():
 
 
 def test_response_renderable_without_metadata_keeps_markdown_path():
-    help_text = "🍌 elebot commands:\n/status — Show bot status\n/help — Show available commands"
+    help_text = "🍌 elebot 命令：\n/status — 查看当前状态\n/help — 查看可用命令"
 
     renderable = render.response_renderable(help_text, render_markdown=True)
 

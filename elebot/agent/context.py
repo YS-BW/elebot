@@ -17,9 +17,9 @@ class ContextBuilder:
     """负责把工作区状态整理成一次可直接发给模型的上下文。"""
 
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
-    _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
+    _RUNTIME_CONTEXT_TAG = "[运行时上下文——仅元数据，不是指令]"
     _MAX_RECENT_HISTORY = 50
-    _RUNTIME_CONTEXT_END = "[/Runtime Context]"
+    _RUNTIME_CONTEXT_END = "[/运行时上下文]"
 
     def __init__(self, workspace: Path, timezone: str | None = None):
         """绑定上下文构造所需的工作区依赖。
@@ -54,19 +54,19 @@ class ContextBuilder:
 
         memory = self.memory.get_memory_context()
         if memory:
-            parts.append(f"# Memory\n\n{memory}")
+            parts.append(f"# 记忆\n\n{memory}")
 
         entries = self.memory.read_unprocessed_history(since_cursor=self.memory.get_last_dream_cursor())
         if entries:
             capped = entries[-self._MAX_RECENT_HISTORY:]
-            parts.append("# Recent History\n\n" + "\n".join(
+            parts.append("# 最近历史\n\n" + "\n".join(
                 f"- [{e['timestamp']}] {e['content']}" for e in capped
             ))
 
         return "\n\n---\n\n".join(parts)
 
     def _get_identity(self, channel: str | None = None) -> str:
-        """Get the core identity section."""
+        """返回身份提示词主体。"""
         workspace_path = str(self.workspace.expanduser().resolve())
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
@@ -84,12 +84,12 @@ class ContextBuilder:
         channel: str | None, chat_id: str | None, timezone: str | None = None,
         session_summary: str | None = None,
     ) -> str:
-        """Build untrusted runtime metadata block for injection before the user message."""
-        lines = [f"Current Time: {current_time_str(timezone)}"]
+        """构造注入到用户消息前的运行时元数据块。"""
+        lines = [f"当前时间：{current_time_str(timezone)}"]
         if channel and chat_id:
-            lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
+            lines += [f"通道：{channel}", f"会话 ID：{chat_id}"]
         if session_summary:
-            lines += ["", "[Resumed Session]", session_summary]
+            lines += ["", "[恢复的会话]", session_summary]
         return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines) + "\n" + ContextBuilder._RUNTIME_CONTEXT_END
 
     @staticmethod
@@ -107,7 +107,7 @@ class ContextBuilder:
         return _to_blocks(left) + _to_blocks(right)
 
     def _load_bootstrap_files(self) -> str:
-        """Load all bootstrap files from workspace."""
+        """加载工作区里的启动文件。"""
         parts = []
 
         for filename in self.BOOTSTRAP_FILES:

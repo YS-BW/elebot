@@ -41,7 +41,7 @@ class TestHandleStop:
         msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="/stop")
         ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw="/stop", loop=loop)
         out = await cmd_stop(ctx)
-        assert "No active task" in out.content
+        assert "当前没有可停止的任务" in out.content
 
     @pytest.mark.asyncio
     async def test_stop_cancels_active_task(self):
@@ -68,7 +68,7 @@ class TestHandleStop:
         out = await cmd_stop(ctx)
 
         assert cancelled.is_set()
-        assert "stopped" in out.content.lower()
+        assert "已停止 1 个任务" in out.content
 
     @pytest.mark.asyncio
     async def test_stop_cancels_multiple_tasks(self):
@@ -95,7 +95,7 @@ class TestHandleStop:
         out = await cmd_stop(ctx)
 
         assert all(e.is_set() for e in events)
-        assert "2 task" in out.content
+        assert "已停止 2 个任务" in out.content
 
 
 class TestDispatch:
@@ -177,4 +177,3 @@ class TestDispatch:
         t2 = asyncio.create_task(loop._dispatch(msg2))
         await asyncio.gather(t1, t2)
         assert order == ["start-a", "end-a", "start-b", "end-b"]
-

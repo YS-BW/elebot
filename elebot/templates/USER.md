@@ -1,49 +1,49 @@
-# User Profile
+# 用户画像
 
-Information about the user to help personalize interactions.
+这里记录用户信息，用来帮助助手做更贴近你的响应。
 
-## Basic Information
+## 基本信息
 
-- **Name**: (your name)
-- **Timezone**: (your timezone, e.g., UTC+8)
-- **Language**: (preferred language)
+- **姓名**：（你的名字）
+- **时区**：（你的时区，例如 UTC+8）
+- **语言**：（你偏好的交流语言）
 
-## Preferences
+## 偏好
 
-### Communication Style
+### 沟通风格
 
-- [ ] Casual
-- [ ] Professional
-- [ ] Technical
+- [ ] 轻松随意
+- [ ] 专业正式
+- [ ] 技术导向
 
-### Response Length
+### 回复长度
 
-- [ ] Brief and concise
-- [ ] Detailed explanations
-- [ ] Adaptive based on question
+- [ ] 简短直接
+- [ ] 详细解释
+- [ ] 根据问题自适应
 
-### Technical Level
+### 技术水平
 
-- [ ] Beginner
-- [ ] Intermediate
-- [ ] Expert
+- [ ] 初学者
+- [ ] 中级
+- [ ] 熟练
 
-## Work Context
+## 工作背景
 
-- **Primary Role**: (your role, e.g., developer, researcher)
-- **Main Projects**: (what you're working on)
-- **Tools You Use**: (IDEs, languages, frameworks)
+- **主要角色**：（你的角色，例如开发者、研究者）
+- **当前项目**：（你正在做什么）
+- **常用工具**：（你常用的 IDE、语言、框架）
 
-## Topics of Interest
+## 感兴趣的话题
 
 - 
 - 
 - 
 
-## Special Instructions
+## 特别说明
 
-(Any specific instructions for how the assistant should behave)
+（这里可以写你希望助手遵守的额外行为要求）
 
 ---
 
-*Edit this file to customize elebot's behavior for your needs.*
+*修改这个文件可以定制 elebot 的行为方式。*

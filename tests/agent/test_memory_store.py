@@ -42,7 +42,7 @@ class TestMemoryStoreBasicIO:
     def test_get_memory_context_returns_formatted_content(self, store):
         store.write_memory("important fact")
         ctx = store.get_memory_context()
-        assert "Long-term Memory" in ctx
+        assert "长期记忆" in ctx
         assert "important fact" in ctx
 
 

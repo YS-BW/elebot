@@ -7,6 +7,7 @@ import select
 import sys
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.shortcuts.prompt import CompleteStyle
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
@@ -135,6 +136,7 @@ def init_prompt_session() -> None:
         history=SafeFileHistory(str(history_file)),
         completer=SlashCommandCompleter(),
         complete_while_typing=True,
+        complete_style=CompleteStyle.COLUMN,
         enable_open_in_editor=False,
         multiline=False,
     )

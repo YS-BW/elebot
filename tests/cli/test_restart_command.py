@@ -49,7 +49,7 @@ class TestRestartCommand:
         with patch.dict(os.environ, {}, clear=False), \
              patch("elebot.command.builtin.os.execv") as mock_execv:
             out = await cmd_restart(ctx)
-            assert "Restarting" in out.content
+            assert "正在重启" in out.content
             assert os.environ.get(RESTART_NOTIFY_CHANNEL_ENV) == "cli"
             assert os.environ.get(RESTART_NOTIFY_CHAT_ID_ENV) == "direct"
             assert os.environ.get(RESTART_STARTED_AT_ENV)
@@ -79,7 +79,7 @@ class TestRestartCommand:
 
             mock_dispatch.assert_not_called()
             out = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
-            assert "Restarting" in out.content
+            assert "正在重启" in out.content
 
     @pytest.mark.asyncio
     async def test_status_intercepted_in_run_loop(self):

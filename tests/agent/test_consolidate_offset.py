@@ -529,7 +529,7 @@ class TestNewCommandArchival:
         response = await loop._process_message(new_msg)
 
         assert response is not None
-        assert "new session started" in response.content.lower()
+        assert "已开始新会话" in response.content
 
         session_after = loop.sessions.get_or_create("cli:test")
         assert len(session_after.messages) == 0
@@ -562,7 +562,7 @@ class TestNewCommandArchival:
         response = await loop._process_message(new_msg)
 
         assert response is not None
-        assert "new session started" in response.content.lower()
+        assert "已开始新会话" in response.content
 
         await loop.close_mcp()
         assert archived_count == 3
@@ -587,7 +587,7 @@ class TestNewCommandArchival:
         response = await loop._process_message(new_msg)
 
         assert response is not None
-        assert "new session started" in response.content.lower()
+        assert "已开始新会话" in response.content
         assert loop.sessions.get_or_create("cli:test").messages == []
 
     @pytest.mark.asyncio
