@@ -2,6 +2,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
 
 from elebot.cli import history
@@ -57,6 +58,47 @@ def test_init_prompt_session_creates_session(monkeypatch, tmp_path):
     _, kwargs = mock_session_cls.call_args
     assert kwargs["multiline"] is False
     assert kwargs["enable_open_in_editor"] is False
+    assert kwargs["complete_while_typing"] is True
+    assert isinstance(kwargs["completer"], history.SlashCommandCompleter)
+
+
+def test_slash_command_completer_returns_all_commands_on_slash() -> None:
+    """输入单个斜杠时应列出全部 slash 命令。"""
+    completer = history.SlashCommandCompleter()
+
+    completions = list(
+        completer.get_completions(Document(text="/", cursor_position=1), None)
+    )
+
+    texts = [completion.text for completion in completions]
+    assert "/help" in texts
+    assert "/new" in texts
+    assert "/dream-restore" in texts
+
+
+def test_slash_command_completer_filters_by_prefix() -> None:
+    """前缀输入应只返回匹配的 slash 命令。"""
+    completer = history.SlashCommandCompleter()
+
+    completions = list(
+        completer.get_completions(Document(text="/dre", cursor_position=4), None)
+    )
+
+    texts = [completion.text for completion in completions]
+    assert texts == ["/dream", "/dream-log", "/dream-restore"]
+
+
+def test_slash_command_completer_ignores_non_command_input() -> None:
+    """普通文本和带空格参数的输入都不应再触发命令候选。"""
+    completer = history.SlashCommandCompleter()
+
+    plain = list(completer.get_completions(Document(text="hello", cursor_position=5), None))
+    with_args = list(
+        completer.get_completions(Document(text="/dream abc", cursor_position=10), None)
+    )
+
+    assert plain == []
+    assert with_args == []
 
 
 def test_thinking_spinner_pause_stops_and_restarts():

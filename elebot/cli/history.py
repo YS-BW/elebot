@@ -7,9 +7,12 @@ import select
 import sys
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.patch_stdout import patch_stdout
+
+from elebot.command.builtin import SLASH_COMMAND_SPECS
 
 
 class SafeFileHistory(FileHistory):
@@ -32,6 +35,44 @@ class SafeFileHistory(FileHistory):
 
 _PROMPT_SESSION: PromptSession | None = None
 _SAVED_TERM_ATTRS = None
+
+
+class SlashCommandCompleter(Completer):
+    """为交互终端提供 slash 命令补全列表。"""
+
+    def __init__(self) -> None:
+        """构建可复用的 slash 命令补全表。
+
+        返回:
+            无返回值。
+        """
+        self._commands = SLASH_COMMAND_SPECS
+
+    def get_completions(self, document, complete_event):
+        """根据当前输入返回可选的 slash 命令。
+
+        参数:
+            document: prompt_toolkit 当前输入文档对象。
+            complete_event: 本次补全触发事件。
+
+        返回:
+            生成符合前缀匹配的补全项。
+        """
+        text = document.text_before_cursor
+        if not text.startswith("/"):
+            return
+        if " " in text:
+            return
+
+        for command, description in self._commands:
+            if not command.startswith(text):
+                continue
+            yield Completion(
+                command,
+                start_position=-len(text),
+                display=command,
+                display_meta=description,
+            )
 
 
 def flush_pending_tty_input() -> None:
@@ -92,6 +133,8 @@ def init_prompt_session() -> None:
 
     _PROMPT_SESSION = PromptSession(
         history=SafeFileHistory(str(history_file)),
+        completer=SlashCommandCompleter(),
+        complete_while_typing=True,
         enable_open_in_editor=False,
         multiline=False,
     )

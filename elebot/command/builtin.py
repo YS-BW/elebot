@@ -12,9 +12,20 @@ from elebot.command.router import CommandContext, CommandRouter
 from elebot.utils.helpers import build_status_content
 from elebot.utils.restart import set_restart_notice_to_env
 
+SLASH_COMMAND_SPECS: list[tuple[str, str]] = [
+    ("/new", "Start a new conversation"),
+    ("/stop", "Stop the current task"),
+    ("/restart", "Restart the bot"),
+    ("/status", "Show bot status"),
+    ("/dream", "Manually trigger Dream consolidation"),
+    ("/dream-log", "Show what the last Dream changed"),
+    ("/dream-restore", "Revert memory to a previous state"),
+    ("/help", "Show available commands"),
+]
+
 
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
-    """停止当前会话下的活动任务与子代理。"""
+    """停止当前会话下的活动任务。"""
     loop = ctx.loop
     msg = ctx.msg
     tasks = loop._active_tasks.pop(msg.session_key, [])
@@ -307,17 +318,8 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
 
 def build_help_text() -> str:
     """构造各渠道共用的帮助文本。"""
-    lines = [
-        "🍌 elebot commands:",
-        "/new — Start a new conversation",
-        "/stop — Stop the current task",
-        "/restart — Restart the bot",
-        "/status — Show bot status",
-        "/dream — Manually trigger Dream consolidation",
-        "/dream-log — Show what the last Dream changed",
-        "/dream-restore — Revert memory to a previous state",
-        "/help — Show available commands",
-    ]
+    lines = ["🍌 elebot commands:"]
+    lines.extend(f"{command} — {description}" for command, description in SLASH_COMMAND_SPECS)
     return "\n".join(lines)
 
 
