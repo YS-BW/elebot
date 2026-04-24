@@ -11,7 +11,6 @@ from elebot.utils.helpers import ensure_dir
 ELEBOT_HOME_DIR = Path.home() / ".elebot"
 DEFAULT_WORKSPACE_DIR = ELEBOT_HOME_DIR / "workspace"
 DEFAULT_HISTORY_PATH = ELEBOT_HOME_DIR / "history" / "cli_history"
-DEFAULT_BRIDGE_DIR = ELEBOT_HOME_DIR / "bridge"
 
 
 def get_data_dir() -> Path:
@@ -28,11 +27,6 @@ def get_media_dir(channel: str | None = None) -> Path:
     """返回媒体目录；传入频道名时再细分子目录。"""
     media_dir = get_runtime_subdir("media")
     return ensure_dir(media_dir / channel) if channel else media_dir
-
-
-def get_cron_dir() -> Path:
-    """返回定时任务存储目录。"""
-    return get_runtime_subdir("cron")
 
 
 def get_logs_dir() -> Path:
@@ -55,8 +49,3 @@ def is_default_workspace(workspace: str | Path | None) -> bool:
 def get_cli_history_path() -> Path:
     """返回共享 CLI 历史文件路径。"""
     return DEFAULT_HISTORY_PATH
-
-
-def get_bridge_install_dir() -> Path:
-    """返回共享 WhatsApp bridge 安装目录。"""
-    return DEFAULT_BRIDGE_DIR

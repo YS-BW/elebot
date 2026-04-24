@@ -343,40 +343,6 @@ class TestAutoCompactIdleDetection:
         await loop.close_mcp()
 
 
-class TestAutoCompactSystemMessages:
-    """Test that auto-new also works for system messages."""
-
-    @pytest.mark.asyncio
-    async def test_auto_compact_triggers_for_system_messages(self, tmp_path):
-        """Proactive auto-new archives expired session; system messages reload it."""
-        loop = _make_loop(tmp_path, session_ttl_minutes=15)
-        session = loop.sessions.get_or_create("cli:test")
-        _add_turns(session, 6, prefix="old")
-        session.updated_at = datetime.now() - timedelta(minutes=20)
-        loop.sessions.save(session)
-
-        async def _fake_archive(messages):
-            return "Summary."
-
-        loop.consolidator.archive = _fake_archive
-
-        # Simulate proactive archive completing before system message arrives
-        await loop.auto_compact._archive("cli:test")
-
-        msg = InboundMessage(
-            channel="system", sender_id="subagent", chat_id="cli:test",
-            content="subagent result",
-        )
-        await loop._process_message(msg)
-
-        session_after = loop.sessions.get_or_create("cli:test")
-        assert not any(
-            m["content"] == "old user 0"
-            for m in session_after.messages
-        )
-        await loop.close_mcp()
-
-
 class TestAutoCompactEdgeCases:
     """Edge cases for auto session new."""
 

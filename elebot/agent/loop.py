@@ -18,16 +18,11 @@ from elebot.agent.context import ContextBuilder
 from elebot.agent.hook import AgentHook, AgentHookContext, CompositeHook
 from elebot.agent.memory import Consolidator, Dream
 from elebot.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunSpec, AgentRunner
-from elebot.agent.subagent import SubagentManager
-from elebot.agent.tools.cron import CronTool
-from elebot.agent.skills import BUILTIN_SKILLS_DIR
 from elebot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from elebot.agent.tools.message import MessageTool
 from elebot.agent.tools.notebook import NotebookEditTool
 from elebot.agent.tools.registry import ToolRegistry
 from elebot.agent.tools.search import GlobTool, GrepTool
 from elebot.agent.tools.shell import ExecTool
-from elebot.agent.tools.spawn import SpawnTool
 from elebot.agent.tools.web import WebFetchTool, WebSearchTool
 from elebot.bus.events import InboundMessage, OutboundMessage
 from elebot.command import CommandContext, CommandRouter, register_builtin_commands
@@ -39,8 +34,7 @@ from elebot.utils.helpers import image_placeholder_text, truncate_text as trunca
 from elebot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
 
 if TYPE_CHECKING:
-    from elebot.config.schema import ChannelsConfig, ExecToolConfig, WebToolsConfig
-    from elebot.cron.service import CronService
+    from elebot.config.schema import ExecToolConfig, WebToolsConfig
 
 
 UNIFIED_SESSION_KEY = "unified:default"
@@ -165,23 +159,20 @@ class AgentLoop:
         provider_retry_mode: str = "standard",
         web_config: WebToolsConfig | None = None,
         exec_config: ExecToolConfig | None = None,
-        cron_service: CronService | None = None,
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
-        channels_config: ChannelsConfig | None = None,
         timezone: str | None = None,
         session_ttl_minutes: int = 0,
         hooks: list[AgentHook] | None = None,
         unified_session: bool = False,
-        disabled_skills: list[str] | None = None,
     ):
         """初始化主链路运行时依赖。
 
         这里一次性装配：
         - 上下文构造器、会话管理器、工具注册表
         - 轻量压缩、Dream 和记忆能力
-        - 子 Agent、命令路由和可选的 MCP / Cron 能力
+        - 子 Agent、命令路由和可选的 MCP 能力
 
         这样 CLI、SDK 和其他入口都能复用同一套主循环实现，而不是各自维护一份行为分支。
         """
@@ -189,7 +180,6 @@ class AgentLoop:
 
         defaults = AgentDefaults()
         self.bus = bus
-        self.channels_config = channels_config
         self.provider = provider
         self.workspace = workspace
         self.model = model or provider.get_default_model()
@@ -210,27 +200,15 @@ class AgentLoop:
         self.provider_retry_mode = provider_retry_mode
         self.web_config = web_config or WebToolsConfig()
         self.exec_config = exec_config or ExecToolConfig()
-        self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
         self._extra_hooks: list[AgentHook] = hooks or []
 
-        self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills)
+        self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider)
-        self.subagents = SubagentManager(
-            provider=provider,
-            workspace=workspace,
-            bus=bus,
-            model=self.model,
-            web_config=self.web_config,
-            max_tool_result_chars=self.max_tool_result_chars,
-            exec_config=self.exec_config,
-            restrict_to_workspace=restrict_to_workspace,
-            disabled_skills=disabled_skills,
-        )
         self._unified_session = unified_session
         self._running = False
         self._mcp_servers = mcp_servers or {}
@@ -272,15 +250,12 @@ class AgentLoop:
         register_builtin_commands(self.commands)
 
     def _register_default_tools(self) -> None:
-        """Register the default set of tools."""
+        """注册主链路默认工具集合。"""
         allowed_dir = (
             self.workspace if (self.restrict_to_workspace or self.exec_config.sandbox) else None
         )
-        extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
         self.tools.register(
-            ReadFileTool(
-                workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read
-            )
+            ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir)
         )
         for cls in (WriteFileTool, EditFileTool, ListDirTool):
             self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
@@ -303,12 +278,6 @@ class AgentLoop:
                 WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy)
             )
             self.tools.register(WebFetchTool(proxy=self.web_config.proxy))
-        self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
-        self.tools.register(SpawnTool(manager=self.subagents))
-        if self.cron_service:
-            self.tools.register(
-                CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
-            )
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -333,11 +302,17 @@ class AgentLoop:
             self._mcp_connecting = False
 
     def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
-        """Update context for all tools that need routing info."""
-        for name in ("message", "spawn", "cron"):
-            if tool := self.tools.get(name):
-                if hasattr(tool, "set_context"):
-                    tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
+        """更新本轮工具执行上下文。
+
+        参数:
+            channel: 当前消息来源通道。
+            chat_id: 当前会话标识。
+            message_id: 可选的消息编号。
+
+        返回:
+            无返回值。
+        """
+        return None
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -667,51 +642,6 @@ class AgentLoop:
         pending_queue: asyncio.Queue | None = None,
     ) -> DirectProcessResult:
         """处理单条消息，并返回完整执行结果。"""
-        # system 通道的 chat_id 会编码原始来源，这里要先恢复真实路由。
-        if msg.channel == "system":
-            channel, chat_id = (
-                msg.chat_id.split(":", 1) if ":" in msg.chat_id else ("cli", msg.chat_id)
-            )
-            logger.info("Processing system message from {}", msg.sender_id)
-            key = f"{channel}:{chat_id}"
-            session = self.sessions.get_or_create(key)
-            if self._restore_runtime_checkpoint(session):
-                self.sessions.save(session)
-
-            session, pending = self.auto_compact.prepare_session(session, key)
-
-            await self.consolidator.maybe_consolidate_by_tokens(session)
-            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
-            history = session.get_history(max_messages=0)
-            current_role = "assistant" if msg.sender_id == "subagent" else "user"
-
-            messages = self.context.build_messages(
-                history=history,
-                current_message=msg.content, channel=channel, chat_id=chat_id,
-                session_summary=pending,
-                current_role=current_role,
-            )
-            final_content, _, all_msgs, stop_reason, _ = await self._run_agent_loop(
-                messages, session=session, channel=channel, chat_id=chat_id,
-                message_id=msg.metadata.get("message_id"),
-            )
-            self._save_turn(session, all_msgs, 1 + len(history))
-            self._clear_runtime_checkpoint(session)
-            self.sessions.save(session)
-            self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
-            outbound = OutboundMessage(
-                channel=channel,
-                chat_id=chat_id,
-                content=final_content or "Background task completed.",
-            )
-            return DirectProcessResult(
-                outbound=outbound,
-                final_content=outbound.content,
-                messages=all_msgs,
-                stop_reason=stop_reason,
-                session_key=key,
-            )
-
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info("Processing message from {}:{}: {}", msg.channel, msg.sender_id, preview)
 
@@ -736,9 +666,6 @@ class AgentLoop:
         await self.consolidator.maybe_consolidate_by_tokens(session)
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
-        if message_tool := self.tools.get("message"):
-            if isinstance(message_tool, MessageTool):
-                message_tool.start_turn()
 
         history = session.get_history(max_messages=0)
 
@@ -783,20 +710,6 @@ class AgentLoop:
         self._clear_runtime_checkpoint(session)
         self.sessions.save(session)
         self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
-
-        # 中途插入追问后，本轮后续自然语言回复仍可能有用户可见价值，
-        # 不能因为前面用过 MessageTool 就直接抑制最终回复。
-        # 只有在最终结果退化为空占位文案时，才沿用 MessageTool 的输出作为唯一结果。
-        if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
-            if not had_injections or stop_reason == "empty_final_response":
-                return DirectProcessResult(
-                    outbound=None,
-                    final_content=final_content,
-                    tools_used=tools_used,
-                    messages=all_msgs,
-                    stop_reason=stop_reason,
-                    session_key=key,
-                )
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)

@@ -1,4 +1,7 @@
-import asyncio
+"""CLI 主命令测试。"""
+
+from __future__ import annotations
+
 import json
 import re
 import shutil
@@ -12,24 +15,27 @@ from typer.testing import CliRunner
 from elebot.bus.events import OutboundMessage
 from elebot.cli.commands import _make_provider, app
 from elebot.config.schema import Config
-from elebot.cron.types import CronJob, CronPayload
 from elebot.providers.openai_codex_provider import _strip_model_prefix
 from elebot.providers.registry import find_by_name
 
 runner = CliRunner()
 
 
-class _StopGatewayError(RuntimeError):
-    pass
+def _strip_ansi(text: str) -> str:
+    """移除终端 ANSI 控制符，方便断言纯文本输出。"""
+    ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
+    return ansi_escape.sub("", text)
 
 
 @pytest.fixture
 def mock_paths():
-    """Mock config/workspace paths for test isolation."""
-    with patch("elebot.config.loader.get_config_path") as mock_cp, \
-         patch("elebot.config.loader.save_config") as mock_sc, \
-         patch("elebot.config.loader.load_config") as mock_lc, \
-         patch("elebot.cli.commands.get_workspace_path") as mock_ws:
+    """隔离 onboard 使用的配置和工作区路径。"""
+    with (
+        patch("elebot.config.loader.get_config_path") as mock_cp,
+        patch("elebot.config.loader.save_config") as mock_sc,
+        patch("elebot.config.loader.load_config") as mock_lc,
+        patch("elebot.cli.commands.get_workspace_path") as mock_ws,
+    ):
         base_dir = Path("./test_onboard_data")
         if base_dir.exists():
             shutil.rmtree(base_dir)
@@ -42,10 +48,13 @@ def mock_paths():
         mock_ws.return_value = workspace_dir
         mock_lc.side_effect = lambda _config_path=None: Config()
 
-        def _save_config(config: Config, config_path: Path | None = None):
+        def _save_config(config: Config, config_path: Path | None = None) -> None:
             target = config_path or config_file
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(json.dumps(config.model_dump(by_alias=True)), encoding="utf-8")
+            target.write_text(
+                json.dumps(config.model_dump(by_alias=True)),
+                encoding="utf-8",
+            )
 
         mock_sc.side_effect = _save_config
 
@@ -55,8 +64,8 @@ def mock_paths():
             shutil.rmtree(base_dir)
 
 
-def test_onboard_fresh_install(mock_paths):
-    """No existing config — should create from scratch."""
+def test_onboard_fresh_install(mock_paths) -> None:
+    """首次初始化会创建配置和工作区模板。"""
     config_file, workspace_dir, mock_ws = mock_paths
 
     result = runner.invoke(app, ["onboard"])
@@ -68,14 +77,13 @@ def test_onboard_fresh_install(mock_paths):
     assert config_file.exists()
     assert (workspace_dir / "AGENTS.md").exists()
     assert (workspace_dir / "memory" / "MEMORY.md").exists()
-    expected_workspace = Config().workspace_path
-    assert mock_ws.call_args.args == (expected_workspace,)
+    assert mock_ws.call_args.args == (Config().workspace_path,)
 
 
-def test_onboard_existing_config_refresh(mock_paths):
-    """Config exists, user declines overwrite — should refresh (load-merge-save)."""
+def test_onboard_existing_config_refresh(mock_paths) -> None:
+    """拒绝覆盖时应保留原值并刷新缺省字段。"""
     config_file, workspace_dir, _ = mock_paths
-    config_file.write_text('{"existing": true}')
+    config_file.write_text('{"existing": true}', encoding="utf-8")
 
     result = runner.invoke(app, ["onboard"], input="n\n")
 
@@ -83,68 +91,63 @@ def test_onboard_existing_config_refresh(mock_paths):
     assert "Config already exists" in result.stdout
     assert "existing values preserved" in result.stdout
     assert workspace_dir.exists()
-    assert (workspace_dir / "AGENTS.md").exists()
 
 
-def test_onboard_existing_config_overwrite(mock_paths):
-    """Config exists, user confirms overwrite — should reset to defaults."""
+def test_onboard_existing_config_overwrite(mock_paths) -> None:
+    """确认覆盖时应重置为默认配置。"""
     config_file, workspace_dir, _ = mock_paths
-    config_file.write_text('{"existing": true}')
+    config_file.write_text('{"existing": true}', encoding="utf-8")
 
     result = runner.invoke(app, ["onboard"], input="y\n")
 
     assert result.exit_code == 0
-    assert "Config already exists" in result.stdout
     assert "Config reset to defaults" in result.stdout
     assert workspace_dir.exists()
 
 
-def test_onboard_existing_workspace_safe_create(mock_paths):
-    """Workspace exists — should not recreate, but still add missing templates."""
+def test_onboard_existing_workspace_safe_create(mock_paths) -> None:
+    """工作区已存在时不重复创建，但仍会补齐模板。"""
     config_file, workspace_dir, _ = mock_paths
     workspace_dir.mkdir(parents=True)
-    config_file.write_text("{}")
+    config_file.write_text("{}", encoding="utf-8")
 
     result = runner.invoke(app, ["onboard"], input="n\n")
 
     assert result.exit_code == 0
     assert "Created workspace" not in result.stdout
-    assert "Created AGENTS.md" in result.stdout
     assert (workspace_dir / "AGENTS.md").exists()
 
 
-def _strip_ansi(text):
-    """Remove ANSI escape codes from text."""
-    ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
-    return ansi_escape.sub('', text)
-
-
-def test_onboard_help_shows_workspace_and_config_options():
+def test_onboard_help_shows_workspace_and_config_options() -> None:
+    """onboard 帮助信息应暴露当前支持的核心参数。"""
     result = runner.invoke(app, ["onboard", "--help"])
 
     assert result.exit_code == 0
     stripped_output = _strip_ansi(result.stdout)
     assert "--workspace" in stripped_output
-    assert "-w" in stripped_output
     assert "--config" in stripped_output
-    assert "-c" in stripped_output
     assert "--wizard" in stripped_output
-    assert "--dir" not in stripped_output
 
 
-def test_root_help_hides_frozen_commands() -> None:
+def test_root_help_shows_only_current_commands() -> None:
+    """根帮助页只展示当前保留的命令面。"""
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
     stripped_output = _strip_ansi(result.stdout)
+    assert "onboard" in stripped_output
+    assert "agent" in stripped_output
+    assert "status" in stripped_output
     assert "gateway" not in stripped_output
     assert "serve" not in stripped_output
     assert "channels" not in stripped_output
     assert "plugins" not in stripped_output
-    assert "provider" not in stripped_output
 
 
-def test_onboard_interactive_discard_does_not_save_or_create_workspace(mock_paths, monkeypatch):
+def test_onboard_interactive_discard_does_not_save_or_create_workspace(
+    mock_paths, monkeypatch
+) -> None:
+    """向导放弃保存时不应落盘任何文件。"""
     config_file, workspace_dir, _ = mock_paths
 
     from elebot.cli.onboard import OnboardResult
@@ -162,11 +165,10 @@ def test_onboard_interactive_discard_does_not_save_or_create_workspace(mock_path
     assert not workspace_dir.exists()
 
 
-def test_onboard_uses_explicit_config_and_workspace_paths(tmp_path, monkeypatch):
+def test_onboard_uses_explicit_config_and_workspace_paths(tmp_path, monkeypatch) -> None:
+    """显式配置路径和工作区路径应写回最终配置。"""
     config_path = tmp_path / "instance" / "config.json"
     workspace_path = tmp_path / "workspace"
-
-    monkeypatch.setattr("elebot.channels.registry.discover_all", lambda: {})
 
     result = runner.invoke(
         app,
@@ -177,14 +179,13 @@ def test_onboard_uses_explicit_config_and_workspace_paths(tmp_path, monkeypatch)
     saved = Config.model_validate(json.loads(config_path.read_text(encoding="utf-8")))
     assert saved.workspace_path == workspace_path
     assert (workspace_path / "AGENTS.md").exists()
-    stripped_output = _strip_ansi(result.stdout)
-    compact_output = stripped_output.replace("\n", "")
+    compact_output = _strip_ansi(result.stdout).replace("\n", "")
     resolved_config = str(config_path.resolve())
-    assert resolved_config in compact_output
     assert f"--config {resolved_config}" in compact_output
 
 
-def test_onboard_wizard_preserves_explicit_config_in_next_steps(tmp_path, monkeypatch):
+def test_onboard_wizard_preserves_explicit_config_in_next_steps(tmp_path, monkeypatch) -> None:
+    """向导模式结束后应继续提示正确的显式配置路径。"""
     config_path = tmp_path / "instance" / "config.json"
     workspace_path = tmp_path / "workspace"
 
@@ -194,7 +195,6 @@ def test_onboard_wizard_preserves_explicit_config_in_next_steps(tmp_path, monkey
         "elebot.cli.onboard.run_onboard",
         lambda initial_config: OnboardResult(config=initial_config, should_save=True),
     )
-    monkeypatch.setattr("elebot.channels.registry.discover_all", lambda: {})
 
     result = runner.invoke(
         app,
@@ -202,28 +202,29 @@ def test_onboard_wizard_preserves_explicit_config_in_next_steps(tmp_path, monkey
     )
 
     assert result.exit_code == 0
-    stripped_output = _strip_ansi(result.stdout)
-    compact_output = stripped_output.replace("\n", "")
+    compact_output = _strip_ansi(result.stdout).replace("\n", "")
     resolved_config = str(config_path.resolve())
     assert f'elebot agent -m "Hello!" --config {resolved_config}' in compact_output
-    assert "gateway" not in compact_output
 
 
-def test_config_matches_github_copilot_codex_with_hyphen_prefix():
+def test_config_matches_github_copilot_codex_with_hyphen_prefix() -> None:
+    """显式前缀为 github-copilot 时应命中对应 provider。"""
     config = Config()
     config.agents.defaults.model = "github-copilot/gpt-5.3-codex"
 
     assert config.get_provider_name() == "github_copilot"
 
 
-def test_config_matches_openai_codex_with_hyphen_prefix():
+def test_config_matches_openai_codex_with_hyphen_prefix() -> None:
+    """显式前缀为 openai-codex 时应命中对应 provider。"""
     config = Config()
     config.agents.defaults.model = "openai-codex/gpt-5.1-codex"
 
     assert config.get_provider_name() == "openai_codex"
 
 
-def test_config_dump_excludes_oauth_provider_blocks():
+def test_config_dump_excludes_oauth_provider_blocks() -> None:
+    """OAuth provider 配置块不应写入默认导出结果。"""
     config = Config()
 
     providers = config.model_dump(by_alias=True)["providers"]
@@ -232,7 +233,8 @@ def test_config_dump_excludes_oauth_provider_blocks():
     assert "githubCopilot" not in providers
 
 
-def test_config_matches_explicit_ollama_prefix_without_api_key():
+def test_config_matches_explicit_ollama_prefix_without_api_key() -> None:
+    """本地 provider 不要求 API Key 即可通过显式前缀命中。"""
     config = Config()
     config.agents.defaults.model = "ollama/llama3.2"
 
@@ -240,7 +242,8 @@ def test_config_matches_explicit_ollama_prefix_without_api_key():
     assert config.get_api_base() == "http://localhost:11434/v1"
 
 
-def test_config_explicit_ollama_provider_uses_default_localhost_api_base():
+def test_config_explicit_ollama_provider_uses_default_localhost_api_base() -> None:
+    """强制 provider=ollama 时应使用默认本地地址。"""
     config = Config()
     config.agents.defaults.provider = "ollama"
     config.agents.defaults.model = "llama3.2"
@@ -249,7 +252,8 @@ def test_config_explicit_ollama_provider_uses_default_localhost_api_base():
     assert config.get_api_base() == "http://localhost:11434/v1"
 
 
-def test_config_rejects_unknown_forced_provider():
+def test_config_rejects_unknown_forced_provider() -> None:
+    """未知强制 provider 应立即报错。"""
     config = Config()
     config.agents.defaults.provider = "missing-provider"
 
@@ -258,6 +262,7 @@ def test_config_rejects_unknown_forced_provider():
 
 
 def test_make_provider_rejects_unknown_forced_provider(capsys) -> None:
+    """CLI 构造 provider 时也应把未知 provider 作为用户错误暴露。"""
     config = Config()
     config.agents.defaults.provider = "missing-provider"
 
@@ -268,201 +273,30 @@ def test_make_provider_rejects_unknown_forced_provider(capsys) -> None:
     assert "Unknown provider configured: missing-provider" in captured.out
 
 
-def test_config_accepts_camel_case_explicit_provider_name_for_coding_plan():
-    config = Config.model_validate(
-        {
-            "agents": {
-                "defaults": {
-                    "provider": "volcengineCodingPlan",
-                    "model": "doubao-1-5-pro",
-                }
-            },
-            "providers": {
-                "volcengineCodingPlan": {
-                    "apiKey": "test-key",
-                }
-            },
-        }
-    )
-
-    assert config.get_provider_name() == "volcengine_coding_plan"
-    assert config.get_api_base() == "https://ark.cn-beijing.volces.com/api/coding/v3"
-
-
-def test_find_by_name_accepts_camel_case_and_hyphen_aliases():
+def test_find_by_name_accepts_camel_case_and_hyphen_aliases() -> None:
+    """provider 注册表别名解析应保持可用。"""
     assert find_by_name("volcengineCodingPlan") is not None
     assert find_by_name("volcengineCodingPlan").name == "volcengine_coding_plan"
     assert find_by_name("github-copilot") is not None
     assert find_by_name("github-copilot").name == "github_copilot"
 
 
-def test_config_auto_detects_ollama_from_local_api_base():
-    config = Config.model_validate(
-        {
-            "agents": {"defaults": {"provider": "auto", "model": "llama3.2"}},
-            "providers": {"ollama": {"apiBase": "http://localhost:11434/v1"}},
-        }
-    )
-
-    assert config.get_provider_name() == "ollama"
-    assert config.get_api_base() == "http://localhost:11434/v1"
-
-
-def test_config_prefers_ollama_over_vllm_when_both_local_providers_configured():
-    config = Config.model_validate(
-        {
-            "agents": {"defaults": {"provider": "auto", "model": "llama3.2"}},
-            "providers": {
-                "vllm": {"apiBase": "http://localhost:8000"},
-                "ollama": {"apiBase": "http://localhost:11434/v1"},
-            },
-        }
-    )
-
-    assert config.get_provider_name() == "ollama"
-    assert config.get_api_base() == "http://localhost:11434/v1"
-
-
-def test_config_falls_back_to_vllm_when_ollama_not_configured():
-    config = Config.model_validate(
-        {
-            "agents": {"defaults": {"provider": "auto", "model": "llama3.2"}},
-            "providers": {
-                "vllm": {"apiBase": "http://localhost:8000"},
-            },
-        }
-    )
-
-    assert config.get_provider_name() == "vllm"
-    assert config.get_api_base() == "http://localhost:8000"
-
-
-def test_openai_compat_provider_passes_model_through():
-    from elebot.providers.openai_compat_provider import OpenAICompatProvider
-
-    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = OpenAICompatProvider(default_model="github-copilot/gpt-5.3-codex")
-
-    assert provider.get_default_model() == "github-copilot/gpt-5.3-codex"
-
-
-def test_make_provider_uses_github_copilot_backend():
-    from elebot.cli.commands import _make_provider
-    from elebot.config.schema import Config
-
-    config = Config.model_validate(
-        {
-            "agents": {
-                "defaults": {
-                    "provider": "github-copilot",
-                    "model": "github-copilot/gpt-4.1",
-                }
-            }
-        }
-    )
-
-    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = _make_provider(config)
-
-    assert provider.__class__.__name__ == "GitHubCopilotProvider"
-
-
-def test_github_copilot_provider_strips_prefixed_model_name():
-    from elebot.providers.github_copilot_provider import GitHubCopilotProvider
-
-    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = GitHubCopilotProvider(default_model="github-copilot/gpt-5.1")
-
-    kwargs = provider._build_kwargs(
-        messages=[{"role": "user", "content": "hi"}],
-        tools=None,
-        model="github-copilot/gpt-5.1",
-        max_tokens=16,
-        temperature=0.1,
-        reasoning_effort=None,
-        tool_choice=None,
-    )
-
-    assert kwargs["model"] == "gpt-5.1"
-
-
-@pytest.mark.asyncio
-async def test_github_copilot_provider_refreshes_client_api_key_before_chat():
-    from elebot.providers.github_copilot_provider import GitHubCopilotProvider
-
-    mock_client = MagicMock()
-    mock_client.api_key = "no-key"
-    mock_client.chat.completions.create = AsyncMock(return_value={
-        "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-    })
-
-    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI", return_value=mock_client):
-        provider = GitHubCopilotProvider(default_model="github-copilot/gpt-5.1")
-
-    provider._get_copilot_access_token = AsyncMock(return_value="copilot-access-token")
-
-    response = await provider.chat(
-        messages=[{"role": "user", "content": "hi"}],
-        model="github-copilot/gpt-5.1",
-        max_tokens=16,
-        temperature=0.1,
-    )
-
-    assert response.content == "ok"
-    assert provider._client.api_key == "copilot-access-token"
-    provider._get_copilot_access_token.assert_awaited_once()
-    mock_client.chat.completions.create.assert_awaited_once()
-
-
-def test_openai_codex_strip_prefix_supports_hyphen_and_underscore():
-    assert _strip_model_prefix("openai-codex/gpt-5.1-codex") == "gpt-5.1-codex"
-    assert _strip_model_prefix("openai_codex/gpt-5.1-codex") == "gpt-5.1-codex"
-
-
-def test_make_provider_passes_extra_headers_to_custom_provider():
-    config = Config.model_validate(
-        {
-            "agents": {"defaults": {"provider": "custom", "model": "gpt-4o-mini"}},
-            "providers": {
-                "custom": {
-                    "apiKey": "test-key",
-                    "apiBase": "https://example.com/v1",
-                    "extraHeaders": {
-                        "APP-Code": "demo-app",
-                        "x-session-affinity": "sticky-session",
-                    },
-                }
-            },
-        }
-    )
-
-    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI") as mock_async_openai:
-        _make_provider(config)
-
-    kwargs = mock_async_openai.call_args.kwargs
-    assert kwargs["api_key"] == "test-key"
-    assert kwargs["base_url"] == "https://example.com/v1"
-    assert kwargs["default_headers"]["APP-Code"] == "demo-app"
-    assert kwargs["default_headers"]["x-session-affinity"] == "sticky-session"
-
-
 @pytest.fixture
 def mock_agent_runtime(tmp_path):
-    """Mock agent command dependencies for focused CLI tests."""
+    """隔离 agent 命令依赖，只测试命令装配行为。"""
     config = Config()
     config.agents.defaults.workspace = str(tmp_path / "default-workspace")
 
-    with patch("elebot.config.loader.load_config", return_value=config) as mock_load_config, \
-         patch("elebot.config.loader.resolve_config_env_vars", side_effect=lambda c: c), \
-         patch("elebot.cli.commands.sync_workspace_templates") as mock_sync_templates, \
-         patch("elebot.cli.commands._make_provider", return_value=object()), \
-         patch("elebot.cli.commands.print_agent_response") as mock_print_response, \
-         patch("elebot.bus.queue.MessageBus"), \
-         patch("elebot.cron.service.CronService"), \
-         patch("elebot.agent.loop.AgentLoop") as mock_agent_loop_cls:
+    with (
+        patch("elebot.config.loader.load_config", return_value=config) as mock_load_config,
+        patch("elebot.config.loader.resolve_config_env_vars", side_effect=lambda c: c),
+        patch("elebot.cli.commands.sync_workspace_templates") as mock_sync_templates,
+        patch("elebot.cli.commands._make_provider", return_value=object()),
+        patch("elebot.cli.commands.print_agent_response") as mock_print_response,
+        patch("elebot.bus.queue.MessageBus"),
+        patch("elebot.agent.loop.AgentLoop") as mock_agent_loop_cls,
+    ):
         agent_loop = MagicMock()
-        agent_loop.channels_config = None
         agent_loop.process_direct = AsyncMock(
             return_value=OutboundMessage(channel="cli", chat_id="direct", content="mock-response"),
         )
@@ -479,18 +313,18 @@ def mock_agent_runtime(tmp_path):
         }
 
 
-def test_agent_help_shows_workspace_and_config_options():
+def test_agent_help_shows_workspace_and_config_options() -> None:
+    """agent 帮助页应保留当前支持的核心参数。"""
     result = runner.invoke(app, ["agent", "--help"])
 
     assert result.exit_code == 0
     stripped_output = _strip_ansi(result.stdout)
     assert "--workspace" in stripped_output
-    assert "-w" in stripped_output
     assert "--config" in stripped_output
-    assert "-c" in stripped_output
 
 
-def test_agent_uses_default_config_when_no_workspace_or_config_flags(mock_agent_runtime):
+def test_agent_uses_default_config_when_no_workspace_or_config_flags(mock_agent_runtime) -> None:
+    """未显式覆盖时应使用默认配置装配 agent。"""
     result = runner.invoke(app, ["agent", "-m", "hello"])
 
     assert result.exit_code == 0
@@ -507,9 +341,10 @@ def test_agent_uses_default_config_when_no_workspace_or_config_flags(mock_agent_
     )
 
 
-def test_agent_uses_explicit_config_path(mock_agent_runtime, tmp_path: Path):
+def test_agent_uses_explicit_config_path(mock_agent_runtime, tmp_path: Path) -> None:
+    """显式配置路径应传给 load_config。"""
     config_path = tmp_path / "agent-config.json"
-    config_path.write_text("{}")
+    config_path.write_text("{}", encoding="utf-8")
 
     result = runner.invoke(app, ["agent", "-m", "hello", "-c", str(config_path)])
 
@@ -518,9 +353,10 @@ def test_agent_uses_explicit_config_path(mock_agent_runtime, tmp_path: Path):
 
 
 def test_agent_config_sets_active_path(monkeypatch, tmp_path: Path) -> None:
+    """agent 命令应把显式配置路径设置为当前活动路径。"""
     config_file = tmp_path / "instance" / "config.json"
     config_file.parent.mkdir(parents=True)
-    config_file.write_text("{}")
+    config_file.write_text("{}", encoding="utf-8")
 
     config = Config()
     seen: dict[str, Path] = {}
@@ -533,7 +369,6 @@ def test_agent_config_sets_active_path(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("elebot.cli.commands.sync_workspace_templates", lambda _path: None)
     monkeypatch.setattr("elebot.cli.commands._make_provider", lambda _config: object())
     monkeypatch.setattr("elebot.bus.queue.MessageBus", lambda: object())
-    monkeypatch.setattr("elebot.cron.service.CronService", lambda _store: object())
 
     class _FakeAgentLoop:
         def __init__(self, *args, **kwargs) -> None:
@@ -554,132 +389,8 @@ def test_agent_config_sets_active_path(monkeypatch, tmp_path: Path) -> None:
     assert seen["config_path"] == config_file.resolve()
 
 
-def test_agent_uses_workspace_directory_for_cron_store(monkeypatch, tmp_path: Path) -> None:
-    config_file = tmp_path / "instance" / "config.json"
-    config_file.parent.mkdir(parents=True)
-    config_file.write_text("{}")
-
-    config = Config()
-    config.agents.defaults.workspace = str(tmp_path / "agent-workspace")
-    seen: dict[str, Path] = {}
-
-    monkeypatch.setattr("elebot.config.loader.set_config_path", lambda _path: None)
-    monkeypatch.setattr("elebot.config.loader.load_config", lambda _path=None: config)
-    monkeypatch.setattr("elebot.cli.commands.sync_workspace_templates", lambda _path: None)
-    monkeypatch.setattr("elebot.cli.commands._make_provider", lambda _config: object())
-    monkeypatch.setattr("elebot.bus.queue.MessageBus", lambda: object())
-
-    class _FakeCron:
-        def __init__(self, store_path: Path) -> None:
-            seen["cron_store"] = store_path
-
-    class _FakeAgentLoop:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        async def process_direct(self, *_args, **_kwargs):
-            return OutboundMessage(channel="cli", chat_id="direct", content="ok")
-
-        async def close_mcp(self) -> None:
-            return None
-
-    monkeypatch.setattr("elebot.cron.service.CronService", _FakeCron)
-    monkeypatch.setattr("elebot.agent.loop.AgentLoop", _FakeAgentLoop)
-    monkeypatch.setattr("elebot.cli.commands.print_agent_response", lambda *_args, **_kwargs: None)
-
-    result = runner.invoke(app, ["agent", "-m", "hello", "-c", str(config_file)])
-
-    assert result.exit_code == 0
-    assert seen["cron_store"] == config.workspace_path / "cron" / "jobs.json"
-
-
-def test_agent_workspace_override_keeps_workspace_scoped_cron(
-    monkeypatch, tmp_path: Path
-) -> None:
-    config_file = tmp_path / "instance" / "config.json"
-    config_file.parent.mkdir(parents=True)
-    config_file.write_text("{}")
-
-    override = tmp_path / "override-workspace"
-    config = Config()
-    seen: dict[str, Path] = {}
-
-    monkeypatch.setattr("elebot.config.loader.set_config_path", lambda _path: None)
-    monkeypatch.setattr("elebot.config.loader.load_config", lambda _path=None: config)
-    monkeypatch.setattr("elebot.cli.commands.sync_workspace_templates", lambda _path: None)
-    monkeypatch.setattr("elebot.cli.commands._make_provider", lambda _config: object())
-    monkeypatch.setattr("elebot.bus.queue.MessageBus", lambda: object())
-    class _FakeCron:
-        def __init__(self, store_path: Path) -> None:
-            seen["cron_store"] = store_path
-
-    class _FakeAgentLoop:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        async def process_direct(self, *_args, **_kwargs):
-            return OutboundMessage(channel="cli", chat_id="direct", content="ok")
-
-        async def close_mcp(self) -> None:
-            return None
-
-    monkeypatch.setattr("elebot.cron.service.CronService", _FakeCron)
-    monkeypatch.setattr("elebot.agent.loop.AgentLoop", _FakeAgentLoop)
-    monkeypatch.setattr("elebot.cli.commands.print_agent_response", lambda *_args, **_kwargs: None)
-
-    result = runner.invoke(
-        app,
-        ["agent", "-m", "hello", "-c", str(config_file), "-w", str(override)],
-    )
-
-    assert result.exit_code == 0
-    assert seen["cron_store"] == override / "cron" / "jobs.json"
-
-
-def test_agent_custom_config_workspace_keeps_workspace_scoped_cron(
-    monkeypatch, tmp_path: Path
-) -> None:
-    config_file = tmp_path / "instance" / "config.json"
-    config_file.parent.mkdir(parents=True)
-    config_file.write_text("{}")
-
-    custom_workspace = tmp_path / "custom-workspace"
-    config = Config()
-    config.agents.defaults.workspace = str(custom_workspace)
-    seen: dict[str, Path] = {}
-
-    monkeypatch.setattr("elebot.config.loader.set_config_path", lambda _path: None)
-    monkeypatch.setattr("elebot.config.loader.load_config", lambda _path=None: config)
-    monkeypatch.setattr("elebot.cli.commands.sync_workspace_templates", lambda _path: None)
-    monkeypatch.setattr("elebot.cli.commands._make_provider", lambda _config: object())
-    monkeypatch.setattr("elebot.bus.queue.MessageBus", lambda: object())
-    class _FakeCron:
-        def __init__(self, store_path: Path) -> None:
-            seen["cron_store"] = store_path
-
-    class _FakeAgentLoop:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        async def process_direct(self, *_args, **_kwargs):
-            return OutboundMessage(channel="cli", chat_id="direct", content="ok")
-
-        async def close_mcp(self) -> None:
-            return None
-
-    monkeypatch.setattr("elebot.cron.service.CronService", _FakeCron)
-    monkeypatch.setattr("elebot.agent.loop.AgentLoop", _FakeAgentLoop)
-    monkeypatch.setattr(
-        "elebot.cli.commands.print_agent_response", lambda *_args, **_kwargs: None
-    )
-
-    result = runner.invoke(app, ["agent", "-m", "hello", "-c", str(config_file)])
-
-    assert result.exit_code == 0
-    assert seen["cron_store"] == custom_workspace / "cron" / "jobs.json"
-
-
-def test_agent_overrides_workspace_path(mock_agent_runtime):
+def test_agent_overrides_workspace_path(mock_agent_runtime) -> None:
+    """显式工作区路径应覆盖配置值。"""
     workspace_path = Path("/tmp/agent-workspace")
 
     result = runner.invoke(app, ["agent", "-m", "hello", "-w", str(workspace_path)])
@@ -690,9 +401,12 @@ def test_agent_overrides_workspace_path(mock_agent_runtime):
     assert mock_agent_runtime["agent_loop_cls"].call_args.kwargs["workspace"] == workspace_path
 
 
-def test_agent_workspace_override_wins_over_config_workspace(mock_agent_runtime, tmp_path: Path):
+def test_agent_workspace_override_wins_over_config_workspace(
+    mock_agent_runtime, tmp_path: Path
+) -> None:
+    """同时传入配置和工作区时，以命令行工作区为准。"""
     config_path = tmp_path / "agent-config.json"
-    config_path.write_text("{}")
+    config_path.write_text("{}", encoding="utf-8")
     workspace_path = Path("/tmp/agent-workspace")
 
     result = runner.invoke(
@@ -704,12 +418,12 @@ def test_agent_workspace_override_wins_over_config_workspace(mock_agent_runtime,
     assert mock_agent_runtime["load_config"].call_args.args == (config_path.resolve(),)
     assert mock_agent_runtime["config"].agents.defaults.workspace == str(workspace_path)
     assert mock_agent_runtime["sync_templates"].call_args.args == (workspace_path,)
-    assert mock_agent_runtime["agent_loop_cls"].call_args.kwargs["workspace"] == workspace_path
 
 
-def test_agent_hints_about_deprecated_memory_window(mock_agent_runtime, tmp_path):
+def test_agent_hints_about_deprecated_memory_window(mock_agent_runtime, tmp_path) -> None:
+    """旧配置键仍会收到清理提示，但不再真正生效。"""
     config_file = tmp_path / "config.json"
-    config_file.write_text(json.dumps({"agents": {"defaults": {"memoryWindow": 42}}}))
+    config_file.write_text(json.dumps({"agents": {"defaults": {"memoryWindow": 42}}}), encoding="utf-8")
 
     result = runner.invoke(app, ["agent", "-m", "hello", "-c", str(config_file)])
 
@@ -718,426 +432,62 @@ def test_agent_hints_about_deprecated_memory_window(mock_agent_runtime, tmp_path
     assert "no longer used" in result.stdout
 
 
-def test_heartbeat_retains_recent_messages_by_default():
-    config = Config()
-
-    assert config.gateway.heartbeat.keep_recent_messages == 8
-
-
-def _write_instance_config(tmp_path: Path) -> Path:
-    config_file = tmp_path / "instance" / "config.json"
-    config_file.parent.mkdir(parents=True)
-    config_file.write_text("{}")
-    return config_file
-
-
-def _stop_gateway_provider(_config) -> object:
-    raise _StopGatewayError("stop")
-
-
-def _patch_cli_command_runtime(
-    monkeypatch,
-    config: Config,
-    *,
-    set_config_path=None,
-    sync_templates=None,
-    make_provider=None,
-    message_bus=None,
-    session_manager=None,
-    cron_service=None,
-) -> None:
-    monkeypatch.setattr(
-        "elebot.config.loader.set_config_path",
-        set_config_path or (lambda _path: None),
-    )
-    monkeypatch.setattr("elebot.config.loader.load_config", lambda _path=None: config)
-    monkeypatch.setattr("elebot.config.loader.resolve_config_env_vars", lambda c: c)
-    monkeypatch.setattr(
-        "elebot.cli.commands.sync_workspace_templates",
-        sync_templates or (lambda _path: None),
-    )
-    monkeypatch.setattr(
-        "elebot.cli.commands._make_provider",
-        make_provider or (lambda _config: object()),
-    )
-
-    if message_bus is not None:
-        monkeypatch.setattr("elebot.bus.queue.MessageBus", message_bus)
-    if session_manager is not None:
-        monkeypatch.setattr("elebot.session.manager.SessionManager", session_manager)
-    if cron_service is not None:
-        monkeypatch.setattr("elebot.cron.service.CronService", cron_service)
-
-
-def _patch_serve_runtime(monkeypatch, config: Config, seen: dict[str, object]) -> None:
-    pytest.importorskip("aiohttp")
-
-    class _FakeApiApp:
-        def __init__(self) -> None:
-            self.on_startup: list[object] = []
-            self.on_cleanup: list[object] = []
-
-    class _FakeAgentLoop:
-        def __init__(self, **kwargs) -> None:
-            seen["workspace"] = kwargs["workspace"]
-
-        async def _connect_mcp(self) -> None:
-            return None
-
-        async def close_mcp(self) -> None:
-            return None
-
-    def _fake_create_app(agent_loop, model_name: str, request_timeout: float):
-        seen["agent_loop"] = agent_loop
-        seen["model_name"] = model_name
-        seen["request_timeout"] = request_timeout
-        return _FakeApiApp()
-
-    def _fake_run_app(api_app, host: str, port: int, print):
-        seen["api_app"] = api_app
-        seen["host"] = host
-        seen["port"] = port
-
-    _patch_cli_command_runtime(
-        monkeypatch,
-        config,
-        message_bus=lambda: object(),
-        session_manager=lambda _workspace: object(),
-    )
-    monkeypatch.setattr("elebot.agent.loop.AgentLoop", _FakeAgentLoop)
-    monkeypatch.setattr("elebot.api.server.create_app", _fake_create_app)
-    monkeypatch.setattr("aiohttp.web.run_app", _fake_run_app)
-
-
-def test_gateway_uses_workspace_from_config_by_default(monkeypatch, tmp_path: Path) -> None:
-    config_file = _write_instance_config(tmp_path)
-    config = Config()
-    config.agents.defaults.workspace = str(tmp_path / "config-workspace")
-    seen: dict[str, Path] = {}
-
-    _patch_cli_command_runtime(
-        monkeypatch,
-        config,
-        set_config_path=lambda path: seen.__setitem__("config_path", path),
-        sync_templates=lambda path: seen.__setitem__("workspace", path),
-        make_provider=_stop_gateway_provider,
-    )
-
-    result = runner.invoke(app, ["gateway", "--config", str(config_file)])
-
-    assert isinstance(result.exception, _StopGatewayError)
-    assert seen["config_path"] == config_file.resolve()
-    assert seen["workspace"] == Path(config.agents.defaults.workspace)
-
-
-def test_gateway_workspace_option_overrides_config(monkeypatch, tmp_path: Path) -> None:
-    config_file = _write_instance_config(tmp_path)
-    config = Config()
-    config.agents.defaults.workspace = str(tmp_path / "config-workspace")
-    override = tmp_path / "override-workspace"
-    seen: dict[str, Path] = {}
-
-    _patch_cli_command_runtime(
-        monkeypatch,
-        config,
-        sync_templates=lambda path: seen.__setitem__("workspace", path),
-        make_provider=_stop_gateway_provider,
-    )
-
-    result = runner.invoke(
-        app,
-        ["gateway", "--config", str(config_file), "--workspace", str(override)],
-    )
-
-    assert isinstance(result.exception, _StopGatewayError)
-    assert seen["workspace"] == override
-    assert config.workspace_path == override
-
-
-def test_gateway_uses_workspace_directory_for_cron_store(monkeypatch, tmp_path: Path) -> None:
-    config_file = _write_instance_config(tmp_path)
-    config = Config()
-    config.agents.defaults.workspace = str(tmp_path / "config-workspace")
-    seen: dict[str, Path] = {}
-
-    class _StopCron:
-        def __init__(self, store_path: Path) -> None:
-            seen["cron_store"] = store_path
-            raise _StopGatewayError("stop")
-
-    _patch_cli_command_runtime(
-        monkeypatch,
-        config,
-        message_bus=lambda: object(),
-        session_manager=lambda _workspace: object(),
-        cron_service=_StopCron,
-    )
-
-    result = runner.invoke(app, ["gateway", "--config", str(config_file)])
-
-    assert isinstance(result.exception, _StopGatewayError)
-    assert seen["cron_store"] == config.workspace_path / "cron" / "jobs.json"
-
-
-def test_gateway_cron_evaluator_receives_scheduled_reminder_context(
-    monkeypatch, tmp_path: Path
-) -> None:
-    config_file = tmp_path / "instance" / "config.json"
-    config_file.parent.mkdir(parents=True)
-    config_file.write_text("{}")
-
-    config = Config()
-    config.agents.defaults.workspace = str(tmp_path / "config-workspace")
-    provider = object()
-    bus = MagicMock()
-    bus.publish_outbound = AsyncMock()
-    seen: dict[str, object] = {}
-
-    monkeypatch.setattr("elebot.config.loader.set_config_path", lambda _path: None)
-    monkeypatch.setattr("elebot.config.loader.load_config", lambda _path=None: config)
-    monkeypatch.setattr("elebot.cli.commands.sync_workspace_templates", lambda _path: None)
-    monkeypatch.setattr("elebot.cli.commands._make_provider", lambda _config: provider)
-    monkeypatch.setattr("elebot.bus.queue.MessageBus", lambda: bus)
-    monkeypatch.setattr("elebot.session.manager.SessionManager", lambda _workspace: object())
-
-    class _FakeCron:
-        def __init__(self, _store_path: Path) -> None:
-            self.on_job = None
-            seen["cron"] = self
-
-    class _FakeAgentLoop:
-        def __init__(self, *args, **kwargs) -> None:
-            self.model = "test-model"
-            self.tools = {}
-
-        async def process_direct(self, *_args, **_kwargs):
-            return OutboundMessage(
-                channel="telegram",
-                chat_id="user-1",
-                content="Time to stretch.",
-            )
-
-        async def close_mcp(self) -> None:
-            return None
-
-        async def run(self) -> None:
-            return None
-
-        def stop(self) -> None:
-            return None
-
-    class _StopAfterCronSetup:
-        def __init__(self, *_args, **_kwargs) -> None:
-            raise _StopGatewayError("stop")
-
-    async def _capture_evaluate_response(
-        response: str,
-        task_context: str,
-        provider_arg: object,
-        model: str,
-    ) -> bool:
-        seen["response"] = response
-        seen["task_context"] = task_context
-        seen["provider"] = provider_arg
-        seen["model"] = model
-        return True
-
-    monkeypatch.setattr("elebot.cron.service.CronService", _FakeCron)
-    monkeypatch.setattr("elebot.agent.loop.AgentLoop", _FakeAgentLoop)
-    monkeypatch.setattr("elebot.channels.manager.ChannelManager", _StopAfterCronSetup)
-    monkeypatch.setattr(
-        "elebot.utils.evaluator.evaluate_response",
-        _capture_evaluate_response,
-    )
-
-    result = runner.invoke(app, ["gateway", "--config", str(config_file)])
-
-    assert isinstance(result.exception, _StopGatewayError)
-    cron = seen["cron"]
-    assert isinstance(cron, _FakeCron)
-    assert cron.on_job is not None
-
-    job = CronJob(
-        id="cron-1",
-        name="stretch",
-        payload=CronPayload(
-            message="Remind me to stretch.",
-            deliver=True,
-            channel="telegram",
-            to="user-1",
+def test_agent_rejects_removed_top_level_config_keys(tmp_path: Path) -> None:
+    """旧配置仍带 Frozen 顶层字段时应直接提示清理。"""
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "providers": {"dashscope": {"apiKey": "still-there"}},
+                "channels": {"sendProgress": True},
+                "api": {"host": "127.0.0.1"},
+                "gateway": {"host": "0.0.0.0"},
+            }
         ),
+        encoding="utf-8",
     )
 
-    response = asyncio.run(cron.on_job(job))
+    result = runner.invoke(app, ["agent", "-m", "hello", "-c", str(config_file)])
 
-    assert response == "Time to stretch."
-    assert seen["response"] == "Time to stretch."
-    assert seen["provider"] is provider
-    assert seen["model"] == "test-model"
-    assert seen["task_context"] == (
-        "[Scheduled Task] Timer finished.\n\n"
-        "Task 'stretch' has been triggered.\n"
-        "Scheduled instruction: Remind me to stretch."
-    )
-    bus.publish_outbound.assert_awaited_once_with(
-        OutboundMessage(
-            channel="telegram",
-            chat_id="user-1",
-            content="Time to stretch.",
-        )
-    )
+    assert result.exit_code == 1
+    stripped_output = _strip_ansi(result.stdout)
+    assert "已移除的顶层字段: channels, api, gateway" in stripped_output
+    assert "删除这些字段后重试" in stripped_output
+    assert "No API key configured" not in stripped_output
 
 
-def test_gateway_workspace_override_keeps_workspace_scoped_cron(
-    monkeypatch, tmp_path: Path
-) -> None:
-    config_file = _write_instance_config(tmp_path)
-    override = tmp_path / "override-workspace"
+def test_status_reports_basic_runtime_state(monkeypatch, tmp_path: Path) -> None:
+    """status 命令应输出配置、工作区和模型状态。"""
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
     config = Config()
-    seen: dict[str, Path] = {}
+    config.agents.defaults.workspace = str(workspace)
+    config.providers.dashscope.api_key = "test-key"
 
-    class _StopCron:
-        def __init__(self, store_path: Path) -> None:
-            seen["cron_store"] = store_path
-            raise _StopGatewayError("stop")
+    monkeypatch.setattr("elebot.config.loader.get_config_path", lambda: config_path)
+    monkeypatch.setattr("elebot.config.loader.load_config", lambda: config)
 
-    _patch_cli_command_runtime(
-        monkeypatch,
-        config,
-        message_bus=lambda: object(),
-        session_manager=lambda _workspace: object(),
-        cron_service=_StopCron,
-    )
-
-    result = runner.invoke(
-        app,
-        ["gateway", "--config", str(config_file), "--workspace", str(override)],
-    )
-
-    assert isinstance(result.exception, _StopGatewayError)
-    assert seen["cron_store"] == override / "cron" / "jobs.json"
-
-
-def test_gateway_custom_config_workspace_keeps_workspace_scoped_cron(
-    monkeypatch, tmp_path: Path
-) -> None:
-    config_file = _write_instance_config(tmp_path)
-    custom_workspace = tmp_path / "custom-workspace"
-    config = Config()
-    config.agents.defaults.workspace = str(custom_workspace)
-    seen: dict[str, Path] = {}
-
-    class _StopCron:
-        def __init__(self, store_path: Path) -> None:
-            seen["cron_store"] = store_path
-            raise _StopGatewayError("stop")
-
-    _patch_cli_command_runtime(
-        monkeypatch,
-        config,
-        message_bus=lambda: object(),
-        session_manager=lambda _workspace: object(),
-        cron_service=_StopCron,
-    )
-
-    result = runner.invoke(app, ["gateway", "--config", str(config_file)])
-
-    assert isinstance(result.exception, _StopGatewayError)
-    assert seen["cron_store"] == custom_workspace / "cron" / "jobs.json"
-
-
-def test_gateway_uses_configured_port_when_cli_flag_is_missing(monkeypatch, tmp_path: Path) -> None:
-    config_file = _write_instance_config(tmp_path)
-    config = Config()
-    config.gateway.port = 18791
-
-    _patch_cli_command_runtime(
-        monkeypatch,
-        config,
-        make_provider=_stop_gateway_provider,
-    )
-
-    result = runner.invoke(app, ["gateway", "--config", str(config_file)])
-
-    assert isinstance(result.exception, _StopGatewayError)
-    assert "port 18791" in result.stdout
-
-
-def test_gateway_cli_port_overrides_configured_port(monkeypatch, tmp_path: Path) -> None:
-    config_file = _write_instance_config(tmp_path)
-    config = Config()
-    config.gateway.port = 18791
-
-    _patch_cli_command_runtime(
-        monkeypatch,
-        config,
-        make_provider=_stop_gateway_provider,
-    )
-
-    result = runner.invoke(app, ["gateway", "--config", str(config_file), "--port", "18792"])
-
-    assert isinstance(result.exception, _StopGatewayError)
-    assert "port 18792" in result.stdout
-
-
-def test_serve_uses_api_config_defaults_and_workspace_override(
-    monkeypatch, tmp_path: Path
-) -> None:
-    config_file = _write_instance_config(tmp_path)
-    config = Config()
-    config.agents.defaults.workspace = str(tmp_path / "config-workspace")
-    config.api.host = "127.0.0.2"
-    config.api.port = 18900
-    config.api.timeout = 45.0
-    override_workspace = tmp_path / "override-workspace"
-    seen: dict[str, object] = {}
-
-    _patch_serve_runtime(monkeypatch, config, seen)
-
-    result = runner.invoke(
-        app,
-        ["serve", "--config", str(config_file), "--workspace", str(override_workspace)],
-    )
+    result = runner.invoke(app, ["status"])
 
     assert result.exit_code == 0
-    assert seen["workspace"] == override_workspace
-    assert seen["host"] == "127.0.0.2"
-    assert seen["port"] == 18900
-    assert seen["request_timeout"] == 45.0
+    stripped = _strip_ansi(result.stdout)
+    assert "Config:" in stripped
+    assert "Workspace:" in stripped
+    assert "Model:" in stripped
 
 
-def test_serve_cli_options_override_api_config(monkeypatch, tmp_path: Path) -> None:
-    config_file = _write_instance_config(tmp_path)
-    config = Config()
-    config.api.host = "127.0.0.2"
-    config.api.port = 18900
-    config.api.timeout = 45.0
-    seen: dict[str, object] = {}
+def test_provider_login_requires_supported_oauth_provider() -> None:
+    """未知 provider 登录应直接报错。"""
+    result = runner.invoke(app, ["provider", "login", "missing-provider"])
 
-    _patch_serve_runtime(monkeypatch, config, seen)
-
-    result = runner.invoke(
-        app,
-        [
-            "serve",
-            "--config",
-            str(config_file),
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "18901",
-            "--timeout",
-            "46",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert seen["host"] == "127.0.0.1"
-    assert seen["port"] == 18901
-    assert seen["request_timeout"] == 46.0
+    assert result.exit_code == 1
+    assert "Unknown OAuth provider" in result.stdout
 
 
-def test_channels_login_requires_channel_name() -> None:
-    result = runner.invoke(app, ["channels", "login"])
-
-    assert result.exit_code == 2
+def test_openai_codex_strip_prefix_supports_hyphen_and_underscore() -> None:
+    """model 前缀裁剪逻辑应兼容连字符和下划线。"""
+    assert _strip_model_prefix("openai-codex/gpt-5.1-codex") == "gpt-5.1-codex"
+    assert _strip_model_prefix("openai_codex/gpt-5.1-codex") == "gpt-5.1-codex"

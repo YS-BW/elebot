@@ -277,10 +277,8 @@ def _make_loop(tmp_path, hooks=None):
 
     with patch("elebot.agent.loop.ContextBuilder"), \
          patch("elebot.agent.loop.SessionManager"), \
-         patch("elebot.agent.loop.SubagentManager") as mock_sub_mgr, \
          patch("elebot.agent.loop.Consolidator"), \
          patch("elebot.agent.loop.Dream"):
-        mock_sub_mgr.return_value.cancel_by_session = AsyncMock(return_value=0)
         loop = AgentLoop(
             bus=bus, provider=provider, workspace=tmp_path, hooks=hooks,
         )

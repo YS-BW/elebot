@@ -11,7 +11,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CODE_ROOT = REPO_ROOT / "elebot"
-DOCS_ROOT = REPO_ROOT / "docs"
 CHINESE_RE = re.compile(r"[\u4e00-\u9fff]")
 IGNORE_COMMENT_RE = re.compile(
     r"^#\s*(noqa|type:\s*ignore|pragma:\s*no cover|fmt:|ruff:|region|endregion|={3,}|-{3,})",
@@ -66,18 +65,6 @@ def _collect_comment_violations(path: Path) -> list[str]:
             continue
         violations.append(f"{path.relative_to(REPO_ROOT)}:{token.start[0]}:{comment}")
     return violations
-
-
-def test_docs_baseline_exists() -> None:
-    """核心规范文档必须存在。"""
-    required_docs = [
-        DOCS_ROOT / "README.md",
-        DOCS_ROOT / "CODE_STYLE.md",
-        DOCS_ROOT / "MEMORY.md",
-        DOCS_ROOT / "PYTHON_SDK.md",
-    ]
-    missing_docs = [str(path.relative_to(REPO_ROOT)) for path in required_docs if not path.exists()]
-    assert not missing_docs, "缺少核心文档：\n" + "\n".join(missing_docs)
 
 
 def test_python_modules_use_chinese_docstrings() -> None:

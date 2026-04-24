@@ -755,101 +755,18 @@ def _configure_providers(config: Config) -> None:
             console.print("\n[dim]Returning to main menu...[/dim]")
             break
 
-
-@lru_cache(maxsize=1)
-def _get_channel_info() -> dict[str, tuple[str, type[BaseModel]]]:
-    """Get channel info (display name + config class) from channel modules."""
-    import importlib
-
-    from elebot.channels.registry import discover_all
-
-    result: dict[str, tuple[str, type[BaseModel]]] = {}
-    for name, channel_cls in discover_all().items():
-        try:
-            mod = importlib.import_module(f"elebot.channels.{name}")
-            config_name = channel_cls.__name__.replace("Channel", "Config")
-            config_cls = getattr(mod, config_name, None)
-            if config_cls and isinstance(config_cls, type) and issubclass(config_cls, BaseModel):
-                display_name = getattr(channel_cls, "display_name", name.capitalize())
-                result[name] = (display_name, config_cls)
-        except Exception:
-            logger.warning(f"Failed to load channel module: {name}")
-    return result
-
-
-def _get_channel_names() -> dict[str, str]:
-    """Get channel display names."""
-    return {name: info[0] for name, info in _get_channel_info().items()}
-
-
-def _get_channel_config_class(channel: str) -> type[BaseModel] | None:
-    """Get channel config class."""
-    entry = _get_channel_info().get(channel)
-    return entry[1] if entry else None
-
-
-def _configure_channel(config: Config, channel_name: str) -> None:
-    """Configure a single channel."""
-    channel_dict = getattr(config.channels, channel_name, None)
-    if channel_dict is None:
-        channel_dict = {}
-        setattr(config.channels, channel_name, channel_dict)
-
-    display_name = _get_channel_names().get(channel_name, channel_name)
-    config_cls = _get_channel_config_class(channel_name)
-
-    if config_cls is None:
-        console.print(f"[red]No configuration class found for {display_name}[/red]")
-        return
-
-    model = config_cls.model_validate(channel_dict) if channel_dict else config_cls()
-
-    updated_channel = _configure_pydantic_model(
-        model,
-        display_name,
-    )
-    if updated_channel is not None:
-        new_dict = updated_channel.model_dump(by_alias=True, exclude_none=True)
-        setattr(config.channels, channel_name, new_dict)
-
-
-def _configure_channels(config: Config) -> None:
-    """Configure chat channels."""
-    channel_names = list(_get_channel_names().keys())
-    choices = channel_names + ["<- Back"]
-
-    while True:
-        try:
-            console.clear()
-            _show_section_header("Chat Channels", "Select a channel to configure connection settings")
-            answer = _select_with_back("Select channel:", choices)
-
-            if answer is _BACK_PRESSED or answer is None or answer == "<- Back":
-                break
-
-            # 这里经过返回和取消分支过滤后，answer 可以视作合法渠道名。
-            assert isinstance(answer, str)
-            _configure_channel(config, answer)
-        except KeyboardInterrupt:
-            console.print("\n[dim]Returning to main menu...[/dim]")
-            break
-
-
 _SETTINGS_SECTIONS: dict[str, tuple[str, str, set[str] | None]] = {
     "Agent Settings": ("Agent Defaults", "Configure default model, temperature, and behavior", None),
-    "Gateway": ("Gateway Settings", "Configure server host, port, and heartbeat", None),
     "Tools": ("Tools Settings", "Configure web search, shell exec, and other tools", {"mcp_servers"}),
 }
 
 _SETTINGS_GETTER = {
     "Agent Settings": lambda c: c.agents.defaults,
-    "Gateway": lambda c: c.gateway,
     "Tools": lambda c: c.tools,
 }
 
 _SETTINGS_SETTER = {
     "Agent Settings": lambda c, v: setattr(c.agents, "defaults", v),
-    "Gateway": lambda c, v: setattr(c, "gateway", v),
     "Tools": lambda c, v: setattr(c, "tools", v),
 }
 
@@ -909,28 +826,10 @@ def _show_summary(config: Config) -> None:
         provider_rows.append((display, status))
     _print_summary_panel(provider_rows, "LLM Providers")
 
-    # 渠道部分重点展示启用状态，而不是把全部内部字段直接暴露出来。
-    channel_rows = []
-    for name, display in _get_channel_names().items():
-        channel = getattr(config.channels, name, None)
-        if channel:
-            enabled = (
-                channel.get("enabled", False)
-                if isinstance(channel, dict)
-                else getattr(channel, "enabled", False)
-            )
-            status = "[green]enabled[/green]" if enabled else "[dim]disabled[/dim]"
-        else:
-            status = "[dim]not configured[/dim]"
-        channel_rows.append((display, status))
-    _print_summary_panel(channel_rows, "Chat Channels")
-
     # 其余设置按配置块展示，便于和主菜单结构一一对应。
     for title, model in [
         ("Agent Settings", config.agents.defaults),
-        ("Gateway", config.gateway),
         ("Tools", config.tools),
-        ("Channel Common", config.channels),
     ]:
         _print_summary_panel(_summarize_model(model), title)
 
@@ -995,9 +894,7 @@ def run_onboard(initial_config: Config | None = None) -> OnboardResult:
                 "What would you like to configure?",
                 choices=[
                     "[P] LLM Provider",
-                    "[C] Chat Channel",
                     "[A] Agent Settings",
-                    "[G] Gateway",
                     "[T] Tools",
                     "[V] View Configuration Summary",
                     "[S] Save and Exit",
@@ -1018,9 +915,7 @@ def run_onboard(initial_config: Config | None = None) -> OnboardResult:
 
         _MENU_DISPATCH = {
             "[P] LLM Provider": lambda: _configure_providers(config),
-            "[C] Chat Channel": lambda: _configure_channels(config),
             "[A] Agent Settings": lambda: _configure_general_settings(config, "Agent Settings"),
-            "[G] Gateway": lambda: _configure_general_settings(config, "Gateway"),
             "[T] Tools": lambda: _configure_general_settings(config, "Tools"),
             "[V] View Configuration Summary": lambda: _show_summary(config),
         }

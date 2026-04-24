@@ -54,9 +54,8 @@ def _validate_url(url: str) -> tuple[bool, str]:
 
 
 def _validate_url_safe(url: str) -> tuple[bool, str]:
-    """Validate URL with SSRF protection: scheme, domain, and resolved IP check."""
-    from elebot.security.network import validate_url_target
-    return validate_url_target(url)
+    """校验 URL 是否满足当前主链路的基础抓取要求。"""
+    return _validate_url(url)
 
 
 def _format_results(query: str, items: list[dict[str, Any]], n: int) -> str:
@@ -340,12 +339,6 @@ class WebFetchTool(Tool):
         try:
             async with httpx.AsyncClient(proxy=self.proxy, follow_redirects=True, max_redirects=MAX_REDIRECTS, timeout=15.0) as client:
                 async with client.stream("GET", url, headers={"User-Agent": USER_AGENT}) as r:
-                    from elebot.security.network import validate_resolved_url
-
-                    redir_ok, redir_err = validate_resolved_url(str(r.url))
-                    if not redir_ok:
-                        return json.dumps({"error": f"Redirect blocked: {redir_err}", "url": url}, ensure_ascii=False)
-
                     ctype = r.headers.get("content-type", "")
                     if ctype.startswith("image/"):
                         r.raise_for_status()
@@ -408,11 +401,6 @@ class WebFetchTool(Tool):
             ) as client:
                 r = await client.get(url, headers={"User-Agent": USER_AGENT})
                 r.raise_for_status()
-
-            from elebot.security.network import validate_resolved_url
-            redir_ok, redir_err = validate_resolved_url(str(r.url))
-            if not redir_ok:
-                return json.dumps({"error": f"Redirect blocked: {redir_err}", "url": url}, ensure_ascii=False)
 
             ctype = r.headers.get("content-type", "")
             if ctype.startswith("image/"):

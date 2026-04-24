@@ -726,52 +726,16 @@ class Dream:
 
     def _build_tools(self) -> ToolRegistry:
         """Build a minimal tool registry for the Dream agent."""
-        from elebot.agent.skills import BUILTIN_SKILLS_DIR
-        from elebot.agent.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
+        from elebot.agent.tools.filesystem import EditFileTool, ReadFileTool
 
         tools = ToolRegistry()
         workspace = self.store.workspace
-        # 允许读取内置技能，避免 Dream 在生成技能时缺少现有规范参考。
-        extra_read = [BUILTIN_SKILLS_DIR] if BUILTIN_SKILLS_DIR.exists() else None
         tools.register(ReadFileTool(
             workspace=workspace,
             allowed_dir=workspace,
-            extra_allowed_dirs=extra_read,
         ))
         tools.register(EditFileTool(workspace=workspace, allowed_dir=workspace))
-        # 只允许写入 skills 目录，避免 Dream 越权改动其他工作区文件。
-        skills_dir = workspace / "skills"
-        skills_dir.mkdir(parents=True, exist_ok=True)
-        tools.register(WriteFileTool(workspace=workspace, allowed_dir=skills_dir))
         return tools
-
-    # -- 技能列表 ------------------------------------------------------------
-
-    def _list_existing_skills(self) -> list[str]:
-        """List existing skills as 'name — description' for dedup context."""
-        import re as _re
-
-        from elebot.agent.skills import BUILTIN_SKILLS_DIR
-
-        _DESC_RE = _re.compile(r"^description:\s*(.+)$", _re.MULTILINE | _re.IGNORECASE)
-        entries: dict[str, str] = {}
-        for base in (self.store.workspace / "skills", BUILTIN_SKILLS_DIR):
-            if not base.exists():
-                continue
-            for d in base.iterdir():
-                if not d.is_dir():
-                    continue
-                skill_md = d / "SKILL.md"
-                if not skill_md.exists():
-                    continue
-                # 工作区同名技能应覆盖内置技能，保持用户本地定制优先。
-                if d.name in entries and base == BUILTIN_SKILLS_DIR:
-                    continue
-                content = skill_md.read_text(encoding="utf-8")[:500]
-                m = _DESC_RE.search(content)
-                desc = m.group(1).strip() if m else "(no description)"
-                entries[d.name] = desc
-        return [f"{name} — {desc}" for name, desc in sorted(entries.items())]
 
     # -- 主入口 --------------------------------------------------------------
 
@@ -784,8 +748,6 @@ class Dream:
         返回:
             只要本轮实际处理了历史条目就返回 `True`。
         """
-        from elebot.agent.skills import BUILTIN_SKILLS_DIR
-
         last_cursor = self.store.get_last_dream_cursor()
         entries = self.store.read_unprocessed_history(since_cursor=last_cursor)
         if not entries:
@@ -815,7 +777,7 @@ class Dream:
             f"## Current USER.md ({len(current_user)} chars)\n{current_user}"
         )
 
-        # 第一阶段只做分析，技能去重交给第二阶段结合工具环境判断。
+        # 第一阶段只做分析，第二阶段只负责把结论增量写回记忆文件。
         phase1_prompt = (
             f"## Conversation History\n{history_text}\n\n{file_context}"
         )
@@ -840,25 +802,13 @@ class Dream:
             return False
 
         # 第二阶段交给 AgentRunner 做增量修改，避免整体覆盖文件。
-        existing_skills = self._list_existing_skills()
-        skills_section = ""
-        if existing_skills:
-            skills_section = (
-                "\n\n## Existing Skills\n"
-                + "\n".join(f"- {s}" for s in existing_skills)
-            )
-        phase2_prompt = f"## Analysis Result\n{analysis}\n\n{file_context}{skills_section}"
+        phase2_prompt = f"## Analysis Result\n{analysis}\n\n{file_context}"
 
         tools = self._tools
-        skill_creator_path = BUILTIN_SKILLS_DIR / "skill-creator" / "SKILL.md"
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
-                "content": render_template(
-                    "agent/dream_phase2.md",
-                    strip=True,
-                    skill_creator_path=str(skill_creator_path),
-                ),
+                "content": render_template("agent/dream_phase2.md", strip=True),
             },
             {"role": "user", "content": phase2_prompt},
         ]

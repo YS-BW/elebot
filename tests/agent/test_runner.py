@@ -27,9 +27,7 @@ def _make_loop(tmp_path):
     provider.get_default_model.return_value = "test-model"
 
     with patch("elebot.agent.loop.ContextBuilder"), \
-         patch("elebot.agent.loop.SessionManager"), \
-         patch("elebot.agent.loop.SubagentManager") as MockSubMgr:
-        MockSubMgr.return_value.cancel_by_session = AsyncMock(return_value=0)
+         patch("elebot.agent.loop.SessionManager"):
         loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path)
     return loop
 
@@ -1007,39 +1005,6 @@ async def test_runner_tool_error_sets_final_content():
 
 
 @pytest.mark.asyncio
-async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, monkeypatch):
-    from elebot.agent.subagent import SubagentManager
-    from elebot.bus.queue import MessageBus
-
-    bus = MessageBus()
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
-        content="working",
-        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
-    ))
-    mgr = SubagentManager(
-        provider=provider,
-        workspace=tmp_path,
-        bus=bus,
-        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
-    )
-    mgr._announce_result = AsyncMock()
-
-    async def fake_execute(self, **kwargs):
-        return "tool result"
-
-    monkeypatch.setattr("elebot.agent.tools.filesystem.ListDirTool.execute", fake_execute)
-
-    await mgr._run_subagent("sub-1", "do task", "label", {"channel": "test", "chat_id": "c1"})
-
-    mgr._announce_result.assert_awaited_once()
-    args = mgr._announce_result.await_args.args
-    assert args[3] == "Task completed but no final response was generated."
-    assert args[5] == "ok"
-
-
-@pytest.mark.asyncio
 async def test_runner_accumulates_usage_and_preserves_cached_tokens():
     """Runner should accumulate prompt/completion tokens across iterations
     and preserve cached_tokens from provider responses."""
@@ -1589,7 +1554,7 @@ async def test_microcompact_preserves_short_results():
 
 @pytest.mark.asyncio
 async def test_microcompact_skips_non_compactable_tools():
-    """Non-compactable tools (e.g. 'message') should never be replaced."""
+    """未列入压缩白名单的工具结果不应被替换。"""
     from elebot.agent.runner import AgentRunner, _MICROCOMPACT_KEEP_RECENT
 
     total = _MICROCOMPACT_KEEP_RECENT + 5
@@ -1599,10 +1564,10 @@ async def test_microcompact_skips_non_compactable_tools():
         messages.append({
             "role": "assistant",
             "content": "",
-            "tool_calls": [{"id": f"c{i}", "type": "function", "function": {"name": "message", "arguments": "{}"}}],
+            "tool_calls": [{"id": f"c{i}", "type": "function", "function": {"name": "custom_tool", "arguments": "{}"}}],
         })
         messages.append({
-            "role": "tool", "tool_call_id": f"c{i}", "name": "message",
+            "role": "tool", "tool_call_id": f"c{i}", "name": "custom_tool",
             "content": long_content,
         })
 

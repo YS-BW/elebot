@@ -2,9 +2,7 @@
 
 from elebot.config.loader import get_config_path, load_config
 from elebot.config.paths import (
-    get_bridge_install_dir,
     get_cli_history_path,
-    get_cron_dir,
     get_data_dir,
     get_logs_dir,
     get_media_dir,
@@ -21,10 +19,8 @@ __all__ = [
     "get_data_dir",
     "get_runtime_subdir",
     "get_media_dir",
-    "get_cron_dir",
     "get_logs_dir",
     "get_workspace_path",
     "is_default_workspace",
     "get_cli_history_path",
-    "get_bridge_install_dir",
 ]

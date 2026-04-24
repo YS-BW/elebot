@@ -13,6 +13,8 @@ from elebot.config.schema import Config
 # 运行时允许切换配置文件路径，以便同一进程支持多实例。
 _current_config_path: Path | None = None
 
+_REMOVED_TOP_LEVEL_KEYS = ("channels", "api", "gateway")
+
 
 def set_config_path(path: Path) -> None:
     """设置当前配置文件路径。"""
@@ -28,28 +30,34 @@ def get_config_path() -> Path:
 
 
 def load_config(config_path: Path | None = None) -> Config:
-    """从 JSON 配置文件加载配置；不存在时返回默认配置。"""
+    """从 JSON 配置文件加载配置。
+
+    参数:
+        config_path: 可选的配置文件路径，未提供时使用当前活动路径。
+
+    返回:
+        解析后的配置对象；当文件不存在时返回默认配置。
+
+    异常:
+        ValueError: 配置文件内容非法，或仍包含已移除的顶层配置段。
+    """
     path = config_path or get_config_path()
 
-    config = Config()
-    if path.exists():
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            config = Config.model_validate(data)
-        except (json.JSONDecodeError, ValueError, pydantic.ValidationError) as e:
-            logger.warning(f"Failed to load config from {path}: {e}")
-            logger.warning("Using default configuration.")
+    if not path.exists():
+        return Config()
 
-    _apply_ssrf_whitelist(config)
-    return config
+    try:
+        with open(path, encoding="utf-8") as file:
+            data = json.load(file)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"配置文件不是合法 JSON: {path}") from exc
 
+    _raise_if_removed_keys_present(data, path)
 
-def _apply_ssrf_whitelist(config: Config) -> None:
-    """把配置中的 SSRF 白名单同步到网络安全模块。"""
-    from elebot.security.network import configure_ssrf_whitelist
-
-    configure_ssrf_whitelist(config.tools.ssrf_whitelist)
+    try:
+        return Config.model_validate(data)
+    except pydantic.ValidationError as exc:
+        raise ValueError(f"配置文件校验失败: {path}\n{exc}") from exc
 
 
 def save_config(config: Config, config_path: Path | None = None) -> None:
@@ -90,3 +98,30 @@ def _env_replace(match: re.Match[str]) -> str:
             f"Environment variable '{name}' referenced in config is not set"
         )
     return value
+
+
+def _raise_if_removed_keys_present(data: object, path: Path) -> None:
+    """检查配置中是否仍包含已移除的 Frozen 顶层字段。
+
+    参数:
+        data: 原始 JSON 解析结果。
+        path: 当前配置文件路径。
+
+    返回:
+        无返回值。
+
+    异常:
+        ValueError: 命中已移除字段时抛出，提示用户手动清理旧配置。
+    """
+    if not isinstance(data, dict):
+        return
+
+    removed_keys = [key for key in _REMOVED_TOP_LEVEL_KEYS if key in data]
+    if not removed_keys:
+        return
+
+    removed_list = ", ".join(removed_keys)
+    raise ValueError(
+        f"配置文件包含已移除的顶层字段: {removed_list}。"
+        f"请从 {path} 删除这些字段后重试。"
+    )

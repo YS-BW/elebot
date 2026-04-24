@@ -39,9 +39,7 @@ def _make_loop(tmp_path: Path, unified_session: bool = False) -> AgentLoop:
     provider.get_default_model.return_value = "test-model"
 
     with patch("elebot.agent.loop.SessionManager"), \
-         patch("elebot.agent.loop.SubagentManager") as MockSubMgr, \
          patch("elebot.agent.loop.Dream"):
-        MockSubMgr.return_value.cancel_by_session = AsyncMock(return_value=0)
         loop = AgentLoop(
             bus=bus,
             provider=provider,

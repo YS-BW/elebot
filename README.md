@@ -31,19 +31,8 @@ EleBot 默认使用本地配置与运行目录：
 
 默认模型配置以项目当前配置模板为准，当前阶段聚焦 `qwen3_6_plus` 主链路。
 
-## Docs
-
-详细说明放在 `docs/`，根 README 只保留项目介绍和入口索引。
-
-- [文档总览](docs/README.md)
-- [代码规范](docs/CODE_STYLE.md)
-- [核心模块](docs/elebot/README.md)
-- [测试说明](docs/test/README.md)
-- [Bridge 模块](docs/bridge/README.md)
-
 ## Development Rules
 
 - 不做兼容层、迁移脚本和临时回退方案。
 - `__init__.py` 只保留最小导出，不承载主逻辑。
-- 模块实现变化后，必须同步更新对应 `docs/` 文档。
 - 代码应保持最小解、清晰命名、中文 docstring 和必要中文注释。

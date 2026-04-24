@@ -10,7 +10,6 @@ from elebot.utils.helpers import current_time_str
 
 from elebot.agent.memory import MemoryStore
 from elebot.utils.prompt_templates import render_template
-from elebot.agent.skills import SkillsLoader
 from elebot.utils.helpers import build_assistant_message, detect_image_mime
 
 
@@ -22,20 +21,18 @@ class ContextBuilder:
     _MAX_RECENT_HISTORY = 50
     _RUNTIME_CONTEXT_END = "[/Runtime Context]"
 
-    def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None):
+    def __init__(self, workspace: Path, timezone: str | None = None):
         """绑定上下文构造所需的工作区依赖。
 
-        这里不缓存最终提示词，只缓存读取入口。
-        这样每一轮都能基于最新的记忆、技能和启动文件重新组装上下文。
+        这里不缓存最终提示词，只缓存读取入口，
+        这样每一轮都能基于最新的记忆和启动文件重新组装上下文。
         """
         self.workspace = workspace
         self.timezone = timezone
         self.memory = MemoryStore(workspace)
-        self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None)
 
     def build_system_prompt(
         self,
-        skill_names: list[str] | None = None,
         channel: str | None = None,
     ) -> str:
         """组装系统提示词主干。
@@ -43,8 +40,7 @@ class ContextBuilder:
         核心职责：
         - 写入身份与运行环境信息
         - 注入工作区启动文件
-        - 拼接长期记忆和常驻技能
-        - 追加可按需读取的技能摘要
+        - 拼接长期记忆
         - 在末尾补上近期未被 Dream 吸收的历史
 
         返回：
@@ -59,16 +55,6 @@ class ContextBuilder:
         memory = self.memory.get_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
-
-        always_skills = self.skills.get_always_skills()
-        if always_skills:
-            always_content = self.skills.load_skills_for_context(always_skills)
-            if always_content:
-                parts.append(f"# Active Skills\n\n{always_content}")
-
-        skills_summary = self.skills.build_skills_summary()
-        if skills_summary:
-            parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
 
         entries = self.memory.read_unprocessed_history(since_cursor=self.memory.get_last_dream_cursor())
         if entries:
@@ -136,7 +122,6 @@ class ContextBuilder:
         self,
         history: list[dict[str, Any]],
         current_message: str,
-        skill_names: list[str] | None = None,
         media: list[str] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
@@ -163,7 +148,7 @@ class ContextBuilder:
         else:
             merged = [{"type": "text", "text": runtime_ctx}] + user_content
         messages = [
-            {"role": "system", "content": self.build_system_prompt(skill_names, channel=channel)},
+            {"role": "system", "content": self.build_system_prompt(channel=channel)},
             *history,
         ]
         if messages[-1].get("role") == current_role:

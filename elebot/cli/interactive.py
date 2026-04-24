@@ -98,12 +98,6 @@ async def run_interactive_loop(
                     continue
 
                 if message.metadata.get("_progress"):
-                    is_tool_hint = message.metadata.get("_tool_hint", False)
-                    channel_config = agent_loop.channels_config
-                    if channel_config and is_tool_hint and not channel_config.send_tool_hints:
-                        continue
-                    if channel_config and not is_tool_hint and not channel_config.send_progress:
-                        continue
                     await print_interactive_progress_line(message.content, thinking)
                     continue
 

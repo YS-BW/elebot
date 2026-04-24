@@ -205,13 +205,13 @@ def test_build_messages_passes_channel_to_system_prompt(tmp_path) -> None:
     assert "messaging app" in system
 
 
-def test_subagent_result_does_not_create_consecutive_assistant_messages(tmp_path) -> None:
+def test_assistant_followup_does_not_create_consecutive_assistant_messages(tmp_path) -> None:
     workspace = _make_workspace(tmp_path)
     builder = ContextBuilder(workspace)
 
     messages = builder.build_messages(
         history=[{"role": "assistant", "content": "previous result"}],
-        current_message="subagent result",
+        current_message="assistant follow-up",
         channel="cli",
         chat_id="direct",
         current_role="assistant",

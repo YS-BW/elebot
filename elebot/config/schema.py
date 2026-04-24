@@ -7,8 +7,6 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
 
-from elebot.cron.types import CronSchedule
-
 
 class Base(BaseModel):
     """同时接受 camelCase 和 snake_case 键名的基础模型。"""
@@ -16,43 +14,15 @@ class Base(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
-class ChannelsConfig(Base):
-    """聊天渠道配置。"""
-
-    model_config = ConfigDict(extra="allow")
-
-    send_progress: bool = True
-    send_tool_hints: bool = False
-    send_max_retries: int = Field(default=3, ge=0, le=10)
-    transcription_provider: str = "groq"
-
-
 class DreamConfig(Base):
     """Dream 记忆整理配置。"""
 
-    _HOUR_MS = 3_600_000
-
-    interval_h: int = Field(default=2, ge=1)
-    cron: str | None = Field(default=None, exclude=True)
     model_override: str | None = Field(
         default=None,
         validation_alias=AliasChoices("modelOverride", "model", "model_override"),
     )
     max_batch_size: int = Field(default=20, ge=1)
     max_iterations: int = Field(default=10, ge=1)
-
-    def build_schedule(self, timezone: str) -> CronSchedule:
-        """构建运行时调度配置。"""
-        if self.cron:
-            return CronSchedule(kind="cron", expr=self.cron, tz=timezone)
-        return CronSchedule(kind="every", every_ms=self.interval_h * self._HOUR_MS)
-
-    def describe_schedule(self) -> str:
-        """返回便于日志与启动输出展示的调度摘要。"""
-        if self.cron:
-            return f"cron {self.cron} (legacy)"
-        hours = self.interval_h
-        return f"every {hours}h"
 
 
 class AgentDefaults(Base):
@@ -71,7 +41,6 @@ class AgentDefaults(Base):
     reasoning_effort: str | None = None
     timezone: str = "UTC"
     unified_session: bool = False
-    disabled_skills: list[str] = Field(default_factory=list)
     session_ttl_minutes: int = Field(
         default=0,
         ge=0,
@@ -127,30 +96,6 @@ class ProvidersConfig(Base):
     qianfan: ProviderConfig = Field(default_factory=ProviderConfig)
 
 
-class HeartbeatConfig(Base):
-    """Heartbeat 服务配置。"""
-
-    enabled: bool = True
-    interval_s: int = 30 * 60  # 默认每 30 分钟触发一次
-    keep_recent_messages: int = 8
-
-
-class ApiConfig(Base):
-    """OpenAI 兼容 API 服务配置。"""
-
-    host: str = "127.0.0.1"  # 默认只绑定本地，避免无意暴露到公网。
-    port: int = 8900
-    timeout: float = 120.0  # 单次请求超时时间，单位秒。
-
-
-class GatewayConfig(Base):
-    """Gateway 服务配置。"""
-
-    host: str = "0.0.0.0"
-    port: int = 18790
-    heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
-
-
 class WebSearchConfig(Base):
     """Web 搜索工具配置。"""
 
@@ -199,17 +144,13 @@ class ToolsConfig(Base):
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     restrict_to_workspace: bool = False  # 为 True 时把工具访问范围限制到工作区。
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
-    ssrf_whitelist: list[str] = Field(default_factory=list)  # 允许跳过 SSRF 限制的 CIDR 白名单。
 
 
 class Config(BaseSettings):
     """elebot 根配置。"""
 
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
-    channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
-    api: ApiConfig = Field(default_factory=ApiConfig)
-    gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
 
     @property

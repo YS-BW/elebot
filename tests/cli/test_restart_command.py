@@ -25,8 +25,7 @@ def _make_loop():
     workspace.__truediv__ = MagicMock(return_value=MagicMock())
 
     with patch("elebot.agent.loop.ContextBuilder"), \
-         patch("elebot.agent.loop.SessionManager"), \
-         patch("elebot.agent.loop.SubagentManager"):
+         patch("elebot.agent.loop.SessionManager"):
         loop = AgentLoop(bus=bus, provider=provider, workspace=workspace)
     return loop, bus
 
@@ -194,7 +193,6 @@ class TestRestartCommand:
         session = MagicMock()
         session.get_history.return_value = []
         loop.sessions.get_or_create.return_value = session
-        loop.subagents.get_running_count.return_value = 0
 
         response = await loop.process_direct("/status", session_key="cli:test")
 
