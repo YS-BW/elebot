@@ -178,12 +178,23 @@ description: 根据仓库改动生成发布说明。
 
 ## 9. 当前边界
 
-第一版 skill 机制当前不支持：
+当前已经支持：
 
-- 独立 `/skills` 命令
+- `/skill` 命令查看当前 skill 列表
+- `/skill uninstall <name>` 卸载一个 skill
+- 按轮重扫全局 skill 目录，新增、删除、修改后下一轮自动生效
+- 记录最小 skill 使用日志到 `~/.elebot/logs/skill_usage.jsonl`
+
+Skill 使用日志按 JSONL 追加写入，便于后续排查：
+
+```json
+{"skill":"release-note","name":"Release Note","description":"生成发布说明","channel":"cli","chat_id":"direct","trigger":"explicit"}
+```
+
+仍然不支持：
+
 - skill marketplace
 - 自动强制触发器
-- skill 启停配置
 - 子代理联动
 
 当前的目标很单纯：

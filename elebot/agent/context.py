@@ -49,6 +49,7 @@ class ContextBuilder:
             可直接作为 `system` 消息发送的完整提示词文本。
         """
         parts = [self._get_identity(channel=channel)]
+        self.skills = SkillRegistry(root=self.skills.root)
 
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
@@ -145,6 +146,7 @@ class ContextBuilder:
             按当前 Provider 约定整理好的消息列表。
         """
         runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone, session_summary=session_summary)
+        self._record_explicit_skill_mentions(current_message, channel=channel, chat_id=chat_id)
         user_content = self._build_user_content(current_message, media)
 
         # 这里把运行时上下文和用户正文合并成一条消息，
@@ -221,3 +223,30 @@ class ContextBuilder:
             thinking_blocks=thinking_blocks,
         ))
         return messages
+
+    def _record_explicit_skill_mentions(
+        self,
+        current_message: str,
+        *,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> None:
+        """记录用户显式提到的 skill。
+
+        参数:
+            current_message: 当前用户消息。
+            channel: 当前通道。
+            chat_id: 当前会话标识。
+
+        返回:
+            无返回值。
+        """
+        lowered = current_message.lower()
+        for skill in self.skills.scan():
+            if skill.key.lower() in lowered or skill.metadata.name.lower() in lowered:
+                self.skills.record_usage(
+                    skill,
+                    channel=channel,
+                    chat_id=chat_id,
+                    trigger="explicit",
+                )

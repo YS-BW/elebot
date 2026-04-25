@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import json
 from datetime import datetime as real_datetime
 from importlib.resources import files as pkg_files
 from pathlib import Path
@@ -163,33 +164,99 @@ def test_execution_rules_in_system_prompt(tmp_path) -> None:
 def test_system_prompt_injects_skill_metadata_only(tmp_path, monkeypatch) -> None:
     """Skill 摘要只注入 metadata，不注入正文。"""
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
-
     fake_skill = SkillSpec(
         key="release-note",
         root=tmp_path / "skills" / "release-note",
         skill_file=tmp_path / "skills" / "release-note" / "SKILL.md",
         metadata=SkillMetadata(name="Release Note", description="生成发布说明"),
     )
-    monkeypatch.setattr(builder.skills, "scan", lambda: [fake_skill])
+    
+    class _FakeRegistry:
+        root = tmp_path / "skills"
+
+        def scan(self):
+            return [fake_skill]
+
+        def build_prompt_summary(self):
+            return (
+                "# 可用 Skills\n\n"
+                "以下是当前可用的全局 skills。\n\n"
+                f"- `release-note`: Release Note；生成发布说明；读取路径：`{fake_skill.skill_file}`"
+            )
+
+    monkeypatch.setattr("elebot.agent.context.SkillRegistry", lambda root=None: _FakeRegistry())
+    builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
     assert "# 可用 Skills" in prompt
     assert "Release Note" in prompt
     assert "生成发布说明" in prompt
-    assert "读取对应 `SKILL.md`" in prompt
+    assert "读取路径" in prompt
     assert "secret body" not in prompt
 
 
 def test_system_prompt_omits_skills_section_when_empty(tmp_path, monkeypatch) -> None:
     """没有全局 Skill 时不输出 Skills 段落。"""
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    class _FakeRegistry:
+        root = tmp_path / "skills"
 
-    monkeypatch.setattr(builder.skills, "scan", lambda: [])
+        def scan(self):
+            return []
+
+        def build_prompt_summary(self):
+            return ""
+
+    monkeypatch.setattr("elebot.agent.context.SkillRegistry", lambda root=None: _FakeRegistry())
+    builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
     assert "# 可用 Skills" not in prompt
+
+
+def test_explicit_skill_mention_is_logged(tmp_path, monkeypatch) -> None:
+    """用户显式提到 skill 时应写入使用日志。"""
+    workspace = _make_workspace(tmp_path)
+    log_path = tmp_path / "logs" / "skill_usage.jsonl"
+    fake_skill = SkillSpec(
+        key="release-note",
+        root=tmp_path / "skills" / "release-note",
+        skill_file=tmp_path / "skills" / "release-note" / "SKILL.md",
+        metadata=SkillMetadata(name="Release Note", description="生成发布说明"),
+    )
+
+    class _FakeRegistry:
+        root = tmp_path / "skills"
+
+        def scan(self):
+            return [fake_skill]
+
+        def build_prompt_summary(self):
+            return ""
+
+        def record_usage(self, *args, **kwargs):
+            from elebot.agent.skills import SkillRegistry
+
+            SkillRegistry.record_usage(self, *args, **kwargs)
+
+    monkeypatch.setattr("elebot.agent.context.SkillRegistry", lambda root=None: _FakeRegistry())
+    monkeypatch.setattr(
+        "elebot.agent.skills.get_skill_usage_log_path",
+        lambda: log_path,
+    )
+    builder = ContextBuilder(workspace)
+
+    builder.build_messages(
+        history=[],
+        current_message="请使用 release-note skill 帮我整理内容",
+        channel="cli",
+        chat_id="direct",
+    )
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    payload = json.loads(lines[0])
+    assert payload["skill"] == "release-note"
+    assert payload["trigger"] == "explicit"
 
 
 def test_channel_format_hint_telegram(tmp_path) -> None:

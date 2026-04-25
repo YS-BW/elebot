@@ -6,6 +6,7 @@ import asyncio
 import os
 import sys
 
+from elebot.agent.skills import SkillRegistry
 from elebot import __version__
 from elebot.bus.events import OutboundMessage
 from elebot.command.router import CommandContext, CommandRouter
@@ -20,6 +21,8 @@ SLASH_COMMAND_SPECS: list[tuple[str, str]] = [
     ("/dream", "手动触发 Dream 整理"),
     ("/dream-log", "查看最近一次 Dream 变更"),
     ("/dream-restore", "恢复到之前的 Dream 版本"),
+    ("/skill", "查看当前可用 skills"),
+    ("/skill uninstall <name>", "卸载一个 skill"),
     ("/help", "查看可用命令"),
 ]
 
@@ -316,6 +319,55 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     )
 
 
+async def cmd_skill_manage(ctx: CommandContext) -> OutboundMessage:
+    """处理 skill 查看与卸载命令。"""
+    registry = SkillRegistry()
+    args = ctx.args.strip()
+
+    if not args:
+        items = registry.list_status()
+        if not items:
+            content = (
+                "当前没有发现可用 skills。\n\n"
+                "默认目录：`~/.elebot/skills`\n"
+                "每个 skill 目录至少需要包含 `SKILL.md`。"
+            )
+        else:
+            lines = [
+                "## Skills",
+                "",
+                "当前全局 skill 目录：`~/.elebot/skills`",
+                "",
+            ]
+            for item in items:
+                description = item["description"] or "暂无描述。"
+                lines.append(f"- `{item['key']}` {item['name']}：{description}")
+            lines.extend([
+                "",
+                "卸载用法：`/skill uninstall <name>`",
+            ])
+            content = "\n".join(lines)
+    else:
+        parts = args.split(None, 1)
+        if len(parts) != 2:
+            content = "用法：`/skill uninstall <name>`"
+        else:
+            action, skill_key = parts[0].lower(), parts[1].strip()
+            if not skill_key:
+                content = "请提供 skill 名称。"
+            elif action == "uninstall":
+                _, content = registry.uninstall(skill_key)
+            else:
+                content = f"不支持的 skill 操作：`{action}`。"
+
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
 def build_help_text() -> str:
     """构造各渠道共用的帮助文本。"""
     lines = ["🍌 elebot 命令："]
@@ -335,4 +387,6 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.prefix("/dream-log ", cmd_dream_log)
     router.exact("/dream-restore", cmd_dream_restore)
     router.prefix("/dream-restore ", cmd_dream_restore)
+    router.exact("/skill", cmd_skill_manage)
+    router.prefix("/skill ", cmd_skill_manage)
     router.exact("/help", cmd_help)

@@ -35,6 +35,11 @@ def get_logs_dir() -> Path:
     return get_runtime_subdir("logs")
 
 
+def get_skill_usage_log_path() -> Path:
+    """返回 skill 使用日志文件路径。"""
+    return get_logs_dir() / "skill_usage.jsonl"
+
+
 def get_workspace_path(workspace: str | None = None) -> Path:
     """解析并确保工作区目录存在。"""
     workspace_path = Path(workspace).expanduser() if workspace else DEFAULT_WORKSPACE_DIR
