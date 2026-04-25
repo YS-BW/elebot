@@ -14,6 +14,7 @@
 8. [MEMORY](./MEMORY.md)
 9. [AGENT](./AGENT.md)
 10. [WORKSPACE](./WORKSPACE.md)
+11. [SKILLS](./SKILLS.md)
 
 如果你只想先抓住主链路，可以先看这一条：
 

@@ -27,6 +27,7 @@ from elebot.agent.tools.web import WebFetchTool, WebSearchTool
 from elebot.bus.events import InboundMessage, OutboundMessage
 from elebot.command import CommandContext, CommandRouter, register_builtin_commands
 from elebot.bus.queue import MessageBus
+from elebot.config.paths import GLOBAL_SKILLS_DIR
 from elebot.config.schema import AgentDefaults
 from elebot.providers.base import LLMProvider
 from elebot.session.manager import Session, SessionManager
@@ -254,14 +255,31 @@ class AgentLoop:
         allowed_dir = (
             self.workspace if (self.restrict_to_workspace or self.exec_config.sandbox) else None
         )
+        extra_allowed_dirs = [GLOBAL_SKILLS_DIR]
         self.tools.register(
-            ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir)
+            ReadFileTool(
+                workspace=self.workspace,
+                allowed_dir=allowed_dir,
+                extra_allowed_dirs=extra_allowed_dirs,
+            )
         )
         for cls in (WriteFileTool, EditFileTool, ListDirTool):
             self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
         for cls in (GlobTool, GrepTool):
-            self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
-        self.tools.register(NotebookEditTool(workspace=self.workspace, allowed_dir=allowed_dir))
+            self.tools.register(
+                cls(
+                    workspace=self.workspace,
+                    allowed_dir=allowed_dir,
+                    extra_allowed_dirs=extra_allowed_dirs,
+                )
+            )
+        self.tools.register(
+            NotebookEditTool(
+                workspace=self.workspace,
+                allowed_dir=allowed_dir,
+                extra_allowed_dirs=extra_allowed_dirs,
+            )
+        )
         if self.exec_config.enable:
             self.tools.register(
                 ExecTool(
@@ -271,6 +289,7 @@ class AgentLoop:
                     sandbox=self.exec_config.sandbox,
                     path_append=self.exec_config.path_append,
                     allowed_env_keys=self.exec_config.allowed_env_keys,
+                    extra_allowed_dirs=extra_allowed_dirs,
                 )
             )
         if self.web_config.enable:

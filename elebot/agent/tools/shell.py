@@ -13,7 +13,7 @@ from loguru import logger
 from elebot.agent.tools.base import Tool, tool_parameters
 from elebot.agent.tools.sandbox import wrap_command
 from elebot.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
-from elebot.config.paths import get_media_dir
+from elebot.config.paths import GLOBAL_SKILLS_DIR, get_media_dir
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -47,6 +47,7 @@ class ExecTool(Tool):
         sandbox: str = "",
         path_append: str = "",
         allowed_env_keys: list[str] | None = None,
+        extra_allowed_dirs: list[Path] | None = None,
     ):
         """初始化 shell 执行工具。
 
@@ -59,6 +60,7 @@ class ExecTool(Tool):
             sandbox: 沙箱后端名称。
             path_append: 需要追加到 PATH 的目录。
             allowed_env_keys: 允许继承的环境变量键名。
+            extra_allowed_dirs: 允许通过绝对路径访问的额外目录列表。
 
         返回:
             无返回值。
@@ -87,6 +89,7 @@ class ExecTool(Tool):
         self.restrict_to_workspace = restrict_to_workspace
         self.path_append = path_append
         self.allowed_env_keys = allowed_env_keys or []
+        self.extra_allowed_dirs = [path.expanduser().resolve() for path in (extra_allowed_dirs or [])]
 
     @property
     def name(self) -> str:
@@ -325,11 +328,11 @@ class ExecTool(Tool):
                     continue
 
                 media_path = get_media_dir().resolve()
+                allowed_paths = [media_path, GLOBAL_SKILLS_DIR.resolve(), *self.extra_allowed_dirs]
                 if (p.is_absolute() 
                     and cwd_path not in p.parents 
                     and p != cwd_path
-                    and media_path not in p.parents
-                    and p != media_path
+                    and not any(p == allowed or allowed in p.parents for allowed in allowed_paths)
                 ):
                     return "Error: Command blocked by safety guard (path outside working dir)"
 

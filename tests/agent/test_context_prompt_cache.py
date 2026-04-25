@@ -9,6 +9,7 @@ from pathlib import Path
 import datetime as datetime_module
 
 from elebot.agent.context import ContextBuilder
+from elebot.agent.skills import SkillMetadata, SkillSpec
 
 
 class _FakeDatetime(real_datetime):
@@ -157,6 +158,38 @@ def test_execution_rules_in_system_prompt(tmp_path) -> None:
     assert "能做就直接做" in prompt
     assert "先读后写" in prompt
     assert "一定要验证结果" in prompt
+
+
+def test_system_prompt_injects_skill_metadata_only(tmp_path, monkeypatch) -> None:
+    """Skill 摘要只注入 metadata，不注入正文。"""
+    workspace = _make_workspace(tmp_path)
+    builder = ContextBuilder(workspace)
+
+    fake_skill = SkillSpec(
+        key="release-note",
+        root=tmp_path / "skills" / "release-note",
+        skill_file=tmp_path / "skills" / "release-note" / "SKILL.md",
+        metadata=SkillMetadata(name="Release Note", description="生成发布说明"),
+    )
+    monkeypatch.setattr(builder.skills, "scan", lambda: [fake_skill])
+
+    prompt = builder.build_system_prompt()
+    assert "# 可用 Skills" in prompt
+    assert "Release Note" in prompt
+    assert "生成发布说明" in prompt
+    assert "读取对应 `SKILL.md`" in prompt
+    assert "secret body" not in prompt
+
+
+def test_system_prompt_omits_skills_section_when_empty(tmp_path, monkeypatch) -> None:
+    """没有全局 Skill 时不输出 Skills 段落。"""
+    workspace = _make_workspace(tmp_path)
+    builder = ContextBuilder(workspace)
+
+    monkeypatch.setattr(builder.skills, "scan", lambda: [])
+
+    prompt = builder.build_system_prompt()
+    assert "# 可用 Skills" not in prompt
 
 
 def test_channel_format_hint_telegram(tmp_path) -> None:

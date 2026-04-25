@@ -9,6 +9,7 @@ from typing import Any
 from elebot.utils.helpers import current_time_str
 
 from elebot.agent.memory import MemoryStore
+from elebot.agent.skills import SkillRegistry
 from elebot.utils.prompt_templates import render_template
 from elebot.utils.helpers import build_assistant_message, detect_image_mime
 
@@ -30,6 +31,7 @@ class ContextBuilder:
         self.workspace = workspace
         self.timezone = timezone
         self.memory = MemoryStore(workspace)
+        self.skills = SkillRegistry()
 
     def build_system_prompt(
         self,
@@ -55,6 +57,10 @@ class ContextBuilder:
         memory = self.memory.get_memory_context()
         if memory:
             parts.append(f"# 记忆\n\n{memory}")
+
+        skills_summary = self.skills.build_prompt_summary()
+        if skills_summary:
+            parts.append(skills_summary)
 
         entries = self.memory.read_unprocessed_history(since_cursor=self.memory.get_last_dream_cursor())
         if entries:

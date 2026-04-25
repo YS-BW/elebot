@@ -11,6 +11,7 @@ from elebot.utils.helpers import ensure_dir
 ELEBOT_HOME_DIR = Path.home() / ".elebot"
 DEFAULT_WORKSPACE_DIR = ELEBOT_HOME_DIR / "workspace"
 DEFAULT_HISTORY_PATH = ELEBOT_HOME_DIR / "history" / "cli_history"
+GLOBAL_SKILLS_DIR = ELEBOT_HOME_DIR / "skills"
 
 
 def get_data_dir() -> Path:

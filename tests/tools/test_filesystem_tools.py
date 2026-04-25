@@ -408,3 +408,22 @@ class TestWorkspaceRestriction:
         assert "Error" in result
         assert "outside" in result.lower()
         assert skill_file.read_text() == "# Weather\nOriginal content."
+
+    @pytest.mark.asyncio
+    async def test_read_allowed_in_global_skill_dir_when_configured(self, tmp_path):
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        global_skills = tmp_path / ".elebot" / "skills"
+        global_skills.mkdir(parents=True)
+        skill_file = global_skills / "release-note" / "SKILL.md"
+        skill_file.parent.mkdir()
+        skill_file.write_text("---\nname: Release Note\n---\n", encoding="utf-8")
+
+        tool = ReadFileTool(
+            workspace=workspace,
+            allowed_dir=workspace,
+            extra_allowed_dirs=[global_skills],
+        )
+        result = await tool.execute(path=str(skill_file))
+        assert "Release Note" in result
+        assert "Error" not in result

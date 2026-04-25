@@ -264,6 +264,18 @@ def test_exec_guard_allows_media_path_outside_workspace(tmp_path, monkeypatch) -
     assert error is None
 
 
+def test_exec_guard_allows_global_skill_path_outside_workspace(tmp_path) -> None:
+    global_skills = tmp_path / ".elebot" / "skills"
+    global_skills.mkdir(parents=True)
+    script_file = global_skills / "release-note" / "scripts" / "validate.sh"
+    script_file.parent.mkdir(parents=True)
+    script_file.write_text("echo ok", encoding="utf-8")
+
+    tool = ExecTool(restrict_to_workspace=True, extra_allowed_dirs=[global_skills])
+    error = tool._guard_command(f'bash "{script_file}"', str(tmp_path / "workspace"))
+    assert error is None
+
+
 def test_exec_guard_blocks_windows_drive_root_outside_workspace(monkeypatch) -> None:
     import elebot.agent.tools.shell as shell_mod
 
