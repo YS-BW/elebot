@@ -315,5 +315,5 @@ archive(...) 写入 history.jsonl
 
 推荐继续看：
 
-- [上下文构建](./context-construction.md)
-- [Agent 主循环](./agent-loop.md)
+- [CONTEXT](./CONTEXT.md)
+- [AGENT](./AGENT.md)

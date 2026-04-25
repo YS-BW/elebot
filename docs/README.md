@@ -4,15 +4,16 @@
 
 建议按下面顺序阅读：
 
-1. [整体架构总览](./architecture-overview.md)
-2. [CLI 与运行方式](./cli-runtime.md)
-3. [Bus 与消息流转](./bus-and-events.md)
-4. [Session 设计](./session-design.md)
-5. [工具系统设计](./tools-design.md)
-6. [上下文构建](./context-construction.md)
-7. [记忆系统设计](./memory-design.md)
-8. [Agent 主循环](./agent-loop.md)
-9. [Workspace 运行目录](./workspace-design.md)
+1. [ARCHITECTURE](./ARCHITECTURE.md)
+2. [CLI](./CLI.md)
+3. [BUS](./BUS.md)
+4. [SESSION](./SESSION.md)
+5. [TOOLS](./TOOLS.md)
+6. [PROVIDERS](./PROVIDERS.md)
+7. [CONTEXT](./CONTEXT.md)
+8. [MEMORY](./MEMORY.md)
+9. [AGENT](./AGENT.md)
+10. [WORKSPACE](./WORKSPACE.md)
 
 如果你只想先抓住主链路，可以先看这一条：
 

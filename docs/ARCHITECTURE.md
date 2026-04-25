@@ -198,6 +198,6 @@ EleBot = 一个终端前端
 
 下一步建议阅读：
 
-- [CLI 与运行方式](./cli-runtime.md)
-- [Bus 与消息流转](./bus-and-events.md)
-- [Session 设计](./session-design.md)
+- [CLI](./CLI.md)
+- [BUS](./BUS.md)
+- [SESSION](./SESSION.md)

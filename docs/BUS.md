@@ -276,5 +276,5 @@ if message.metadata.get("_progress"):
 
 建议继续看：
 
-- [Session 设计](./session-design.md)
-- [Agent 主循环](./agent-loop.md)
+- [SESSION](./SESSION.md)
+- [AGENT](./AGENT.md)

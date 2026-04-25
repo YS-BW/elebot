@@ -285,5 +285,5 @@ current user             ← 本轮输入 + 运行时上下文 + 可选媒体
 
 推荐继续看：
 
-- [记忆系统设计](./memory-design.md)
-- [Session 设计](./session-design.md)
+- [MEMORY](./MEMORY.md)
+- [SESSION](./SESSION.md)

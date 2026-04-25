@@ -271,5 +271,5 @@ await agent_loop.close_mcp()
 
 推荐继续看：
 
-- [上下文构建](./context-construction.md)
-- [记忆系统设计](./memory-design.md)
+- [CONTEXT](./CONTEXT.md)
+- [MEMORY](./MEMORY.md)

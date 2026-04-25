@@ -294,6 +294,6 @@ elebot agent --session cli:alt-test
 
 推荐继续看：
 
-- [上下文构建](./context-construction.md)
-- [记忆系统设计](./memory-design.md)
-- [Agent 主循环](./agent-loop.md)
+- [CONTEXT](./CONTEXT.md)
+- [MEMORY](./MEMORY.md)
+- [AGENT](./AGENT.md)

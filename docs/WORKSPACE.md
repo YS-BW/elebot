@@ -187,5 +187,5 @@ self.memory = MemoryStore(workspace)
 
 推荐继续看：
 
-- [Session 设计](./session-design.md)
-- [记忆系统设计](./memory-design.md)
+- [SESSION](./SESSION.md)
+- [MEMORY](./MEMORY.md)

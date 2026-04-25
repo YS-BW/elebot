@@ -244,6 +244,6 @@ elebot agent --workspace ~/my-elebot-workspace
 
 推荐继续看：
 
-- [Bus 与消息流转](./bus-and-events.md)
-- [Session 设计](./session-design.md)
-- [Workspace 运行目录](./workspace-design.md)
+- [BUS](./BUS.md)
+- [SESSION](./SESSION.md)
+- [WORKSPACE](./WORKSPACE.md)
