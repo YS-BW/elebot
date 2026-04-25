@@ -96,6 +96,15 @@
 
 **注意**：链接格式必须用相对路径 + `#L起始行-结束行` 的方式，VSCode 才能正确点击跳转并选中对应代码块。不要使用 `file://` 前缀或 `@` 语法。
 
+**VSCode Markdown Preview 兼容性**：`docs/` 目录下的 `.md` 文件中，指向源码的相对路径必须加 `../` 前缀：
+
+| 文档位置 | 源码路径 | 正确写法 |
+|----------|----------|----------|
+| `docs/xxx.md` | `elebot/agent/context.py` | `[context.py](../elebot/agent/context.py#L1-L50)` |
+| `docs/elebot/xxx.md` | `elebot/agent/context.py` | `[context.py](../agent/context.py#L1-L50)` |
+
+核心原则：相对路径是相对于 `.md` 文件本身所在目录计算的，而不是项目根目录。
+
 ### 4.2 必须带代码片段
 
 不能只讲概念。
