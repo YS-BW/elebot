@@ -6,7 +6,6 @@ import re
 from pathlib import Path
 
 import pydantic
-from loguru import logger
 
 from elebot.config.schema import Config
 

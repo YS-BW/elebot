@@ -4,7 +4,6 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 # Windows 控制台默认编码不稳定，这里提前强制为 UTF-8，避免中文输出乱码。
 if sys.platform == "win32":
@@ -18,7 +17,6 @@ if sys.platform == "win32":
             pass
 
 import typer
-from loguru import logger
 
 from elebot import __logo__, __version__
 from elebot.cli.interactive import run_interactive_loop
