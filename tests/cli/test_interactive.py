@@ -126,3 +126,37 @@ async def test_run_interactive_loop_routes_streamed_turn_and_exits(monkeypatch):
     agent_loop.close_mcp.assert_awaited_once()
     restore_terminal.assert_called_once()
     print_agent_response.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_interactive_loop_can_skip_agent_lifecycle_management(monkeypatch):
+    """当生命周期已交给 runtime 托管时，交互层不应重复 stop/close 主循环。"""
+    bus = _FakeBus()
+    agent_loop = _FakeAgentLoop()
+    restore_terminal = MagicMock()
+
+    monkeypatch.setattr("elebot.cli.interactive.init_prompt_session", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive._install_signal_handlers", lambda: None)
+    monkeypatch.setattr(
+        "elebot.cli.interactive.read_interactive_input_async",
+        AsyncMock(side_effect=["hello", "exit"]),
+    )
+    monkeypatch.setattr("elebot.cli.interactive.flush_pending_tty_input", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive.restore_terminal", restore_terminal)
+    monkeypatch.setattr("elebot.cli.interactive.print_agent_response", MagicMock())
+    monkeypatch.setattr("elebot.cli.interactive.print_interactive_response", AsyncMock())
+    monkeypatch.setattr("elebot.cli.interactive.print_interactive_progress_line", AsyncMock())
+    monkeypatch.setattr("elebot.cli.interactive.console.print", lambda *_args, **_kwargs: None)
+
+    await interactive.run_interactive_loop(
+        agent_loop=agent_loop,
+        bus=bus,
+        session_id="cli:test",
+        markdown=True,
+        renderer_factory=_FakeRenderer,
+        manage_agent_loop=False,
+    )
+
+    assert agent_loop.stop_called is False
+    agent_loop.close_mcp.assert_not_awaited()
+    restore_terminal.assert_called_once()

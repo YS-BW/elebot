@@ -1,12 +1,20 @@
 """elebot 顶层公共导出。"""
 
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
-from pathlib import Path
 import tomllib
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+from pathlib import Path
 
 
 def _read_pyproject_version() -> str | None:
-    """当包元数据不可用时，从源码仓库读取版本号。"""
+    """当包元数据不可用时，从源码仓库读取版本号。
+
+    参数:
+        无。
+
+    返回:
+        `pyproject.toml` 中声明的版本号；文件不存在时返回 `None`。
+    """
     pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
     if not pyproject.exists():
         return None
@@ -15,7 +23,14 @@ def _read_pyproject_version() -> str | None:
 
 
 def _resolve_version() -> str:
-    """优先读取已安装包版本，源码运行时回退到仓库版本。"""
+    """解析当前运行环境可用的版本号。
+
+    参数:
+        无。
+
+    返回:
+        优先返回已安装包版本；源码运行时回退到仓库里的版本号。
+    """
     try:
         return _pkg_version("elebot")
     except PackageNotFoundError:
@@ -26,6 +41,4 @@ def _resolve_version() -> str:
 __version__ = _resolve_version()
 __logo__ = "🍌"
 
-from elebot.facade import Elebot, RunResult
-
-__all__ = ["Elebot", "RunResult"]
+__all__ = ["__version__", "__logo__"]

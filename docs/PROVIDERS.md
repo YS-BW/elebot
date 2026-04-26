@@ -4,9 +4,9 @@
 
 相关源码：
 
-- [elebot/facade.py](../elebot/facade.py#L124-L187)
-- [elebot/providers/base.py](../elebot/providers/base.py#L18-L260)
-- [elebot/providers/registry.py](../elebot/providers/registry.py#L11-L260)
+- [elebot/providers/factory.py](../elebot/providers/factory.py#L10-L82)
+- [elebot/providers/base.py](../elebot/providers/base.py#L18-L171)
+- [elebot/providers/registry.py](../elebot/providers/registry.py#L11-L365)
 - [elebot/providers/openai_compat_provider.py](../elebot/providers/openai_compat_provider.py#L130-L351)
 
 ## 1. 先记住 provider 在主链路里的位置
@@ -129,7 +129,7 @@ class ProviderSpec:
 - 默认 base_url
 - 是不是 gateway / local / oauth / direct
 
-下面的 `PROVIDERS` 列表就是全局注册表，在 [elebot/providers/registry.py](../elebot/providers/registry.py#L66-L260)。
+下面的 `PROVIDERS` 列表就是全局注册表，在 [elebot/providers/registry.py](../elebot/providers/registry.py#L68-L365)。
 
 当前这里登记了很多 provider，例如：
 
@@ -148,21 +148,36 @@ class ProviderSpec:
 
 ## 5. 真正创建 provider 的入口
 
-创建 provider 的入口在 [elebot/facade.py](../elebot/facade.py#L124-L187) 的 `_make_provider()`。
+创建 provider 的入口现在已经收口到 [elebot/providers/factory.py](../elebot/providers/factory.py#L10-L82) 的 `build_provider(config)`。
+
+这层职责是固定的：
+
+- 读取当前默认模型和默认 provider 配置
+- 通过 `registry` 解析 `ProviderSpec`
+- 在装配前做必要校验
+- 按 backend 实例化具体 provider
+- 注入默认 `GenerationSettings`
+
+当前 `runtime` 会直接调用这条入口来装配 provider。  
+CLI 里的 `_make_provider()` 只保留错误展示包装，不再承载真正的 provider 路由逻辑。
 
 核心逻辑：
 
 ```python
+model = config.agents.defaults.model
+forced_provider = config.agents.defaults.provider
 provider_name = config.get_provider_name(model)
-p = config.get_provider(model)
+provider_config = config.get_provider(model)
 spec = find_by_name(provider_name) if provider_name else None
 backend = spec.backend if spec else "openai_compat"
 ```
 
 先决定：
 
+- 显式 provider 配置是否合法
 - 本轮应该用哪个 provider name
 - 这个 provider 对应哪个 backend
+- 这个 backend 需不需要额外凭证校验
 
 然后按 backend 实例化具体类：
 
@@ -326,7 +341,7 @@ EleBot 内部响应
 - 公共重试策略
 - 通用错误分类
 
-在 [elebot/providers/base.py](../elebot/providers/base.py#L88-L170) 能看到很多公共重试常量，例如：
+在 [elebot/providers/base.py](../elebot/providers/base.py#L89-L171) 能看到很多公共重试常量，例如：
 
 - `_CHAT_RETRY_DELAYS`
 - `_RETRYABLE_STATUS_CODES`
@@ -384,13 +399,13 @@ provider 层要负责把这两类结果都翻译成 EleBot 内部能理解的结
 
 如果你读完这篇还要继续，我建议按这个顺序看：
 
-1. [elebot/facade.py](../elebot/facade.py#L124-L187)
-   先看 provider 是怎么选出来的
+1. [elebot/providers/factory.py](../elebot/providers/factory.py#L10-L82)
+   先看 provider 是怎么从配置路由到具体 backend 的
 
-2. [elebot/providers/registry.py](../elebot/providers/registry.py#L11-L260)
+2. [elebot/providers/registry.py](../elebot/providers/registry.py#L11-L365)
    看 provider spec 和 backend 映射
 
-3. [elebot/providers/base.py](../elebot/providers/base.py#L18-L170)
+3. [elebot/providers/base.py](../elebot/providers/base.py#L18-L171)
    看统一数据结构和基类职责
 
 4. [elebot/providers/openai_compat_provider.py](../elebot/providers/openai_compat_provider.py#L130-L351)

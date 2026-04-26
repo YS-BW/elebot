@@ -19,11 +19,12 @@ if sys.platform == "win32":
 import typer
 
 from elebot import __logo__, __version__
-from elebot.cli.interactive import run_interactive_loop
 from elebot.cli.render import console, print_agent_response, print_cli_progress_line
 from elebot.cli.stream import StreamRenderer
 from elebot.config.paths import get_workspace_path
 from elebot.config.schema import Config
+from elebot.providers.factory import build_provider
+from elebot.runtime import ElebotRuntime
 from elebot.utils.helpers import sync_workspace_templates
 from elebot.utils.restart import (
     consume_restart_notice_from_env,
@@ -180,77 +181,17 @@ def _make_provider(config: Config):
     返回:
         配置好默认生成参数的提供方实例。
     """
-    from elebot.providers.base import GenerationSettings
-    from elebot.providers.registry import find_by_name
-
-    model = config.agents.defaults.model
     try:
-        provider_name = config.get_provider_name(model)
-        p = config.get_provider(model)
+        return build_provider(config)
     except ValueError as exc:
         console.print(f"[red]Error: {exc}[/red]")
-        raise typer.Exit(1) from exc
-    spec = find_by_name(provider_name) if provider_name else None
-    backend = spec.backend if spec else "openai_compat"
-
-    # 这里先做最小必需校验，避免把缺少关键配置的错误拖到真正发请求时才暴露。
-    if backend == "azure_openai":
-        if not p or not p.api_key or not p.api_base:
-            console.print("[red]Error: Azure OpenAI requires api_key and api_base.[/red]")
+        text = str(exc)
+        if "No API key configured" in text:
+            console.print("Set one in ~/.elebot/config.json under providers section")
+        if "Azure OpenAI requires" in text:
             console.print("Set them in ~/.elebot/config.json under providers.azure_openai section")
             console.print("Use the model field to specify the deployment name.")
-            raise typer.Exit(1)
-    elif backend == "openai_compat" and not model.startswith("bedrock/"):
-        needs_key = not (p and p.api_key)
-        exempt = spec and (spec.is_oauth or spec.is_local or spec.is_direct)
-        if needs_key and not exempt:
-            console.print("[red]Error: No API key configured.[/red]")
-            console.print("Set one in ~/.elebot/config.json under providers section")
-            raise typer.Exit(1)
-
-    # 提供方选择完全由注册表 backend 决定，避免命令层自己维护分叉规则。
-    if backend == "openai_codex":
-        from elebot.providers.openai_codex_provider import OpenAICodexProvider
-
-        provider = OpenAICodexProvider(default_model=model)
-    elif backend == "azure_openai":
-        from elebot.providers.azure_openai_provider import AzureOpenAIProvider
-
-        provider = AzureOpenAIProvider(
-            api_key=p.api_key,
-            api_base=p.api_base,
-            default_model=model,
-        )
-    elif backend == "github_copilot":
-        from elebot.providers.github_copilot_provider import GitHubCopilotProvider
-        provider = GitHubCopilotProvider(default_model=model)
-    elif backend == "anthropic":
-        from elebot.providers.anthropic_provider import AnthropicProvider
-
-        provider = AnthropicProvider(
-            api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model),
-            default_model=model,
-            extra_headers=p.extra_headers if p else None,
-        )
-    else:
-        from elebot.providers.openai_compat_provider import OpenAICompatProvider
-
-        provider = OpenAICompatProvider(
-            api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model),
-            default_model=model,
-            extra_headers=p.extra_headers if p else None,
-            spec=spec,
-        )
-
-    defaults = config.agents.defaults
-    provider.generation = GenerationSettings(
-        temperature=defaults.temperature,
-        max_tokens=defaults.max_tokens,
-        reasoning_effort=defaults.reasoning_effort,
-    )
-    return provider
+        raise typer.Exit(1) from exc
 
 
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
@@ -285,8 +226,35 @@ def _load_runtime_config(config: str | None = None, workspace: str | None = None
     return loaded
 
 
+def _make_runtime(config: Config) -> ElebotRuntime:
+    """根据当前配置装配一份 CLI 复用的 runtime。
+
+    参数:
+        config: 已解析完成的运行时配置。
+
+    返回:
+        供 CLI 启动或单次调用的 runtime 实例。
+    """
+    from elebot.agent.loop import AgentLoop
+    from elebot.bus.queue import MessageBus
+
+    return ElebotRuntime.from_config(
+        config,
+        provider_builder=_make_provider,
+        bus_factory=MessageBus,
+        agent_loop_factory=AgentLoop,
+    )
+
+
 def _warn_deprecated_config_keys(config_path: Path | None) -> None:
-    """Hint users to remove obsolete keys from their config file."""
+    """提示用户移除已经废弃的配置键。
+
+    参数:
+        config_path: 当前命令解析出的配置文件路径；为空时回退到默认路径。
+
+    返回:
+        无返回值。
+    """
     import json
 
     from elebot.config.loader import get_config_path
@@ -329,38 +297,16 @@ def agent(
     """
     from loguru import logger
 
-    from elebot.agent.loop import AgentLoop
-    from elebot.bus.queue import MessageBus
-
     config = _load_runtime_config(config, workspace)
     sync_workspace_templates(config.workspace_path)
-
-    bus = MessageBus()
-    provider = _make_provider(config)
 
     if logs:
         logger.enable("elebot")
     else:
         logger.disable("elebot")
 
-    agent_loop = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=config.workspace_path,
-        model=config.agents.defaults.model,
-        max_iterations=config.agents.defaults.max_tool_iterations,
-        context_window_tokens=config.agents.defaults.context_window_tokens,
-        web_config=config.tools.web,
-        context_block_limit=config.agents.defaults.context_block_limit,
-        max_tool_result_chars=config.agents.defaults.max_tool_result_chars,
-        provider_retry_mode=config.agents.defaults.provider_retry_mode,
-        exec_config=config.tools.exec,
-        restrict_to_workspace=config.tools.restrict_to_workspace,
-        mcp_servers=config.tools.mcp_servers,
-        timezone=config.agents.defaults.timezone,
-        unified_session=config.agents.defaults.unified_session,
-        session_ttl_minutes=config.agents.defaults.session_ttl_minutes,
-    )
+    runtime = _make_runtime(config)
+
     restart_notice = consume_restart_notice_from_env()
     if restart_notice and should_show_cli_restart_notice(restart_notice, session_id):
         print_agent_response(
@@ -383,9 +329,9 @@ def agent(
             nonlocal thinking
             renderer = StreamRenderer(render_markdown=markdown)
             thinking = renderer.spinner
-            response = await agent_loop.process_direct(
+            response = await runtime.run_once(
                 message,
-                session_id,
+                session_id=session_id,
                 on_progress=_cli_progress,
                 on_stream=renderer.on_delta,
                 on_stream_end=renderer.on_end,
@@ -398,18 +344,11 @@ def agent(
                     metadata=response.metadata if response else None,
                 )
             thinking = None
-            await agent_loop.close_mcp()
+            await runtime.close()
 
         asyncio.run(run_once())
     else:
-        asyncio.run(
-            run_interactive_loop(
-                agent_loop=agent_loop,
-                bus=bus,
-                session_id=session_id,
-                markdown=markdown,
-            )
-        )
+        asyncio.run(runtime.run_interactive(session_id=session_id, markdown=markdown))
 
 # 这里开始是状态查看命令。
 

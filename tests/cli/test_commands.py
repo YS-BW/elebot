@@ -377,6 +377,9 @@ def test_agent_config_sets_active_path(monkeypatch, tmp_path: Path) -> None:
         async def process_direct(self, *_args, **_kwargs):
             return OutboundMessage(channel="cli", chat_id="direct", content="ok")
 
+        def stop(self) -> None:
+            return None
+
         async def close_mcp(self) -> None:
             return None
 

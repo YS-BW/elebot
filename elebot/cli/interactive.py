@@ -55,8 +55,21 @@ async def run_interactive_loop(
     session_id: str,
     markdown: bool,
     renderer_factory: Callable[..., StreamRenderer] = StreamRenderer,
+    manage_agent_loop: bool = True,
 ) -> None:
-    """运行交互聊天循环，并通过 bus 与 agent 协作。"""
+    """运行交互聊天循环，并通过 bus 与 agent 协作。
+
+    参数:
+        agent_loop: 当前会话复用的主循环对象。
+        bus: 与主循环共享的消息总线。
+        session_id: 当前交互会话标识。
+        markdown: 是否按 Markdown 渲染回复。
+        renderer_factory: 流式渲染器工厂，便于测试注入。
+        manage_agent_loop: 是否由交互循环负责启动和关闭 `agent_loop`。
+
+    返回:
+        无返回值。
+    """
     init_prompt_session()
     console.print(
         f"{__logo__} Interactive mode (type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit)\n"
@@ -70,7 +83,9 @@ async def run_interactive_loop(
     _install_signal_handlers()
 
     thinking: ThinkingSpinner | None = None
-    bus_task = asyncio.create_task(agent_loop.run())
+    bus_task = (
+        asyncio.create_task(agent_loop.run()) if manage_agent_loop else None
+    )
     turn_done = asyncio.Event()
     turn_done.set()
     turn_response: list[tuple[str, dict[str, Any]]] = []
@@ -174,7 +189,12 @@ async def run_interactive_loop(
                 console.print("\nGoodbye!")
                 break
     finally:
-        agent_loop.stop()
+        if manage_agent_loop:
+            agent_loop.stop()
         outbound_task.cancel()
-        await asyncio.gather(bus_task, outbound_task, return_exceptions=True)
-        await agent_loop.close_mcp()
+        pending_tasks = [outbound_task]
+        if bus_task is not None:
+            pending_tasks.append(bus_task)
+        await asyncio.gather(*pending_tasks, return_exceptions=True)
+        if manage_agent_loop:
+            await agent_loop.close_mcp()

@@ -3,9 +3,8 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 
 def test_source_checkout_import_uses_pyproject_version_without_metadata() -> None:
@@ -16,13 +15,8 @@ def test_source_checkout_import_uses_pyproject_version_without_metadata() -> Non
     script = textwrap.dedent(
         f"""
         import sys
-        import types
 
         sys.path.insert(0, {str(repo_root)!r})
-        fake = types.ModuleType("elebot.facade")
-        fake.Elebot = object
-        fake.RunResult = object
-        sys.modules["elebot.facade"] = fake
 
         import elebot
 
@@ -41,23 +35,18 @@ def test_source_checkout_import_uses_pyproject_version_without_metadata() -> Non
     assert proc.stdout.strip() == expected
 
 
-def test_source_checkout_exports_elebot_facade_without_metadata() -> None:
+def test_source_checkout_top_level_exports_are_minimal_without_metadata() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = textwrap.dedent(
         f"""
         import sys
-        import types
 
         sys.path.insert(0, {str(repo_root)!r})
-        fake = types.ModuleType("elebot.facade")
-        fake.Elebot = object
-        fake.RunResult = object
-        sys.modules["elebot.facade"] = fake
 
         import elebot
 
         print(",".join(elebot.__all__))
-        print(elebot.Elebot is fake.Elebot)
+        print(hasattr(elebot, "Elebot"))
         """
     )
 
@@ -70,7 +59,7 @@ def test_source_checkout_exports_elebot_facade_without_metadata() -> None:
 
     assert proc.returncode == 0, proc.stderr
     lines = proc.stdout.strip().splitlines()
-    assert lines == ["Elebot,RunResult", "True"]
+    assert lines == ["__version__,__logo__", "False"]
 
 
 def test_module_entrypoint_calls_cli_app(monkeypatch) -> None:
