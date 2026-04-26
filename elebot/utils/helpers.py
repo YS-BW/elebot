@@ -273,6 +273,7 @@ def build_assistant_message(
     content: str | None,
     tool_calls: list[dict[str, Any]] | None = None,
     reasoning_content: str | None = None,
+    reasoning_items: list[dict[str, Any]] | None = None,
     thinking_blocks: list[dict] | None = None,
 ) -> dict[str, Any]:
     """构造兼容各 provider 的 assistant 消息。"""
@@ -281,6 +282,8 @@ def build_assistant_message(
         msg["tool_calls"] = tool_calls
     if reasoning_content is not None or thinking_blocks:
         msg["reasoning_content"] = reasoning_content if reasoning_content is not None else ""
+    if reasoning_items:
+        msg["reasoning_items"] = reasoning_items
     if thinking_blocks:
         msg["thinking_blocks"] = thinking_blocks
     return msg

@@ -23,6 +23,14 @@ from elebot.agent.tools.notebook import NotebookEditTool
 from elebot.agent.tools.registry import ToolRegistry
 from elebot.agent.tools.search import GlobTool, GrepTool
 from elebot.agent.tools.shell import ExecTool
+from elebot.agent.tools.task_tools import (
+    CreateTaskTool,
+    ListTasksTool,
+    ProposeTaskTool,
+    RemoveTaskTool,
+    TASK_CONFIRM_YES,
+    UpdateTaskTool,
+)
 from elebot.agent.tools.web import WebFetchTool, WebSearchTool
 from elebot.bus.events import InboundMessage, OutboundMessage
 from elebot.command import CommandContext, CommandRouter, register_builtin_commands
@@ -31,6 +39,7 @@ from elebot.config.paths import GLOBAL_SKILLS_DIR
 from elebot.config.schema import AgentDefaults
 from elebot.providers.base import LLMProvider
 from elebot.session.manager import Session, SessionManager
+from elebot.tasks.service import TaskService
 from elebot.utils.helpers import image_placeholder_text, truncate_text as truncate_text_fn
 from elebot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
 
@@ -221,6 +230,11 @@ class AgentLoop:
         self._session_locks: dict[str, asyncio.Lock] = {}
         # 每个会话维护独立待注入队列，避免处理中途追问时再并发拉起新任务。
         self._pending_queues: dict[str, asyncio.Queue] = {}
+        self.task_service = TaskService(
+            self.bus,
+            poll_interval_seconds=10,
+            default_timezone=timezone or "Asia/Shanghai",
+        )
         # 并发阈值允许通过环境变量覆盖，便于在低资源环境主动降载。
         _max = int(os.environ.get("NANOBOT_MAX_CONCURRENT_REQUESTS", "3"))
         self._concurrency_gate: asyncio.Semaphore | None = (
@@ -297,6 +311,27 @@ class AgentLoop:
                 WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy)
             )
             self.tools.register(WebFetchTool(proxy=self.web_config.proxy))
+        default_timezone = self.context.timezone or "Asia/Shanghai"
+        self.tools.register(
+            ProposeTaskTool(
+                default_timezone=default_timezone,
+                session_manager=self.sessions,
+            )
+        )
+        self.tools.register(
+            CreateTaskTool(
+                default_timezone=default_timezone,
+                session_manager=self.sessions,
+            )
+        )
+        self.tools.register(ListTasksTool(default_timezone=default_timezone))
+        self.tools.register(
+            RemoveTaskTool(
+                default_timezone=default_timezone,
+                session_manager=self.sessions,
+            )
+        )
+        self.tools.register(UpdateTaskTool(default_timezone=default_timezone))
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -457,6 +492,7 @@ class AgentLoop:
         """
         self._running = True
         await self._connect_mcp()
+        self.task_service.start()
         logger.info("Agent loop started")
 
         while self._running:
@@ -482,6 +518,17 @@ class AgentLoop:
                     await self.bus.publish_outbound(result)
                 continue
             effective_key = self._effective_session_key(msg)
+            if msg.metadata.get("scheduled_trigger") and effective_key in self._pending_queues:
+                logger.info(
+                    "Delayed scheduled task {} for busy session {}",
+                    msg.metadata.get("task_id"),
+                    effective_key,
+                )
+                try:
+                    self.task_service.defer(msg.metadata.get("task_id"), reason="session_busy")
+                except Exception:
+                    logger.exception("Failed to defer scheduled task")
+                continue
             # 同会话已有活跃任务时，把新消息放入待注入队列，避免形成竞争执行。
             if effective_key in self._pending_queues:
                 pending_msg = msg
@@ -626,6 +673,7 @@ class AgentLoop:
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
             self._background_tasks.clear()
+        await self.task_service.stop()
         for name, stack in self._mcp_stacks.items():
             try:
                 await stack.aclose()
@@ -682,7 +730,28 @@ class AgentLoop:
                 session_key=key,
             )
 
+        if raw in TASK_CONFIRM_YES:
+            proposal = session.metadata.get("pending_task_proposal")
+            if isinstance(proposal, dict):
+                create_tool = self.tools.get("create_task")
+                if create_tool is not None:
+                    create_result = await create_tool.execute(**proposal)
+                    return DirectProcessResult(
+                        outbound=OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content=create_result,
+                            metadata=dict(msg.metadata or {}),
+                        ),
+                        final_content=create_result,
+                        stop_reason="task_confirmed",
+                        session_key=key,
+                    )
+
         await self.consolidator.maybe_consolidate_by_tokens(session)
+
+        if msg.metadata.get("scheduled_trigger"):
+            self.task_service.mark_running(msg.metadata.get("task_id"))
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
 
@@ -729,6 +798,12 @@ class AgentLoop:
         self._clear_runtime_checkpoint(session)
         self.sessions.save(session)
         self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
+
+        if msg.metadata.get("scheduled_trigger"):
+            task_id = msg.metadata.get("task_id")
+            status = "ok" if stop_reason != "error" else "error"
+            error_text = final_content if stop_reason == "error" else None
+            self.task_service.mark_finished(task_id, status=status, error=error_text)
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)

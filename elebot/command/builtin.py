@@ -10,6 +10,7 @@ from elebot.agent.skills import SkillRegistry
 from elebot import __version__
 from elebot.bus.events import OutboundMessage
 from elebot.command.router import CommandContext, CommandRouter
+from elebot.tasks.store import TaskStore
 from elebot.utils.helpers import build_status_content
 from elebot.utils.restart import set_restart_notice_to_env
 
@@ -23,6 +24,9 @@ SLASH_COMMAND_SPECS: list[tuple[str, str]] = [
     ("/dream-restore", "恢复到之前的 Dream 版本"),
     ("/skill", "查看当前可用 skills"),
     ("/skill uninstall <name>", "卸载一个 skill"),
+    ("/task", "查看当前会话定时任务"),
+    ("/task list", "列出全部定时任务"),
+    ("/task remove <task_id>", "删除一个定时任务"),
     ("/help", "查看可用命令"),
 ]
 
@@ -368,6 +372,51 @@ async def cmd_skill_manage(ctx: CommandContext) -> OutboundMessage:
     )
 
 
+async def cmd_task_manage(ctx: CommandContext) -> OutboundMessage:
+    """处理任务查看与删除命令。"""
+    store = TaskStore()
+    args = ctx.args.strip()
+
+    def _render(items, *, current_only: bool) -> str:
+        if not items:
+            return "当前没有任务。"
+        title = "当前会话定时任务：" if current_only else "全部定时任务："
+        lines = ["## Tasks", "", title, ""]
+        for item in items:
+            status = "启用" if item.enabled else "禁用"
+            lines.append(
+                f"- `{item.task_id}` {item.schedule_type} {status} "
+                f"[{item.session_key}] -> {item.content} "
+                f"(next: {item.next_run_at or '无'}, status: {item.last_status or 'idle'})"
+            )
+        lines.extend(["", "删除用法：`/task remove <task_id>`"])
+        return "\n".join(lines)
+
+    if not args:
+        current_items = [item for item in store.list_all() if item.session_key == ctx.key]
+        content = _render(current_items, current_only=True)
+    elif args.lower() == "list":
+        content = _render(store.list_all(), current_only=False)
+    else:
+        parts = args.split(None, 1)
+        action = parts[0].lower()
+        if action != "remove" or len(parts) != 2 or not parts[1].strip():
+            content = "用法：`/task`、`/task list`、`/task remove <task_id>`"
+        else:
+            task_id = parts[1].strip()
+            if store.delete(task_id):
+                content = f"已删除任务：`{task_id}`。"
+            else:
+                content = f"找不到任务：`{task_id}`。"
+
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
 def build_help_text() -> str:
     """构造各渠道共用的帮助文本。"""
     lines = ["🍌 elebot 命令："]
@@ -389,4 +438,6 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.prefix("/dream-restore ", cmd_dream_restore)
     router.exact("/skill", cmd_skill_manage)
     router.prefix("/skill ", cmd_skill_manage)
+    router.exact("/task", cmd_task_manage)
+    router.prefix("/task ", cmd_task_manage)
     router.exact("/help", cmd_help)

@@ -170,6 +170,7 @@ def parse_response_output(response: Any) -> LLMResponse:
     content_parts: list[str] = []
     tool_calls: list[ToolCallRequest] = []
     reasoning_content: str | None = None
+    reasoning_items: list[dict[str, Any]] = []
 
     for item in output:
         if not isinstance(item, dict):
@@ -185,6 +186,7 @@ def parse_response_output(response: Any) -> LLMResponse:
                 if block.get("type") == "output_text":
                     content_parts.append(block.get("text") or "")
         elif item_type == "reasoning":
+            reasoning_items.append(item)
             for s in item.get("summary") or []:
                 if not isinstance(s, dict):
                     dump = getattr(s, "model_dump", None)
@@ -233,6 +235,7 @@ def parse_response_output(response: Any) -> LLMResponse:
         finish_reason=finish_reason,
         usage=usage,
         reasoning_content=reasoning_content if isinstance(reasoning_content, str) else None,
+        reasoning_items=reasoning_items or None,
     )
 
 
@@ -255,6 +258,7 @@ async def consume_sdk_stream(
     finish_reason = "stop"
     usage: dict[str, int] = {}
     reasoning_content: str | None = None
+    reasoning_items: list[dict[str, Any]] = []
 
     async for event in stream:
         event_type = getattr(event, "type", None)
@@ -322,6 +326,10 @@ async def consume_sdk_stream(
                     }
                 for out_item in getattr(resp, "output", None) or []:
                     if getattr(out_item, "type", None) == "reasoning":
+                        dump = getattr(out_item, "model_dump", None)
+                        dumped = dump() if callable(dump) else None
+                        if isinstance(dumped, dict):
+                            reasoning_items.append(dumped)
                         for s in getattr(out_item, "summary", None) or []:
                             if getattr(s, "type", None) == "summary_text":
                                 text = getattr(s, "text", None)
@@ -331,4 +339,4 @@ async def consume_sdk_stream(
             detail = getattr(event, "error", None) or getattr(event, "message", None) or event
             raise RuntimeError(f"Response failed: {str(detail)[:500]}")
 
-    return content, tool_calls, finish_reason, usage, reasoning_content
+    return content, tool_calls, finish_reason, usage, reasoning_content, reasoning_items or None

@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 _ALLOWED_MSG_KEYS = frozenset({
     "role", "content", "tool_calls", "tool_call_id", "name",
-    "reasoning_content", "extra_content",
+    "reasoning_content", "reasoning_items", "thinking_blocks", "extra_content",
 })
 _ALNUM = string.ascii_letters + string.digits
 
@@ -932,7 +932,7 @@ class OpenAICompatProvider(LLMProvider):
                             except StopAsyncIteration:
                                 break
 
-                    content, tool_calls, finish_reason, usage, reasoning_content = await consume_sdk_stream(
+                    content, tool_calls, finish_reason, usage, reasoning_content, reasoning_items = await consume_sdk_stream(
                         _timed_stream(),
                         on_content_delta,
                     )
@@ -942,6 +942,7 @@ class OpenAICompatProvider(LLMProvider):
                         finish_reason=finish_reason,
                         usage=usage,
                         reasoning_content=reasoning_content,
+                        reasoning_items=reasoning_items,
                     )
                 except Exception as responses_error:
                     if not self._should_fallback_from_responses_error(responses_error):

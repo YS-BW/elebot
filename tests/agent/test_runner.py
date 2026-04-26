@@ -47,6 +47,7 @@ async def test_runner_preserves_reasoning_fields_and_tool_results():
                 content="thinking",
                 tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
                 reasoning_content="hidden reasoning",
+                reasoning_items=[{"type": "reasoning", "id": "rs_1", "summary": []}],
                 thinking_blocks=[{"type": "thinking", "thinking": "step"}],
                 usage={"prompt_tokens": 5, "completion_tokens": 3},
             )
@@ -82,6 +83,7 @@ async def test_runner_preserves_reasoning_fields_and_tool_results():
     ]
     assert len(assistant_messages) == 1
     assert assistant_messages[0]["reasoning_content"] == "hidden reasoning"
+    assert assistant_messages[0]["reasoning_items"] == [{"type": "reasoning", "id": "rs_1", "summary": []}]
     assert assistant_messages[0]["thinking_blocks"] == [{"type": "thinking", "thinking": "step"}]
     assert any(
         msg.get("role") == "tool" and msg.get("content") == "tool result"

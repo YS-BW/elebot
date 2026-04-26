@@ -31,6 +31,9 @@ def convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str
             continue
 
         if role == "assistant":
+            for reasoning_item in msg.get("reasoning_items") or []:
+                if isinstance(reasoning_item, dict) and reasoning_item.get("type") == "reasoning":
+                    input_items.append(dict(reasoning_item))
             if isinstance(content, str) and content:
                 input_items.append({
                     "type": "message", "role": "assistant",

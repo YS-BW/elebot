@@ -57,6 +57,7 @@ class LLMResponse:
     usage: dict[str, int] = field(default_factory=dict)
     retry_after: float | None = None  # 提供方返回的重试等待秒数。
     reasoning_content: str | None = None  # 推理模型补充返回的思考文本。
+    reasoning_items: list[dict[str, Any]] | None = None  # 需要在后续轮次原样回传的推理载荷。
     thinking_blocks: list[dict] | None = None  # Anthropic 扩展 thinking 块。
     # finish_reason == "error" 时，重试策略会优先使用这些结构化错误元数据。
     error_status_code: int | None = None

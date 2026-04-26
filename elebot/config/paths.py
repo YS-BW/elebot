@@ -35,6 +35,16 @@ def get_logs_dir() -> Path:
     return get_runtime_subdir("logs")
 
 
+def get_tasks_dir() -> Path:
+    """返回任务目录。"""
+    return get_runtime_subdir("tasks")
+
+
+def get_tasks_store_path() -> Path:
+    """返回任务存储文件路径。"""
+    return get_tasks_dir() / "tasks.json"
+
+
 def get_skill_usage_log_path() -> Path:
     """返回 skill 使用日志文件路径。"""
     return get_logs_dir() / "skill_usage.jsonl"

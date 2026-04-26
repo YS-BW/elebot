@@ -70,6 +70,19 @@ class ContextBuilder:
                 f"- [{e['timestamp']}] {e['content']}" for e in capped
             ))
 
+        parts.append(
+            "# 定时任务规则\n\n"
+            "- 当用户明确表达“提醒我”“帮我创建任务”“到时候通知我”等强意图时，"
+            "先复述你解析出的时间、事项和提醒方式，请求确认；只有用户明确确认后，"
+            "才可以调用 `create_task`。\n"
+            "- 当用户只是提到未来事件、预约、截止时间、会议、出行安排时，"
+            "你可以主动询问是否需要创建提醒，但不能直接创建任务。\n"
+            "- 当你从用户让你读取的文件中发现明确的未来日程时，"
+            "你也可以主动提出提醒建议，但不能直接创建任务。\n"
+            "- 用户未确认前，不得调用 `create_task`。\n"
+            "- 用户确认语义包括：是、创建吧、帮我加上、可以提醒我。"
+        )
+
         return "\n\n---\n\n".join(parts)
 
     def _get_identity(self, channel: str | None = None) -> str:
@@ -209,6 +222,7 @@ class ContextBuilder:
         content: str | None,
         tool_calls: list[dict[str, Any]] | None = None,
         reasoning_content: str | None = None,
+        reasoning_items: list[dict[str, Any]] | None = None,
         thinking_blocks: list[dict] | None = None,
     ) -> list[dict[str, Any]]:
         """把助手回复写回消息链路。
@@ -220,6 +234,7 @@ class ContextBuilder:
             content,
             tool_calls=tool_calls,
             reasoning_content=reasoning_content,
+            reasoning_items=reasoning_items,
             thinking_blocks=thinking_blocks,
         ))
         return messages

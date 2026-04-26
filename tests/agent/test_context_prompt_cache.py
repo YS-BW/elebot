@@ -214,6 +214,16 @@ def test_system_prompt_omits_skills_section_when_empty(tmp_path, monkeypatch) ->
     assert "# 可用 Skills" not in prompt
 
 
+def test_system_prompt_contains_task_confirmation_rules(tmp_path) -> None:
+    workspace = _make_workspace(tmp_path)
+    builder = ContextBuilder(workspace)
+
+    prompt = builder.build_system_prompt()
+    assert "# 定时任务规则" in prompt
+    assert "用户未确认前，不得调用 `create_task`" in prompt
+    assert "你可以主动询问是否需要创建提醒" in prompt
+
+
 def test_explicit_skill_mention_is_logged(tmp_path, monkeypatch) -> None:
     """用户显式提到 skill 时应写入使用日志。"""
     workspace = _make_workspace(tmp_path)

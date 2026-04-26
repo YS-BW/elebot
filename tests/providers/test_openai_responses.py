@@ -155,6 +155,21 @@ class TestConvertMessages:
         assert items[0]["id"] == "fc_1"
         assert items[0]["name"] == "get_weather"
 
+    def test_assistant_reasoning_items_roundtrip(self):
+        _, items = convert_messages([{
+            "role": "assistant",
+            "content": "继续",
+            "reasoning_items": [{
+                "type": "reasoning",
+                "id": "rs_1",
+                "summary": [{"type": "summary_text", "text": "思考摘要"}],
+            }],
+        }])
+        assert items[0]["type"] == "reasoning"
+        assert items[0]["id"] == "rs_1"
+        assert items[1]["type"] == "message"
+        assert items[1]["content"][0]["text"] == "继续"
+
     def test_assistant_with_tool_calls_no_id(self):
         """Fallback IDs when tool_call.id is missing."""
         _, items = convert_messages([{
@@ -341,7 +356,7 @@ class TestParseResponseOutput:
     def test_reasoning_content_extracted(self):
         resp = {
             "output": [
-                {"type": "reasoning", "summary": [
+                {"type": "reasoning", "id": "rs_1", "summary": [
                     {"type": "summary_text", "text": "I think "},
                     {"type": "summary_text", "text": "therefore I am."},
                 ]},
@@ -353,6 +368,14 @@ class TestParseResponseOutput:
         result = parse_response_output(resp)
         assert result.content == "42"
         assert result.reasoning_content == "I think therefore I am."
+        assert result.reasoning_items == [{
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [
+                {"type": "summary_text", "text": "I think "},
+                {"type": "summary_text", "text": "therefore I am."},
+            ],
+        }]
 
     def test_empty_output(self):
         resp = {"output": [], "status": "completed", "usage": {}}
@@ -408,10 +431,13 @@ class TestConsumeSdkStream:
             for e in [ev1, ev2, ev3]:
                 yield e
 
-        content, tool_calls, finish_reason, usage, reasoning = await consume_sdk_stream(stream())
+        content, tool_calls, finish_reason, usage, reasoning, reasoning_items = await consume_sdk_stream(stream())
         assert content == "Hello world"
         assert tool_calls == []
         assert finish_reason == "stop"
+        assert usage == {}
+        assert reasoning is None
+        assert reasoning_items is None
 
     @pytest.mark.asyncio
     async def test_on_content_delta_called(self):
@@ -447,11 +473,15 @@ class TestConsumeSdkStream:
             for e in [ev1, ev2, ev3, ev4, ev5]:
                 yield e
 
-        content, tool_calls, finish_reason, usage, reasoning = await consume_sdk_stream(stream())
+        content, tool_calls, finish_reason, usage, reasoning, reasoning_items = await consume_sdk_stream(stream())
         assert content == ""
         assert len(tool_calls) == 1
         assert tool_calls[0].name == "get_weather"
         assert tool_calls[0].arguments == {"city": "SF"}
+        assert finish_reason == "stop"
+        assert usage == {}
+        assert reasoning is None
+        assert reasoning_items is None
 
     @pytest.mark.asyncio
     async def test_usage_extracted(self):
@@ -462,21 +492,31 @@ class TestConsumeSdkStream:
         async def stream():
             yield ev
 
-        _, _, _, usage, _ = await consume_sdk_stream(stream())
+        _, _, _, usage, _, _ = await consume_sdk_stream(stream())
         assert usage == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
 
     @pytest.mark.asyncio
     async def test_reasoning_extracted(self):
         summary_item = MagicMock(type="summary_text", text="thinking...")
-        reasoning_item = MagicMock(type="reasoning", summary=[summary_item])
+        reasoning_item = MagicMock(type="reasoning", id="rs_1", summary=[summary_item])
+        reasoning_item.model_dump.return_value = {
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [{"type": "summary_text", "text": "thinking..."}],
+        }
         resp_obj = MagicMock(status="completed", usage=None, output=[reasoning_item])
         ev = MagicMock(type="response.completed", response=resp_obj)
 
         async def stream():
             yield ev
 
-        _, _, _, _, reasoning = await consume_sdk_stream(stream())
+        _, _, _, _, reasoning, reasoning_items = await consume_sdk_stream(stream())
         assert reasoning == "thinking..."
+        assert reasoning_items == [{
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [{"type": "summary_text", "text": "thinking..."}],
+        }]
 
     @pytest.mark.asyncio
     async def test_error_event_raises(self):
@@ -516,7 +556,7 @@ class TestConsumeSdkStream:
                 yield e
 
         with patch("elebot.providers.openai_responses.parsing.logger") as mock_logger:
-            _, tool_calls, _, _, _ = await consume_sdk_stream(stream())
+            _, tool_calls, _, _, _, _ = await consume_sdk_stream(stream())
         assert tool_calls[0].arguments == {"raw": "{bad"}
         mock_logger.warning.assert_called_once()
         assert "Failed to parse tool call arguments" in str(mock_logger.warning.call_args)
