@@ -29,7 +29,7 @@ EleBot 默认使用本地配置与运行目录：
 ~/.elebot/sessions
 ```
 
-默认模型配置以项目当前配置模板为准，当前阶段聚焦 `qwen3_6_plus` 主链路。
+默认模型配置以项目当前配置模板为准，当前首次配置默认使用 `deepseek-v4-flash`。
 
 ## Development Rules
 

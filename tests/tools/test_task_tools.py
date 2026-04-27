@@ -9,15 +9,22 @@ from elebot.agent.tools.task_tools import (
     RemoveTaskTool,
     UpdateTaskTool,
 )
+from elebot.bus.queue import MessageBus
 from elebot.session.manager import SessionManager
+from elebot.tasks.service import TaskService
 from elebot.tasks.store import TaskStore
 
 
 @pytest.mark.asyncio
 async def test_create_task_validates_schedule_shape(tmp_path) -> None:
     store = TaskStore(tmp_path / "tasks.json")
+    service = TaskService(MessageBus(), store=store)
     sessions = SessionManager(tmp_path / "workspace")
-    tool = CreateTaskTool(store=store, default_timezone="Asia/Shanghai", session_manager=sessions)
+    tool = CreateTaskTool(
+        task_service=service,
+        default_timezone="Asia/Shanghai",
+        session_manager=sessions,
+    )
 
     err = await tool.execute(
         content="提醒总结会议",
@@ -26,7 +33,11 @@ async def test_create_task_validates_schedule_shape(tmp_path) -> None:
     )
     assert "必须先提出任务建议" in err
 
-    propose = ProposeTaskTool(store=store, default_timezone="Asia/Shanghai", session_manager=sessions)
+    propose = ProposeTaskTool(
+        task_service=service,
+        default_timezone="Asia/Shanghai",
+        session_manager=sessions,
+    )
     bad_daily = await propose.execute(
         content="提醒总结会议",
         schedule_type="daily",
@@ -64,9 +75,18 @@ async def test_create_task_validates_schedule_shape(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_list_tasks_can_filter_by_session(tmp_path) -> None:
     store = TaskStore(tmp_path / "tasks.json")
+    service = TaskService(MessageBus(), store=store)
     sessions = SessionManager(tmp_path / "workspace")
-    propose = ProposeTaskTool(store=store, default_timezone="Asia/Shanghai", session_manager=sessions)
-    create = CreateTaskTool(store=store, default_timezone="Asia/Shanghai", session_manager=sessions)
+    propose = ProposeTaskTool(
+        task_service=service,
+        default_timezone="Asia/Shanghai",
+        session_manager=sessions,
+    )
+    create = CreateTaskTool(
+        task_service=service,
+        default_timezone="Asia/Shanghai",
+        session_manager=sessions,
+    )
     await propose.execute(
         content="提醒总结会议",
         schedule_type="once",
@@ -92,7 +112,7 @@ async def test_list_tasks_can_filter_by_session(tmp_path) -> None:
         session_key="cli:work",
     )
 
-    tool = ListTasksTool(store=store)
+    tool = ListTasksTool(task_service=service)
     result = await tool.execute(session_key="cli:direct")
     assert "cli:direct" in result
     assert "cli:work" not in result
@@ -101,9 +121,18 @@ async def test_list_tasks_can_filter_by_session(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_remove_task_deletes_existing_task(tmp_path) -> None:
     store = TaskStore(tmp_path / "tasks.json")
+    service = TaskService(MessageBus(), store=store)
     sessions = SessionManager(tmp_path / "workspace")
-    propose = ProposeTaskTool(store=store, default_timezone="Asia/Shanghai", session_manager=sessions)
-    create = CreateTaskTool(store=store, default_timezone="Asia/Shanghai", session_manager=sessions)
+    propose = ProposeTaskTool(
+        task_service=service,
+        default_timezone="Asia/Shanghai",
+        session_manager=sessions,
+    )
+    create = CreateTaskTool(
+        task_service=service,
+        default_timezone="Asia/Shanghai",
+        session_manager=sessions,
+    )
     await propose.execute(
         content="提醒总结会议",
         schedule_type="once",
@@ -118,7 +147,7 @@ async def test_remove_task_deletes_existing_task(tmp_path) -> None:
     )
     task_id = store.list_all()[0].task_id
 
-    tool = RemoveTaskTool(store=store)
+    tool = RemoveTaskTool(task_service=service)
     result = await tool.execute(task_id=task_id)
     assert "已删除任务" in result
     assert store.list_all() == []
@@ -127,9 +156,18 @@ async def test_remove_task_deletes_existing_task(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_update_task_changes_schedule_and_content(tmp_path) -> None:
     store = TaskStore(tmp_path / "tasks.json")
+    service = TaskService(MessageBus(), store=store)
     sessions = SessionManager(tmp_path / "workspace")
-    propose = ProposeTaskTool(store=store, default_timezone="Asia/Shanghai", session_manager=sessions)
-    create = CreateTaskTool(store=store, default_timezone="Asia/Shanghai", session_manager=sessions)
+    propose = ProposeTaskTool(
+        task_service=service,
+        default_timezone="Asia/Shanghai",
+        session_manager=sessions,
+    )
+    create = CreateTaskTool(
+        task_service=service,
+        default_timezone="Asia/Shanghai",
+        session_manager=sessions,
+    )
     await propose.execute(
         content="提醒总结会议",
         schedule_type="once",
@@ -144,7 +182,7 @@ async def test_update_task_changes_schedule_and_content(tmp_path) -> None:
     )
     task_id = store.list_all()[0].task_id
 
-    tool = UpdateTaskTool(store=store, default_timezone="Asia/Shanghai")
+    tool = UpdateTaskTool(task_service=service, default_timezone="Asia/Shanghai")
     result = await tool.execute(
         task_id=task_id,
         content="提醒提交周报",

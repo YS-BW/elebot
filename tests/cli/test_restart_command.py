@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from elebot.bus.events import InboundMessage, OutboundMessage
+from elebot.bus.events import InboundMessage
 from elebot.providers.base import LLMResponse
 
 
@@ -34,7 +34,7 @@ class TestRestartCommand:
 
     @pytest.mark.asyncio
     async def test_restart_sends_message_and_calls_execv(self):
-        from elebot.command.builtin import cmd_restart
+        from elebot.command.handlers.runtime import cmd_restart
         from elebot.command.router import CommandContext
         from elebot.utils.restart import (
             RESTART_NOTIFY_CHANNEL_ENV,
@@ -47,7 +47,7 @@ class TestRestartCommand:
         ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw="/restart", loop=loop)
 
         with patch.dict(os.environ, {}, clear=False), \
-             patch("elebot.command.builtin.os.execv") as mock_execv:
+             patch("elebot.command.handlers.runtime.os.execv") as mock_execv:
             out = await cmd_restart(ctx)
             assert "正在重启" in out.content
             assert os.environ.get(RESTART_NOTIFY_CHANNEL_ENV) == "cli"
@@ -64,7 +64,7 @@ class TestRestartCommand:
         msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="c1", content="/restart")
 
         with patch.object(loop, "_dispatch", new_callable=AsyncMock) as mock_dispatch, \
-             patch("elebot.command.builtin.os.execv"):
+             patch("elebot.command.handlers.runtime.os.execv"):
             await bus.publish_inbound(msg)
 
             loop._running = True

@@ -187,6 +187,51 @@ class OpenAICompatProvider(LLMProvider):
             resolved = env_val.replace("{api_key}", api_key).replace("{api_base}", effective_base)
             os.environ.setdefault(env_name, resolved)
 
+    def _is_deepseek_provider(self) -> bool:
+        """判断当前实例是否走 DeepSeek 兼容协议分支。
+
+        参数:
+            无。
+
+        返回:
+            当前 provider spec 为 ``deepseek`` 时返回 ``True``，否则返回 ``False``。
+        """
+        return bool(self._spec and self._spec.name == "deepseek")
+
+    def _normalize_reasoning_request_message(self, message: dict[str, Any]) -> None:
+        """补齐 DeepSeek 工具调用消息必需的推理字段。
+
+        参数:
+            message: 已完成基础清洗、准备发送给模型的单条消息；会在原地修改。
+
+        返回:
+            无返回值。
+        """
+        if not self._is_deepseek_provider():
+            return
+        if message.get("role") != "assistant":
+            return
+        if not message.get("tool_calls"):
+            return
+        if message.get("reasoning_content") is None:
+            # DeepSeek 在 thinking mode 下要求多轮 tool-call transcript 原样带回该字段。
+            message["reasoning_content"] = ""
+
+    def _normalize_reasoning_response(self, response: LLMResponse) -> LLMResponse:
+        """按当前 provider 协议修正标准化后的推理字段。
+
+        参数:
+            response: 已解析成统一结构的模型响应。
+
+        返回:
+            经过 provider 特定归一化后的响应对象。
+        """
+        if not self._is_deepseek_provider():
+            return response
+        if response.tool_calls and response.reasoning_content is None:
+            response.reasoning_content = ""
+        return response
+
     @classmethod
     def _apply_cache_control(
         cls,
@@ -262,6 +307,7 @@ class OpenAICompatProvider(LLMProvider):
                 if clean.get("role") == "assistant":
                     # 某些兼容网关不接受带有 tool_calls 且 content 非空的 assistant 消息。
                     clean["content"] = None
+                    self._normalize_reasoning_request_message(clean)
             if "tool_call_id" in clean and clean["tool_call_id"]:
                 clean["tool_call_id"] = map_id(clean["tool_call_id"])
         return self._enforce_role_alternation(sanitized)
@@ -871,7 +917,9 @@ class OpenAICompatProvider(LLMProvider):
                         messages, tools, model, max_tokens, temperature,
                         reasoning_effort, tool_choice,
                     )
-                    return parse_response_output(await self._client.responses.create(**body))
+                    return self._normalize_reasoning_response(
+                        parse_response_output(await self._client.responses.create(**body))
+                    )
                 except Exception as responses_error:
                     if not self._should_fallback_from_responses_error(responses_error):
                         raise
@@ -880,7 +928,9 @@ class OpenAICompatProvider(LLMProvider):
                 messages, tools, model, max_tokens, temperature,
                 reasoning_effort, tool_choice,
             )
-            return self._parse(await self._client.chat.completions.create(**kwargs))
+            return self._normalize_reasoning_response(
+                self._parse(await self._client.chat.completions.create(**kwargs))
+            )
         except Exception as e:
             return self._handle_error(e, spec=self._spec, api_base=self.api_base)
 
@@ -936,13 +986,15 @@ class OpenAICompatProvider(LLMProvider):
                         _timed_stream(),
                         on_content_delta,
                     )
-                    return LLMResponse(
-                        content=content or None,
-                        tool_calls=tool_calls,
-                        finish_reason=finish_reason,
-                        usage=usage,
-                        reasoning_content=reasoning_content,
-                        reasoning_items=reasoning_items,
+                    return self._normalize_reasoning_response(
+                        LLMResponse(
+                            content=content or None,
+                            tool_calls=tool_calls,
+                            finish_reason=finish_reason,
+                            usage=usage,
+                            reasoning_content=reasoning_content,
+                            reasoning_items=reasoning_items,
+                        )
                     )
                 except Exception as responses_error:
                     if not self._should_fallback_from_responses_error(responses_error):
@@ -970,7 +1022,7 @@ class OpenAICompatProvider(LLMProvider):
                     text = getattr(chunk.choices[0].delta, "content", None)
                     if text:
                         await on_content_delta(text)
-            return self._parse_chunks(chunks)
+            return self._normalize_reasoning_response(self._parse_chunks(chunks))
         except asyncio.TimeoutError:
             return LLMResponse(
                 content=(

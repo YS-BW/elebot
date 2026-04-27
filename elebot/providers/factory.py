@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from elebot.config.schema import Config
 from elebot.providers.base import GenerationSettings, LLMProvider
-from elebot.providers.registry import find_by_name
+from elebot.providers.resolution import resolve_provider
 
 
 def build_provider(config: Config) -> LLMProvider:
@@ -19,33 +19,23 @@ def build_provider(config: Config) -> LLMProvider:
     异常:
         ValueError: provider 配置非法或缺少必要凭证时抛出。
     """
-    model = config.agents.defaults.model
-    forced_provider = config.agents.defaults.provider
-    if forced_provider != "auto" and find_by_name(forced_provider) is None:
-        raise ValueError(f"Unknown provider configured: {forced_provider}")
-    provider_name = config.get_provider_name(model)
-    provider_config = config.get_provider(model)
-    spec = find_by_name(provider_name) if provider_name else None
-    backend = spec.backend if spec else "openai_compat"
+    resolution = resolve_provider(config)
+    model = resolution.model
+    provider_name = resolution.provider_name
+    provider_config = resolution.provider_config
+    spec = resolution.spec
+    backend = resolution.backend
 
     if backend == "azure_openai":
         if not provider_config or not provider_config.api_key or not provider_config.api_base:
             raise ValueError("Azure OpenAI requires api_key and api_base in config.")
     elif backend == "openai_compat" and not model.startswith("bedrock/"):
         needs_key = not (provider_config and provider_config.api_key)
-        exempt = spec and (spec.is_oauth or spec.is_local or spec.is_direct)
+        exempt = spec and (spec.is_local or spec.is_direct)
         if needs_key and not exempt:
             raise ValueError(f"No API key configured for provider '{provider_name}'.")
 
-    if backend == "openai_codex":
-        from elebot.providers.openai_codex_provider import OpenAICodexProvider
-
-        provider: LLMProvider = OpenAICodexProvider(default_model=model)
-    elif backend == "github_copilot":
-        from elebot.providers.github_copilot_provider import GitHubCopilotProvider
-
-        provider = GitHubCopilotProvider(default_model=model)
-    elif backend == "azure_openai":
+    if backend == "azure_openai":
         from elebot.providers.azure_openai_provider import AzureOpenAIProvider
 
         provider = AzureOpenAIProvider(
@@ -56,9 +46,9 @@ def build_provider(config: Config) -> LLMProvider:
     elif backend == "anthropic":
         from elebot.providers.anthropic_provider import AnthropicProvider
 
-        provider = AnthropicProvider(
+        provider: LLMProvider = AnthropicProvider(
             api_key=provider_config.api_key if provider_config else None,
-            api_base=config.get_api_base(model),
+            api_base=resolution.api_base,
             default_model=model,
             extra_headers=provider_config.extra_headers if provider_config else None,
         )
@@ -67,7 +57,7 @@ def build_provider(config: Config) -> LLMProvider:
 
         provider = OpenAICompatProvider(
             api_key=provider_config.api_key if provider_config else None,
-            api_base=config.get_api_base(model),
+            api_base=resolution.api_base,
             default_model=model,
             extra_headers=provider_config.extra_headers if provider_config else None,
             spec=spec,

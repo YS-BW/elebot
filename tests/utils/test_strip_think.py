@@ -1,6 +1,6 @@
 import pytest
 
-from elebot.utils.helpers import strip_think
+from elebot.utils.text import strip_think
 
 
 class TestStripThinkTag:

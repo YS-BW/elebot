@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from elebot.bus.events import InboundMessage
-from elebot.command.builtin import cmd_dream_log, cmd_dream_restore
+from elebot.command.handlers.dream import cmd_dream_log, cmd_dream_restore
 from elebot.command.router import CommandContext
 from elebot.utils.gitstore import CommitInfo
 
@@ -17,6 +17,69 @@ class _FakeStore:
 
     def get_last_dream_cursor(self) -> int:
         return self._last_dream_cursor
+
+    def list_dream_versions(self, max_entries: int = 10):
+        from elebot.agent.memory.store import DreamVersion
+
+        return [DreamVersion.from_commit(commit) for commit in self.git.log(max_entries=max_entries)]
+
+    def show_dream_version(self, sha: str | None = None):
+        from elebot.agent.memory.store import DreamLogDetails, DreamVersion
+
+        if not self.git.is_initialized():
+            if self.get_last_dream_cursor() == 0:
+                return DreamLogDetails(status="never_run", requested_sha=sha)
+            return DreamLogDetails(status="unavailable", requested_sha=sha)
+
+        target_sha = sha
+        if target_sha is None:
+            commits = self.git.log(max_entries=1)
+            if not commits:
+                return DreamLogDetails(status="empty")
+            target_sha = commits[0].sha
+
+        result = self.git.show_commit_diff(target_sha)
+        if result is None:
+            return DreamLogDetails(status="not_found", requested_sha=target_sha)
+
+        commit, diff = result
+        changed_files = []
+        for line in diff.splitlines():
+            if line.startswith("diff --git "):
+                changed_files.append(line.split()[3][2:])
+        return DreamLogDetails(
+            status="ok",
+            requested_sha=sha,
+            commit=DreamVersion.from_commit(commit),
+            diff=diff,
+            changed_files=changed_files,
+        )
+
+    def restore_dream_version(self, sha: str):
+        from elebot.agent.memory.store import DreamRestoreDetails
+
+        if not self.git.is_initialized():
+            return DreamRestoreDetails(status="unavailable", requested_sha=sha)
+
+        result = self.git.show_commit_diff(sha)
+        changed_files = []
+        if result is not None:
+            for line in result[1].splitlines():
+                if line.startswith("diff --git "):
+                    changed_files.append(line.split()[3][2:])
+        new_sha = self.git.revert(sha)
+        if new_sha is None:
+            return DreamRestoreDetails(
+                status="not_found",
+                requested_sha=sha,
+                changed_files=changed_files,
+            )
+        return DreamRestoreDetails(
+            status="ok",
+            requested_sha=sha,
+            new_sha=new_sha,
+            changed_files=changed_files,
+        )
 
 
 class _FakeGit:
@@ -49,7 +112,7 @@ class _FakeGit:
 def _make_ctx(raw: str, git: _FakeGit, *, args: str = "", last_dream_cursor: int = 1) -> CommandContext:
     msg = InboundMessage(channel="cli", sender_id="u1", chat_id="direct", content=raw)
     store = _FakeStore(git, last_dream_cursor=last_dream_cursor)
-    loop = SimpleNamespace(consolidator=SimpleNamespace(store=store))
+    loop = SimpleNamespace(memory_store=store)
     return CommandContext(msg=msg, session=None, key=msg.session_key, raw=raw, args=args, loop=loop)
 
 

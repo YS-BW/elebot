@@ -3,17 +3,16 @@
 from elebot.config.schema import Config
 
 
-def test_default_model_is_qwen3_6_plus() -> None:
-    """默认模型固定为 qwen3_6_plus。"""
+def test_default_model_is_deepseek_v4_flash() -> None:
+    """默认模型固定为 deepseek-v4-flash。"""
     cfg = Config()
-    assert cfg.agents.defaults.model == "qwen3_6_plus"
+    assert cfg.agents.defaults.model == "deepseek-v4-flash"
 
 
-def test_default_provider_is_dashscope() -> None:
-    """默认 provider 固定为 dashscope。"""
+def test_default_provider_is_deepseek() -> None:
+    """默认 provider 固定为 deepseek。"""
     cfg = Config()
-    assert cfg.agents.defaults.provider == "dashscope"
-    assert cfg.get_provider_name() == "dashscope"
+    assert cfg.agents.defaults.provider == "deepseek"
 
 
 def test_reads_elebot_env_prefix(monkeypatch) -> None:
@@ -28,4 +27,4 @@ def test_ignores_legacy_nanobot_env_prefix(monkeypatch) -> None:
     monkeypatch.delenv("ELEBOT_AGENTS__DEFAULTS__MODEL", raising=False)
     monkeypatch.setenv("NANOBOT_AGENTS__DEFAULTS__MODEL", "legacy/model")
     cfg = Config()
-    assert cfg.agents.defaults.model == "qwen3_6_plus"
+    assert cfg.agents.defaults.model == "deepseek-v4-flash"

@@ -13,35 +13,27 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from loguru import logger
 
+from elebot import __version__
 from elebot.agent.autocompact import AutoCompact
 from elebot.agent.context import ContextBuilder
+from elebot.agent.default_tools import register_default_tools
 from elebot.agent.hook import AgentHook, AgentHookContext, CompositeHook
-from elebot.agent.memory import Consolidator, Dream
-from elebot.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunSpec, AgentRunner
-from elebot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from elebot.agent.tools.notebook import NotebookEditTool
+from elebot.agent.memory import Consolidator, Dream, MemoryStore
+from elebot.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunner, AgentRunSpec
+from elebot.agent.skills import SkillRegistry
 from elebot.agent.tools.registry import ToolRegistry
-from elebot.agent.tools.search import GlobTool, GrepTool
-from elebot.agent.tools.shell import ExecTool
-from elebot.agent.tools.task_tools import (
-    CreateTaskTool,
-    ListTasksTool,
-    ProposeTaskTool,
-    RemoveTaskTool,
-    TASK_CONFIRM_YES,
-    UpdateTaskTool,
-)
-from elebot.agent.tools.web import WebFetchTool, WebSearchTool
+from elebot.agent.tools.task_tools import TASK_CONFIRM_YES
 from elebot.bus.events import InboundMessage, OutboundMessage
-from elebot.command import CommandContext, CommandRouter, register_builtin_commands
 from elebot.bus.queue import MessageBus
+from elebot.command import CommandContext, CommandRouter, register_builtin_commands
 from elebot.config.paths import GLOBAL_SKILLS_DIR
 from elebot.config.schema import AgentDefaults
 from elebot.providers.base import LLMProvider
 from elebot.session.manager import Session, SessionManager
 from elebot.tasks.service import TaskService
-from elebot.utils.helpers import image_placeholder_text, truncate_text as truncate_text_fn
 from elebot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
+from elebot.utils.text import image_placeholder_text, strip_think
+from elebot.utils.text import truncate_text as truncate_text_fn
 
 if TYPE_CHECKING:
     from elebot.config.schema import ExecToolConfig, WebToolsConfig
@@ -60,6 +52,20 @@ class DirectProcessResult:
     messages: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     stop_reason: str = "completed"
     session_key: str = ""
+
+
+@dataclasses.dataclass(slots=True)
+class LoopStatusSnapshot:
+    """描述一份会话级运行状态快照。"""
+
+    version: str
+    model: str
+    start_time: float
+    last_usage: dict[str, int]
+    context_window_tokens: int
+    session_msg_count: int
+    context_tokens_estimate: int
+    search_usage_text: str | None = None
 
 
 class _LoopHook(AgentHook):
@@ -101,8 +107,6 @@ class _LoopHook(AgentHook):
         这里会先剥掉 think 块再计算增量，
         避免界面层先看到思考内容、后又被最终收口逻辑删掉。
         """
-        from elebot.utils.helpers import strip_think
-
         prev_clean = strip_think(self._stream_buf)
         self._stream_buf += delta
         new_clean = strip_think(self._stream_buf)
@@ -215,7 +219,14 @@ class AgentLoop:
         self._last_usage: dict[str, int] = {}
         self._extra_hooks: list[AgentHook] = hooks or []
 
-        self.context = ContextBuilder(workspace, timezone=timezone)
+        self.memory_store = MemoryStore(workspace)
+        self.skill_registry = SkillRegistry()
+        self.context = ContextBuilder(
+            workspace,
+            memory_store=self.memory_store,
+            skill_registry=self.skill_registry,
+            timezone=timezone,
+        )
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider)
@@ -241,7 +252,7 @@ class AgentLoop:
             asyncio.Semaphore(_max) if _max > 0 else None
         )
         self.consolidator = Consolidator(
-            store=self.context.memory,
+            store=self.memory_store,
             provider=provider,
             model=self.model,
             sessions=self.sessions,
@@ -256,82 +267,138 @@ class AgentLoop:
             session_ttl_minutes=session_ttl_minutes,
         )
         self.dream = Dream(
-            store=self.context.memory,
+            store=self.memory_store,
             provider=provider,
             model=self.model,
         )
-        self._register_default_tools()
+        default_timezone = self.context.timezone or "Asia/Shanghai"
+        register_default_tools(
+            registry=self.tools,
+            workspace=self.workspace,
+            exec_config=self.exec_config,
+            web_config=self.web_config,
+            restrict_to_workspace=self.restrict_to_workspace,
+            session_manager=self.sessions,
+            task_service=self.task_service,
+            default_timezone=default_timezone,
+            extra_allowed_dirs=[GLOBAL_SKILLS_DIR],
+        )
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
 
-    def _register_default_tools(self) -> None:
-        """注册主链路默认工具集合。"""
-        allowed_dir = (
-            self.workspace if (self.restrict_to_workspace or self.exec_config.sandbox) else None
-        )
-        extra_allowed_dirs = [GLOBAL_SKILLS_DIR]
-        self.tools.register(
-            ReadFileTool(
-                workspace=self.workspace,
-                allowed_dir=allowed_dir,
-                extra_allowed_dirs=extra_allowed_dirs,
+    async def cancel_session_tasks(self, session_key: str) -> int:
+        """取消指定会话下的活跃任务。
+
+        参数:
+            session_key: 目标会话键。
+
+        返回:
+            本次成功发出取消请求的任务数量。
+        """
+        tasks = self._active_tasks.pop(session_key, [])
+        cancelled = sum(1 for task in tasks if not task.done() and task.cancel())
+        for task in tasks:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        return cancelled
+
+    def reset_session(self, session_key: str) -> None:
+        """清空指定会话，并把未归档消息转入后台摘要。
+
+        参数:
+            session_key: 目标会话键。
+
+        返回:
+            无返回值。
+        """
+        session = self.sessions.get_or_create(session_key)
+        snapshot = session.messages[session.last_consolidated :]
+        session.clear()
+        self.sessions.save(session)
+        self.sessions.invalidate(session.key)
+        if snapshot:
+            self._schedule_background(self.consolidator.archive(snapshot))
+
+    async def build_status_snapshot(self, session_key: str) -> LoopStatusSnapshot:
+        """构造当前会话的运行状态快照。
+
+        参数:
+            session_key: 目标会话键。
+
+        返回:
+            当前会话的运行状态快照。
+        """
+        session = self.sessions.get_or_create(session_key)
+        context_tokens_estimate = 0
+        try:
+            context_tokens_estimate, _ = self.consolidator.estimate_session_prompt_tokens(
+                session
             )
+        except Exception:
+            pass
+        if context_tokens_estimate <= 0:
+            context_tokens_estimate = self._last_usage.get("prompt_tokens", 0)
+
+        search_usage_text: str | None = None
+        try:
+            from elebot.utils.searchusage import fetch_search_usage
+
+            search_config = getattr(self.web_config, "search", None)
+            if search_config is not None:
+                usage = await fetch_search_usage(
+                    provider=getattr(search_config, "provider", "duckduckgo"),
+                    api_key=getattr(search_config, "api_key", "") or None,
+                )
+                search_usage_text = usage.format()
+        except Exception:
+            # /status 的附加信息失败不能影响主响应。
+            pass
+
+        return LoopStatusSnapshot(
+            version=__version__,
+            model=self.model,
+            start_time=self._start_time,
+            last_usage=dict(self._last_usage),
+            context_window_tokens=self.context_window_tokens,
+            session_msg_count=len(session.get_history(max_messages=0)),
+            context_tokens_estimate=context_tokens_estimate,
+            search_usage_text=search_usage_text,
         )
-        for cls in (WriteFileTool, EditFileTool, ListDirTool):
-            self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
-        for cls in (GlobTool, GrepTool):
-            self.tools.register(
-                cls(
-                    workspace=self.workspace,
-                    allowed_dir=allowed_dir,
-                    extra_allowed_dirs=extra_allowed_dirs,
+
+    def trigger_dream_background(self, channel: str, chat_id: str) -> None:
+        """在后台触发一次 Dream，并把结果发回消息总线。
+
+        参数:
+            channel: 结果回推的消息渠道。
+            chat_id: 结果回推的会话标识。
+
+        返回:
+            无返回值。
+        """
+
+        async def _run_dream() -> None:
+            started_at = time.monotonic()
+            try:
+                did_work = await self.dream.run()
+                elapsed = time.monotonic() - started_at
+                if did_work:
+                    content = f"Dream 已完成，耗时 {elapsed:.1f}s。"
+                else:
+                    content = "Dream：没有需要处理的内容。"
+            except Exception as exc:
+                elapsed = time.monotonic() - started_at
+                content = f"Dream 执行失败，耗时 {elapsed:.1f}s：{exc}"
+            await self.bus.publish_outbound(
+                OutboundMessage(
+                    channel=channel,
+                    chat_id=chat_id,
+                    content=content,
                 )
             )
-        self.tools.register(
-            NotebookEditTool(
-                workspace=self.workspace,
-                allowed_dir=allowed_dir,
-                extra_allowed_dirs=extra_allowed_dirs,
-            )
-        )
-        if self.exec_config.enable:
-            self.tools.register(
-                ExecTool(
-                    working_dir=str(self.workspace),
-                    timeout=self.exec_config.timeout,
-                    restrict_to_workspace=self.restrict_to_workspace,
-                    sandbox=self.exec_config.sandbox,
-                    path_append=self.exec_config.path_append,
-                    allowed_env_keys=self.exec_config.allowed_env_keys,
-                    extra_allowed_dirs=extra_allowed_dirs,
-                )
-            )
-        if self.web_config.enable:
-            self.tools.register(
-                WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy)
-            )
-            self.tools.register(WebFetchTool(proxy=self.web_config.proxy))
-        default_timezone = self.context.timezone or "Asia/Shanghai"
-        self.tools.register(
-            ProposeTaskTool(
-                default_timezone=default_timezone,
-                session_manager=self.sessions,
-            )
-        )
-        self.tools.register(
-            CreateTaskTool(
-                default_timezone=default_timezone,
-                session_manager=self.sessions,
-            )
-        )
-        self.tools.register(ListTasksTool(default_timezone=default_timezone))
-        self.tools.register(
-            RemoveTaskTool(
-                default_timezone=default_timezone,
-                session_manager=self.sessions,
-            )
-        )
-        self.tools.register(UpdateTaskTool(default_timezone=default_timezone))
+
+        self._schedule_background(_run_dream())
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -373,8 +440,6 @@ class AgentLoop:
         """Remove <think>…</think> blocks that some models embed in content."""
         if not text:
             return None
-        from elebot.utils.helpers import strip_think
-
         return strip_think(text) or None
 
     @staticmethod
@@ -754,6 +819,11 @@ class AgentLoop:
             self.task_service.mark_running(msg.metadata.get("task_id"))
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
+        self._record_explicit_skill_mentions(
+            msg.content,
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+        )
 
         history = session.get_history(max_messages=0)
 
@@ -825,6 +895,33 @@ class AgentLoop:
             stop_reason=stop_reason,
             session_key=key,
         )
+
+    def _record_explicit_skill_mentions(
+        self,
+        current_message: str,
+        *,
+        channel: str | None = None,
+        chat_id: str | None = None,
+    ) -> None:
+        """记录用户显式提到的 skill。
+
+        参数:
+            current_message: 当前用户消息。
+            channel: 当前通道。
+            chat_id: 当前会话标识。
+
+        返回:
+            无返回值。
+        """
+        lowered = current_message.lower()
+        for skill in self.skill_registry.scan():
+            if skill.key.lower() in lowered or skill.metadata.name.lower() in lowered:
+                self.skill_registry.record_usage(
+                    skill,
+                    channel=channel,
+                    chat_id=chat_id,
+                    trigger="explicit",
+                )
 
     async def _process_message(
         self,

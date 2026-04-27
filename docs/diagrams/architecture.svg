@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 780" width="960" height="780">
+<style>
+  text { font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .layer-label { font-size: 12px; fill: #6b7280; font-weight: 600; letter-spacing: 1px; }
+  .title { font-size: 16px; fill: #111827; font-weight: 600; }
+  .subtitle { font-size: 11px; fill: #6b7280; }
+  .node-text { font-size: 13px; fill: #111827; font-weight: 600; }
+  .small-text { font-size: 11px; fill: #6b7280; }
+</style>
+<text x="480" y="25" text-anchor="middle" class="title">EleBot 系统架构图</text>
+<defs>
+  <marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+    <polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/>
+  </marker>
+  <marker id="arrow-gray" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+    <polygon points="0 0, 10 3.5, 0 7" fill="#9ca3af"/>
+  </marker>
+  <marker id="arrow-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+    <polygon points="0 0, 10 3.5, 0 7" fill="#16a34a"/>
+  </marker>
+  <marker id="arrow-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+    <polygon points="0 0, 10 3.5, 0 7" fill="#ea580c"/>
+  </marker>
+  <filter id="shadow" x="-5%" y="-5%" width="115%" height="115%">
+    <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#00000018"/>
+  </filter>
+</defs>
+<rect x="30" y="45" width="900" height="80" rx="6" fill="none" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6,4"/>
+<text x="45" y="61" class="layer-label">入口层 / CLI Entry</text>
+<rect x="80" y="70" width="200" height="40" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="180" y="94" text-anchor="middle" class="node-text">elebot agent</text>
+<rect x="320" y="70" width="200" height="40" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="420" y="94" text-anchor="middle" class="node-text">elebot onboard</text>
+<rect x="560" y="70" width="200" height="40" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="660" y="94" text-anchor="middle" class="node-text">elebot status</text>
+<rect x="30" y="150" width="900" height="85" rx="6" fill="none" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6,4"/>
+<text x="45" y="166" class="layer-label">运行时层 / Runtime Layer</text>
+<rect x="280" y="175" width="400" height="45" rx="6" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="480" y="193" text-anchor="middle" class="node-text">ElebotRuntime</text>
+<text x="480" y="208" text-anchor="middle" class="small-text">配置 → Provider → Bus → AgentLoop 统一装配 + 生命周期管理</text>
+<line x1="480" y1="125" x2="480" y2="175" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arrow-gray)"/>
+<rect x="30" y="260" width="900" height="220" rx="6" fill="none" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6,4"/>
+<text x="45" y="276" class="layer-label">核心层 / Agent Core</text>
+<rect x="60" y="293" width="180" height="44" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="150" y="320" text-anchor="middle" class="node-text">MessageBus</text>
+<text x="150" y="334" text-anchor="middle" class="small-text">事件路由 / slash 命令</text>
+<rect x="390" y="293" width="180" height="44" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="480" y="320" text-anchor="middle" class="node-text">AgentLoop</text>
+<text x="480" y="334" text-anchor="middle" class="small-text">对话主循环 + 注册工具</text>
+<rect x="620" y="293" width="180" height="44" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="710" y="320" text-anchor="middle" class="node-text">AgentRunner</text>
+<text x="710" y="334" text-anchor="middle" class="small-text">工具调度 + 结果治理</text>
+<line x1="240" y1="315" x2="388" y2="315" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+<line x1="570" y1="315" x2="618" y2="315" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+<rect x="390" y="370" width="180" height="40" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="480" y="395" text-anchor="middle" class="node-text">ContextBuilder</text>
+<line x1="480" y1="337" x2="480" y2="370" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+<rect x="390" y="427" width="180" height="36" rx="6" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="480" y="450" text-anchor="middle" class="node-text">MemoryStore</text>
+<line x1="480" y1="410" x2="480" y2="427" stroke="#dc2626" stroke-width="1.5" marker-end="url(#arrow-red)"/>
+<line x1="400" y1="390" x2="400" y2="463" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4,3"/>
+<polygon points="395,387 400,380 405,387" fill="#dc2626"/>
+<polygon points="395,466 400,473 405,466" fill="#dc2626"/>
+<text x="345" y="400" class="small-text" fill="#dc2626" text-anchor="end">读/写</text>
+<rect x="630" y="380" width="130" height="28" rx="4" fill="#fff7ed" stroke="#fed7aa" stroke-width="1" filter="url(#shadow)"/>
+<text x="695" y="398" text-anchor="middle" class="small-text" fill="#c2410c">Dream 归并</text>
+<rect x="630" y="435" width="130" height="28" rx="4" fill="#fff7ed" stroke="#fed7aa" stroke-width="1" filter="url(#shadow)"/>
+<text x="695" y="453" text-anchor="middle" class="small-text" fill="#c2410c">Consolidator</text>
+<line x1="480" y1="235" x2="480" y2="293" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arrow-gray)"/>
+<rect x="30" y="505" width="900" height="85" rx="6" fill="none" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6,4"/>
+<text x="45" y="521" class="layer-label">模型层 / Provider Layer</text>
+<rect x="330" y="530" width="300" height="45" rx="6" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="480" y="548" text-anchor="middle" class="node-text">DeepSeek V4 Flash</text>
+<text x="480" y="563" text-anchor="middle" class="small-text">LLM API · 64K 上下文 · 模型服务</text>
+<line x1="710" y1="337" x2="800" y2="337" stroke="#9ca3af" stroke-width="1.5"/>
+<line x1="800" y1="337" x2="800" y2="530" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arrow-gray)"/>
+<text x="808" y="433" class="small-text">API 调用</text>
+<line x1="480" y1="530" x2="150" y2="530" stroke="#9ca3af" stroke-width="1.5"/>
+<line x1="150" y1="530" x2="150" y2="480" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arrow-gray)"/>
+<text x="140" y="540" class="small-text" text-anchor="end">返回推理结果</text>
+<rect x="30" y="615" width="900" height="130" rx="6" fill="none" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6,4"/>
+<text x="45" y="631" class="layer-label">工具层 / Tools &amp; Skills</text>
+<rect x="60" y="650" width="130" height="35" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="125" y="672" text-anchor="middle" class="node-text">文件工具</text>
+<rect x="210" y="650" width="130" height="35" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="275" y="672" text-anchor="middle" class="node-text">搜索工具</text>
+<rect x="360" y="650" width="130" height="35" rx="6" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="425" y="672" text-anchor="middle" class="node-text">Shell 工具</text>
+<rect x="510" y="650" width="130" height="35" rx="6" fill="#fff7ed" stroke="#fed7aa" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="575" y="672" text-anchor="middle" class="node-text">Web 工具</text>
+<rect x="60" y="700" width="130" height="35" rx="6" fill="#faf5ff" stroke="#ede9fe" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="125" y="720" text-anchor="middle" class="node-text">MCP 工具</text>
+<text x="125" y="732" text-anchor="middle" class="small-text">12306 等</text>
+<rect x="210" y="700" width="300" height="35" rx="6" fill="#f0fdfa" stroke="#ccfbf1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="360" y="720" text-anchor="middle" class="node-text">26 个 Skills</text>
+<text x="360" y="732" text-anchor="middle" class="small-text">飞书全家桶 · 文档处理 · 工作流 · 前端幻灯片</text>
+<rect x="540" y="700" width="130" height="35" rx="6" fill="#fff7ed" stroke="#fed7aa" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="605" y="720" text-anchor="middle" class="node-text">Task 系统</text>
+<text x="605" y="732" text-anchor="middle" class="small-text">定时提醒</text>
+<path d="M 150 590 L 150 650" stroke="#ea580c" stroke-width="1.5" fill="none" marker-end="url(#arrow-orange)"/>
+<text x="140" y="602" class="small-text" fill="#ea580c" text-anchor="end">工具调用</text>
+<path d="M 605 735 L 850 735 L 850 315 L 798 315" stroke="#ea580c" stroke-width="1.5" fill="none" marker-end="url(#arrow-orange)" stroke-dasharray="5,3"/>
+<text x="860" y="318" class="small-text" fill="#ea580c">工具结果回填</text>
+<g transform="translate(35, 757)">
+  <line x1="0" y1="6" x2="25" y2="6" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+  <text x="31" y="10" class="small-text">核心数据流</text>
+  <line x1="120" y1="6" x2="145" y2="6" stroke="#ea580c" stroke-width="1.5" marker-end="url(#arrow-orange)"/>
+  <text x="151" y="10" class="small-text">工具调用流</text>
+  <line x1="240" y1="6" x2="265" y2="6" stroke="#dc2626" stroke-width="1.5" marker-end="url(#arrow-red)"/>
+  <text x="271" y="10" class="small-text">记忆读写</text>
+</g>
+</svg>

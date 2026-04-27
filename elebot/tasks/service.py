@@ -10,7 +10,7 @@ from elebot.tasks.models import ScheduledTask
 from elebot.tasks.scheduler import collect_due_tasks, compute_next_run
 from elebot.tasks.store import TaskStore
 from elebot.tasks.trigger import build_task_inbound_message
-from elebot.utils.helpers import timestamp
+from elebot.utils.time import timestamp
 
 
 class TaskService:
@@ -110,6 +110,61 @@ class TaskService:
         for task in tasks:
             merged.append(updated.get(task.task_id, task))
         self.store.save_all(merged)
+
+    def list_all(self) -> list[ScheduledTask]:
+        """列出全部任务。
+
+        参数:
+            无。
+
+        返回:
+            当前持久化的全部任务列表。
+        """
+        return self.store.list_all()
+
+    def list_by_session(self, session_key: str) -> list[ScheduledTask]:
+        """按会话列出任务。
+
+        参数:
+            session_key: 目标会话键。
+
+        返回:
+            属于该会话的任务列表。
+        """
+        return [task for task in self.store.list_all() if task.session_key == session_key]
+
+    def get(self, task_id: str) -> ScheduledTask | None:
+        """按 ID 获取任务。
+
+        参数:
+            task_id: 任务标识。
+
+        返回:
+            找到时返回任务对象，否则返回 ``None``。
+        """
+        return self.store.get(task_id)
+
+    def remove(self, task_id: str) -> bool:
+        """删除任务。
+
+        参数:
+            task_id: 任务标识。
+
+        返回:
+            删除成功时返回 ``True``。
+        """
+        return self.store.delete(task_id)
+
+    def upsert(self, task: ScheduledTask) -> None:
+        """插入或更新任务。
+
+        参数:
+            task: 待保存的任务对象。
+
+        返回:
+            无返回值。
+        """
+        self.store.upsert(task)
 
     def defer(self, task_id: str | None, *, reason: str) -> None:
         """延后一次任务触发。

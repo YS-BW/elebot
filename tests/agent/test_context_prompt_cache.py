@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-import re
+import datetime as datetime_module
 import json
+import re
 from datetime import datetime as real_datetime
 from importlib.resources import files as pkg_files
 from pathlib import Path
-import datetime as datetime_module
+from unittest.mock import MagicMock
 
 from elebot.agent.context import ContextBuilder
-from elebot.agent.skills import SkillMetadata, SkillSpec
+from elebot.agent.loop import AgentLoop
+from elebot.agent.memory import MemoryStore
+from elebot.agent.skills import SkillMetadata, SkillRegistry, SkillSpec
+from elebot.bus.queue import MessageBus
 
 
 class _FakeDatetime(real_datetime):
@@ -27,6 +31,19 @@ def _make_workspace(tmp_path: Path) -> Path:
     return workspace
 
 
+def _make_builder(
+    workspace: Path,
+    *,
+    skill_registry: SkillRegistry | None = None,
+) -> ContextBuilder:
+    """构造带显式依赖注入的 ContextBuilder。"""
+    return ContextBuilder(
+        workspace,
+        memory_store=MemoryStore(workspace),
+        skill_registry=skill_registry or SkillRegistry(),
+    )
+
+
 def test_bootstrap_files_are_backed_by_templates() -> None:
     template_dir = pkg_files("elebot") / "templates"
 
@@ -39,7 +56,7 @@ def test_system_prompt_stays_stable_when_clock_changes(tmp_path, monkeypatch) ->
     monkeypatch.setattr(datetime_module, "datetime", _FakeDatetime)
 
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
     _FakeDatetime.current = real_datetime(2026, 2, 24, 13, 59)
     prompt1 = builder.build_system_prompt()
@@ -52,7 +69,7 @@ def test_system_prompt_stays_stable_when_clock_changes(tmp_path, monkeypatch) ->
 
 def test_system_prompt_reflects_current_dream_memory_contract(tmp_path) -> None:
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
     prompt = builder.build_system_prompt()
 
@@ -66,7 +83,7 @@ def test_system_prompt_reflects_current_dream_memory_contract(tmp_path) -> None:
 def test_runtime_context_is_separate_untrusted_user_message(tmp_path) -> None:
     """Runtime metadata should be merged with the user message."""
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
     messages = builder.build_messages(
         history=[],
@@ -92,10 +109,10 @@ def test_runtime_context_is_separate_untrusted_user_message(tmp_path) -> None:
 def test_unprocessed_history_injected_into_system_prompt(tmp_path) -> None:
     """Entries in history.jsonl not yet consumed by Dream appear with timestamps."""
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
-    builder.memory.append_history("User asked about weather in Tokyo")
-    builder.memory.append_history("Agent fetched forecast via web_search")
+    builder.memory_store.append_history("User asked about weather in Tokyo")
+    builder.memory_store.append_history("Agent fetched forecast via web_search")
 
     prompt = builder.build_system_prompt()
     assert "# 最近历史" in prompt
@@ -107,10 +124,10 @@ def test_unprocessed_history_injected_into_system_prompt(tmp_path) -> None:
 def test_recent_history_capped_at_max(tmp_path) -> None:
     """Only the most recent _MAX_RECENT_HISTORY entries are injected."""
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
     for i in range(builder._MAX_RECENT_HISTORY + 20):
-        builder.memory.append_history(f"entry-{i}")
+        builder.memory_store.append_history(f"entry-{i}")
 
     prompt = builder.build_system_prompt()
     assert "entry-0" not in prompt
@@ -121,10 +138,10 @@ def test_recent_history_capped_at_max(tmp_path) -> None:
 def test_no_recent_history_when_dream_has_processed_all(tmp_path) -> None:
     """If Dream has consumed everything, no Recent History section should appear."""
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
-    cursor = builder.memory.append_history("already processed entry")
-    builder.memory.set_last_dream_cursor(cursor)
+    cursor = builder.memory_store.append_history("already processed entry")
+    builder.memory_store.set_last_dream_cursor(cursor)
 
     prompt = builder.build_system_prompt()
     assert "# 最近历史" not in prompt
@@ -133,14 +150,14 @@ def test_no_recent_history_when_dream_has_processed_all(tmp_path) -> None:
 def test_partial_dream_processing_shows_only_remainder(tmp_path) -> None:
     """When Dream has processed some entries, only the unprocessed ones appear."""
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
-    c1 = builder.memory.append_history("old conversation about Python")
-    c2 = builder.memory.append_history("old conversation about Rust")
-    builder.memory.append_history("recent question about Docker")
-    builder.memory.append_history("recent question about K8s")
+    builder.memory_store.append_history("old conversation about Python")
+    c2 = builder.memory_store.append_history("old conversation about Rust")
+    builder.memory_store.append_history("recent question about Docker")
+    builder.memory_store.append_history("recent question about K8s")
 
-    builder.memory.set_last_dream_cursor(c2)
+    builder.memory_store.set_last_dream_cursor(c2)
 
     prompt = builder.build_system_prompt()
     assert "# 最近历史" in prompt
@@ -153,7 +170,7 @@ def test_partial_dream_processing_shows_only_remainder(tmp_path) -> None:
 def test_execution_rules_in_system_prompt(tmp_path) -> None:
     """New execution rules should appear in the system prompt."""
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
     prompt = builder.build_system_prompt()
     assert "能做就直接做" in prompt
@@ -170,7 +187,7 @@ def test_system_prompt_injects_skill_metadata_only(tmp_path, monkeypatch) -> Non
         skill_file=tmp_path / "skills" / "release-note" / "SKILL.md",
         metadata=SkillMetadata(name="Release Note", description="生成发布说明"),
     )
-    
+
     class _FakeRegistry:
         root = tmp_path / "skills"
 
@@ -184,8 +201,7 @@ def test_system_prompt_injects_skill_metadata_only(tmp_path, monkeypatch) -> Non
                 f"- `release-note`: Release Note；生成发布说明；读取路径：`{fake_skill.skill_file}`"
             )
 
-    monkeypatch.setattr("elebot.agent.context.SkillRegistry", lambda root=None: _FakeRegistry())
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace, skill_registry=_FakeRegistry())
 
     prompt = builder.build_system_prompt()
     assert "# 可用 Skills" in prompt
@@ -207,8 +223,7 @@ def test_system_prompt_omits_skills_section_when_empty(tmp_path, monkeypatch) ->
         def build_prompt_summary(self):
             return ""
 
-    monkeypatch.setattr("elebot.agent.context.SkillRegistry", lambda root=None: _FakeRegistry())
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace, skill_registry=_FakeRegistry())
 
     prompt = builder.build_system_prompt()
     assert "# 可用 Skills" not in prompt
@@ -216,7 +231,7 @@ def test_system_prompt_omits_skills_section_when_empty(tmp_path, monkeypatch) ->
 
 def test_system_prompt_contains_task_confirmation_rules(tmp_path) -> None:
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
     prompt = builder.build_system_prompt()
     assert "# 定时任务规则" in prompt
@@ -224,8 +239,8 @@ def test_system_prompt_contains_task_confirmation_rules(tmp_path) -> None:
     assert "你可以主动询问是否需要创建提醒" in prompt
 
 
-def test_explicit_skill_mention_is_logged(tmp_path, monkeypatch) -> None:
-    """用户显式提到 skill 时应写入使用日志。"""
+def test_context_builder_does_not_log_explicit_skill_mentions(tmp_path, monkeypatch) -> None:
+    """ContextBuilder 不应再承担显式 skill 使用记录。"""
     workspace = _make_workspace(tmp_path)
     log_path = tmp_path / "logs" / "skill_usage.jsonl"
     fake_skill = SkillSpec(
@@ -249,16 +264,56 @@ def test_explicit_skill_mention_is_logged(tmp_path, monkeypatch) -> None:
 
             SkillRegistry.record_usage(self, *args, **kwargs)
 
-    monkeypatch.setattr("elebot.agent.context.SkillRegistry", lambda root=None: _FakeRegistry())
     monkeypatch.setattr(
         "elebot.agent.skills.get_skill_usage_log_path",
         lambda: log_path,
     )
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace, skill_registry=_FakeRegistry())
 
     builder.build_messages(
         history=[],
         current_message="请使用 release-note skill 帮我整理内容",
+        channel="cli",
+        chat_id="direct",
+    )
+
+    assert not log_path.exists()
+
+
+def test_agent_loop_logs_explicit_skill_mentions(tmp_path, monkeypatch) -> None:
+    """显式 skill 使用记录应由 AgentLoop 负责。"""
+    workspace = _make_workspace(tmp_path)
+    log_path = tmp_path / "logs" / "skill_usage.jsonl"
+    fake_skill = SkillSpec(
+        key="release-note",
+        root=tmp_path / "skills" / "release-note",
+        skill_file=tmp_path / "skills" / "release-note" / "SKILL.md",
+        metadata=SkillMetadata(name="Release Note", description="生成发布说明"),
+    )
+
+    class _FakeRegistry:
+        def scan(self):
+            return [fake_skill]
+
+        def record_usage(self, *args, **kwargs):
+            from elebot.agent.skills import SkillRegistry
+
+            SkillRegistry.record_usage(self, *args, **kwargs)
+
+    provider = MagicMock()
+    provider.get_default_model.return_value = "qwen3_6_plus"
+    provider.generation.max_tokens = 4096
+
+    monkeypatch.setattr(
+        "elebot.agent.skills.get_skill_usage_log_path",
+        lambda: log_path,
+    )
+
+    loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=workspace)
+    loop.skill_registry = _FakeRegistry()
+
+    loop._record_explicit_skill_mentions(
+        "请使用 release-note skill 帮我整理内容",
         channel="cli",
         chat_id="direct",
     )
@@ -272,7 +327,7 @@ def test_explicit_skill_mention_is_logged(tmp_path, monkeypatch) -> None:
 def test_channel_format_hint_telegram(tmp_path) -> None:
     """Telegram channel should get messaging-app format hint."""
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
     prompt = builder.build_system_prompt(channel="telegram")
     assert "格式提示" in prompt
@@ -282,7 +337,7 @@ def test_channel_format_hint_telegram(tmp_path) -> None:
 def test_channel_format_hint_whatsapp(tmp_path) -> None:
     """WhatsApp should get plain-text format hint."""
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
     prompt = builder.build_system_prompt(channel="whatsapp")
     assert "格式提示" in prompt
@@ -292,7 +347,7 @@ def test_channel_format_hint_whatsapp(tmp_path) -> None:
 def test_channel_format_hint_absent_for_unknown(tmp_path) -> None:
     """Unknown or None channel should not inject a format hint."""
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
     prompt = builder.build_system_prompt(channel=None)
     assert "格式提示" not in prompt
@@ -304,7 +359,7 @@ def test_channel_format_hint_absent_for_unknown(tmp_path) -> None:
 def test_build_messages_passes_channel_to_system_prompt(tmp_path) -> None:
     """build_messages should pass channel through to build_system_prompt."""
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
     messages = builder.build_messages(
         history=[], current_message="hi",
@@ -317,7 +372,7 @@ def test_build_messages_passes_channel_to_system_prompt(tmp_path) -> None:
 
 def test_assistant_followup_does_not_create_consecutive_assistant_messages(tmp_path) -> None:
     workspace = _make_workspace(tmp_path)
-    builder = ContextBuilder(workspace)
+    builder = _make_builder(workspace)
 
     messages = builder.build_messages(
         history=[{"role": "assistant", "content": "previous result"}],

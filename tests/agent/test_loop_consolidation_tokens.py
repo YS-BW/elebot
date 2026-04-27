@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import elebot.agent.memory.consolidator as memory_module
 from elebot.agent.loop import AgentLoop
-import elebot.agent.memory as memory_module
 from elebot.bus.queue import MessageBus
 from elebot.providers.base import LLMResponse
 

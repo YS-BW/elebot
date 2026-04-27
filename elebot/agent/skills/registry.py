@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from elebot.agent.skills.manager import SkillManager
 from elebot.agent.skills.models import SkillSpec
 from elebot.agent.skills.parser import parse_skill_metadata
 from elebot.config.paths import GLOBAL_SKILLS_DIR
@@ -28,7 +27,6 @@ class SkillRegistry:
             无返回值。
         """
         self.root = (root or GLOBAL_SKILLS_DIR).expanduser()
-        self._manager = SkillManager(self.root)
 
     def scan(self) -> list[SkillSpec]:
         """扫描全局 Skill 目录。
@@ -133,17 +131,6 @@ class SkillRegistry:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "a", encoding="utf-8") as log_file:
             log_file.write(json.dumps(payload, ensure_ascii=False) + "\n")
-
-    def uninstall(self, skill_key: str) -> tuple[bool, str]:
-        """卸载指定 skill。
-
-        参数:
-            skill_key: 目标 skill 键名。
-
-        返回:
-            ``(是否成功, 提示文本)``。
-        """
-        return self._manager.uninstall(skill_key)
 
     def _discover_all(self) -> list[Path]:
         """返回所有带 ``SKILL.md`` 的 skill 目录。"""

@@ -92,6 +92,52 @@ async def test_runner_preserves_reasoning_fields_and_tool_results():
 
 
 @pytest.mark.asyncio
+async def test_runner_preserves_empty_reasoning_content_for_tool_calls():
+    from elebot.agent.runner import AgentRunSpec, AgentRunner
+
+    provider = MagicMock()
+    captured_second_call: list[dict] = []
+    call_count = {"n": 0}
+
+    async def chat_with_retry(*, messages, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return LLMResponse(
+                content="",
+                tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
+                reasoning_content="",
+                usage={"prompt_tokens": 5, "completion_tokens": 3},
+            )
+        captured_second_call[:] = messages
+        return LLMResponse(content="done", tool_calls=[], usage={})
+
+    provider.chat_with_retry = chat_with_retry
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value="tool result")
+
+    runner = AgentRunner(provider)
+    result = await runner.run(AgentRunSpec(
+        initial_messages=[
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "do task"},
+        ],
+        tools=tools,
+        model="test-model",
+        max_iterations=3,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    assert result.final_content == "done"
+    assistant_messages = [
+        msg for msg in captured_second_call
+        if msg.get("role") == "assistant" and msg.get("tool_calls")
+    ]
+    assert len(assistant_messages) == 1
+    assert assistant_messages[0]["reasoning_content"] == ""
+
+
+@pytest.mark.asyncio
 async def test_runner_calls_hooks_in_order():
     from elebot.agent.hook import AgentHook, AgentHookContext
     from elebot.agent.runner import AgentRunSpec, AgentRunner
@@ -316,7 +362,7 @@ async def test_runner_persists_large_tool_results_for_follow_up_calls(tmp_path):
 
 
 def test_persist_tool_result_prunes_old_session_buckets(tmp_path):
-    from elebot.utils.helpers import maybe_persist_tool_result
+    from elebot.agent.tool_results import maybe_persist_tool_result
 
     root = tmp_path / ".elebot" / "tool-results"
     old_bucket = root / "old_session"
@@ -345,7 +391,7 @@ def test_persist_tool_result_prunes_old_session_buckets(tmp_path):
 
 
 def test_persist_tool_result_leaves_no_temp_files(tmp_path):
-    from elebot.utils.helpers import maybe_persist_tool_result
+    from elebot.agent.tool_results import maybe_persist_tool_result
 
     root = tmp_path / ".elebot" / "tool-results"
     maybe_persist_tool_result(
@@ -361,16 +407,16 @@ def test_persist_tool_result_leaves_no_temp_files(tmp_path):
 
 
 def test_persist_tool_result_logs_cleanup_failures(monkeypatch, tmp_path):
-    from elebot.utils.helpers import maybe_persist_tool_result
+    from elebot.agent.tool_results import maybe_persist_tool_result
 
     warnings: list[str] = []
 
     monkeypatch.setattr(
-        "elebot.utils.helpers._cleanup_tool_result_buckets",
+        "elebot.agent.tool_results._cleanup_tool_result_buckets",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("busy")),
     )
     monkeypatch.setattr(
-        "elebot.utils.helpers.logger.warning",
+        "elebot.agent.tool_results.logger.warning",
         lambda message, *args: warnings.append(message.format(*args)),
     )
 

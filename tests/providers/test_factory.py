@@ -10,31 +10,17 @@ from elebot.config.schema import Config
 from elebot.providers.factory import build_provider
 
 
-def test_build_provider_uses_github_copilot_backend() -> None:
-    """显式指定 github-copilot 时应装配对应 backend。"""
+def test_build_provider_uses_forced_openai_backend() -> None:
+    """显式指定 openai 时应装配对应 backend。"""
     config = Config.model_validate(
         {
             "agents": {
                 "defaults": {
-                    "provider": "github-copilot",
-                    "model": "github-copilot/gpt-4.1",
+                    "provider": "openai",
+                    "model": "gpt-4.1",
                 }
-            }
-        }
-    )
-
-    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = build_provider(config)
-
-    assert provider.__class__.__name__ == "GitHubCopilotProvider"
-
-
-def test_build_provider_uses_dashscope_for_default_qwen() -> None:
-    """默认 qwen 主链路应装配 dashscope 的兼容 provider。"""
-    config = Config.model_validate(
-        {
-            "providers": {"dashscope": {"apiKey": "dashscope-test-key"}},
-            "agents": {"defaults": {"model": "qwen3_6_plus"}},
+            },
+            "providers": {"openai": {"apiKey": "openai-test-key"}},
         }
     )
 
@@ -42,10 +28,26 @@ def test_build_provider_uses_dashscope_for_default_qwen() -> None:
         provider = build_provider(config)
 
     assert provider.__class__.__name__ == "OpenAICompatProvider"
-    assert provider.get_default_model() == "qwen3_6_plus"
     assert provider._spec is not None
-    assert provider._spec.name == "dashscope"
-    assert provider._effective_base == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert provider._spec.name == "openai"
+
+
+def test_build_provider_uses_deepseek_for_default_first_run() -> None:
+    """首次默认主链路应装配 DeepSeek 的兼容 provider。"""
+    config = Config.model_validate(
+        {
+            "providers": {"deepseek": {"apiKey": "deepseek-test-key"}},
+        }
+    )
+
+    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = build_provider(config)
+
+    assert provider.__class__.__name__ == "OpenAICompatProvider"
+    assert provider.get_default_model() == "deepseek-v4-flash"
+    assert provider._spec is not None
+    assert provider._spec.name == "deepseek"
+    assert provider._effective_base == "https://api.deepseek.com"
 
 
 def test_build_provider_applies_default_generation_settings() -> None:
@@ -55,6 +57,7 @@ def test_build_provider_applies_default_generation_settings() -> None:
             "providers": {"dashscope": {"apiKey": "dashscope-test-key"}},
             "agents": {
                 "defaults": {
+                    "provider": "dashscope",
                     "model": "qwen3_6_plus",
                     "temperature": 0.6,
                     "max_tokens": 4096,

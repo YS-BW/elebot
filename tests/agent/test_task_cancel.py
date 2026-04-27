@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -34,7 +33,7 @@ class TestHandleStop:
     @pytest.mark.asyncio
     async def test_stop_no_active_task(self):
         from elebot.bus.events import InboundMessage
-        from elebot.command.builtin import cmd_stop
+        from elebot.command.handlers.session import cmd_stop
         from elebot.command.router import CommandContext
 
         loop, bus = _make_loop()
@@ -46,7 +45,7 @@ class TestHandleStop:
     @pytest.mark.asyncio
     async def test_stop_cancels_active_task(self):
         from elebot.bus.events import InboundMessage
-        from elebot.command.builtin import cmd_stop
+        from elebot.command.handlers.session import cmd_stop
         from elebot.command.router import CommandContext
 
         loop, bus = _make_loop()
@@ -73,7 +72,7 @@ class TestHandleStop:
     @pytest.mark.asyncio
     async def test_stop_cancels_multiple_tasks(self):
         from elebot.bus.events import InboundMessage
-        from elebot.command.builtin import cmd_stop
+        from elebot.command.handlers.session import cmd_stop
         from elebot.command.router import CommandContext
 
         loop, bus = _make_loop()

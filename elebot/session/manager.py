@@ -8,7 +8,8 @@ from typing import Any
 
 from loguru import logger
 
-from elebot.utils.helpers import ensure_dir, find_legal_message_start, safe_filename
+from elebot.agent.messages import find_legal_message_start
+from elebot.utils.fs import ensure_dir, safe_filename
 
 
 @dataclass

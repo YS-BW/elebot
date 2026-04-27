@@ -6,7 +6,7 @@ from typing import Any
 
 from loguru import logger
 
-from elebot.utils.helpers import stringify_text_blocks
+from elebot.agent.messages import stringify_text_blocks
 
 _MAX_REPEAT_EXTERNAL_LOOKUPS = 2
 

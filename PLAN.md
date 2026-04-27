@@ -1,260 +1,255 @@
 # EleBot 后续实现计划
 
-> 这份文件是项目内部的后续实现计划，不放进 `docs/`，也不当成用户文档。
+> 这份文件是项目内部计划，不放进 `docs/`，也不当成用户文档。
 
 ## 1. 计划目标
 
-当前 EleBot 已经具备终端主链路、skills、tasks 和基础工具闭环。  
-下一阶段不再优先扩展“更多小功能”，而是把产品形态从“终端内运行的 agent”推进到“可常驻、可中断、可接多入口的 runtime”。
+EleBot 当前阶段的目标不变：
 
-这份计划只覆盖下面 5 个方向：
+- 做成 nanobot 风格的终端 AI 助手
+- 先把已有核心能力做清楚
+- 不扩未来能力
+- 不做兼容层
+- 不做迁移脚本
+- 不保留过渡实现
 
-1. 系统级后台运行
-2. 真正的中断能力
-3. 多端入口
-4. 多通道能力
-5. 子代理
+项目推进时，优先遵守这三条：
 
-已经明确暂缓的方向：
+- 先相信代码事实，不按历史讨论想象当前实现
+- 代码、测试、文档、计划必须保持一致
+- 一次只推进一个模块，不跨方向混做
 
+## 2. 当前代码事实
+
+### 2.1 当前已经具备
+
+- 终端主链路闭环
+- 进程内 `runtime` 装配与生命周期管理
+- 基础多轮对话
+- 流式输出
+- session 持久化
+- workspace 模板初始化
+- 全局 skills 扫描与 prompt 注入
+- tasks 的自然语言创建、确认后落盘、后台轮询、系统消息触发
+- 最小工具调用闭环
+
+### 2.2 当前还没有
+
+- 真正完整的中断能力
 - 系统级调度后端
-- 主动唤醒
-- `cron` / `launchd` / Windows Task Scheduler 适配
+- 正式的 Web / desktop 多端入口
+- 多通道能力
+- 重新设计后的子代理体系
 
-## 1.1 模块完成定义
+### 2.3 当前主链路
 
-从现在开始，`PLAN.md` 中每个模块的“完成”都按统一标准判断：
+当前真实启动链路已经固定为：
+
+```text
+CLI
+  ↓
+runtime
+  ↓
+Bus
+  ↓
+AgentLoop
+```
+
+后续所有新入口都必须复用这条链路，不能再绕回：
+
+- `facade`
+- 入口层自己拼 `Bus + provider + AgentLoop`
+- 入口层直接维护一套平行生命周期
+
+### 2.4 当前结构边界
+
+当前已经收口成下面这组 owner 分工：
+
+```text
+config      = 只保存配置事实
+providers   = provider 元数据、解析、装配、model catalog
+runtime     = 统一对外复用入口与生命周期
+agent       = 执行循环、上下文装配、会话内控制
+command     = slash 命令协议与 handler 组织
+tasks       = 任务领域服务与持久化
+agent/memory= 记忆存储、压缩与 Dream
+utils       = 低层通用小工具
+```
+
+### 2.5 当前必须固定下来的事实
+
+- provider 解析入口在 `elebot/providers/resolution.py`
+- provider 实例化入口在 `elebot/providers/factory.py`
+- 模型目录 owner 在 `elebot/providers/model_catalog.py`
+- `runtime` 是未来多入口唯一可复用底座
+- `TaskService` 是任务领域统一对外入口
+- `MemoryStore` 是 Dream 历史 owner
+- 历史唯一来源固定为 `memory/history.jsonl`
+- `HISTORY.md` 已不是当前实现的一部分
+- skill 管理 owner 在 `agent/skills`
+- 裸 `/skill` 已移除，只保留 `/skill list|install|uninstall`
+- 首次 `onboard` 默认 provider 是 `deepseek`
+- 首次 `onboard` 默认模型是 `deepseek-v4-flash`
+- `onboard` 当前会尝试预装两份本地默认 skill 源
+- DeepSeek 的 tool-call transcript 协议修复已经固定收口在 provider 层
+
+## 3. 模块完成定义
+
+`PLAN.md` 里的一个模块，只有同时满足下面四项才算完成：
 
 1. 代码已经实现
 2. 对应局部测试已经新增或更新，并且实际跑过
 3. `docs/` 中对应模块文档已经新增或更新
-4. 本文件已经回写：
-   - 当前完成状态
-   - 剩余事项
-   - 新风险
+4. 本文件已经回写当前状态、剩余事项和风险
 
 如果只完成了代码和测试，没有完成文档与计划回写，那么该模块只能标记为：
 
 - `代码实现完成，项目回写未完成`
 
-不能直接标记成“完成”。
+## 4. 当前优先级
 
-## 2. 总优先级
+从现在开始，后续优先级固定为：
 
-当前建议的推进顺序固定为：
+- `P0`：模块五，真正的中断能力
+- `P1`：模块六，多端入口
+- `P2`：模块七，多通道能力
+- `P3`：模块八，子代理
 
-```text
-后台 runtime
-  ↓
-中断能力
-  ↓
-多端入口
-  ↓
-多通道能力
-  ↓
-子代理
-```
+另外还有两条边界必须固定下来：
 
-原因不是“功能想象空间”，而是依赖关系：
+- 模块一到模块四已经完成，后续默认只接受缺陷修复、文档同步和必要的小范围事实回写
+- 不应把 `status` 面板增强、model catalog 动态化、skill marketplace、WebUI 包装之类事项插到模块五之前
 
-- 没有独立 runtime，后面所有入口都只是壳
-- 没有稳定 interrupt，多端交互体验会很差
-- 多通道本质上比 Web / desktop 更复杂
-- 子代理会把上下文和控制流复杂度推到最高，必须最后做
+## 5. 已完成模块回顾
 
----
-
-## 3. 模块一：系统级后台运行
-
-### 3.0 当前状态
+### 5.1 模块一：进程内 Runtime 收口
 
 当前状态：`已完成`
 
-本次已完成：
+已经落地的事实：
 
 - 新增 `elebot/runtime/`
-- CLI 改为通过 runtime 装配并启动 `AgentLoop`
-- runtime 生命周期被单独抽出
-- 交互模式的 `AgentLoop` 生命周期也已回收到 runtime，CLI 交互层不再重复 stop / close 主循环
+- CLI 通过 `ElebotRuntime.from_config()` 统一装配主链路
+- `RuntimeLifecycle` 统一承接 `start / wait / stop / close`
+- 交互模式里，`AgentLoop` 生命周期已经回收到 runtime
+- `elebot/facade.py` 已移除
 - provider 装配入口已收口到 `elebot/providers/factory.py`
-- runtime 已直接依赖 provider factory，不再通过 `facade` 复用装配逻辑
-- `elebot/facade.py` 与顶层 `Elebot` / `RunResult` 导出已移除
-- 对应 CLI / runtime 测试已新增并通过
-- `docs/RUNTIME.md` 已补齐当前实现教程
-- `docs/CLI.md`、`docs/ARCHITECTURE.md`、`docs/README.md` 已同步到当前启动链路
 
-第一阶段完成定义已经满足：
+后续边界：
 
-1. 代码已经实现
-2. 局部测试已经新增并实际跑过
-3. `docs/` 已新增对应模块文档
-4. 本文件已经回写当前状态、剩余事项和风险
+- 不重新引入 `facade`
+- 不在 CLI / Web / desktop 里复制装配逻辑
+- 不让入口层直接 new 一整串底层对象
 
-模块一现在可以按项目定义标记为完成。
+### 5.2 模块二：结构收口
 
-### 3.0.1 当前代码事实补充
+当前状态：`已完成`
 
-围绕模块一的主链路收口，当前又有三条必须记住的事实：
+已经落地的事实：
 
-- provider 装配入口现在在 `elebot/providers/factory.py`，不再挂在 `facade` 下
-- `runtime` 直接复用 provider factory，后续入口不应该再复制一套装配逻辑
-- 以后如果做 Web / desktop / channel，也应该基于 `runtime`，不要重新引入 `facade` 形态
+- `config` 退回纯配置模型
+- provider 解析移动到 `providers/resolution.py`
+- `runtime` 暴露统一复用的薄控制 API
+- `command` 拆成协议层和 handlers
+- `AgentLoop` 暴露公开 owner API
+- `TaskService` 成为任务领域统一对外入口
+- `TaskStore` 退回纯持久化仓库
+- `agent/memory` 从单文件拆成 package
+- 默认工具注册从 `AgentLoop` 内部初始化流程抽离
 
-这里的“完成”含义是：
+后续边界：
 
-- 当前计划要求的进程内 runtime 分层已经落地
-- CLI 已经通过统一 runtime 入口启动主链路
-- 生命周期入口已经从 CLI 逻辑里抽出
+- slash 命令不再直接碰底层私有状态
+- 未来 Web / desktop / channel 不应绕过 runtime 直接拼 `AgentLoop`
 
-下面这些不是当前模块未完成项，而是明确留给后续模块或后续阶段的边界：
+### 5.3 模块三：结构续收口
 
-- 独立 daemon 入口
-- runtime 与前台交互入口的进一步解耦
-- 系统级守护接入
+当前状态：`已完成`
 
-### 3.1 目标
+已经落地的事实：
 
-把当前只依赖 `elebot agent` 前台进程的实现，收口成一个可独立运行的后台 runtime。
+- `providers` 收口了 model catalog
+- OAuth provider 整套移除
+- CLI 拆成真实入口层
+- `ContextBuilder` 退回纯上下文装配器
+- `utils/helpers.py` 已删除并按 owner 分流
+- `MemoryStore` 不再保留 `HISTORY.md` 兼容逻辑
+- `pyproject.toml` 与 `uv.lock` 已同步到当前依赖状态
 
-目标不是一上来就做系统级服务管理，而是先把代码结构调整到：
+后续边界：
 
-```text
-CLI 只是入口
-核心 agent/runtime 可以独立常驻
-```
+- 不恢复 Codex / Copilot provider
+- 不恢复 CLI 登录入口
+- 不恢复 `HISTORY.md` 兼容路径
 
-### 3.2 当前问题
+### 5.4 模块四：全局 Skill 管理收口
 
-当前代码事实：
+当前状态：`已完成`
 
-- 已经有 `elebot/runtime/` 负责装配 `Bus`、provider 和 `AgentLoop`
-- CLI 已经不再直接 new 出所有运行时对象
-- 但 runtime 仍然只能通过当前 CLI 进程启动
+已经落地的事实：
 
-这会导致：
+- `SkillRegistry` 退回只读 owner
+- `SkillManager` 成为 skill 文件系统写操作 owner
+- skill 安装支持本地目录、直接下载链接、Git 链接、GitHub `tree` 子目录链接
+- skill 协议固定为 `/skill list|install|uninstall`
+- 裸 `/skill` 已移除
 
-- 任务系统仍然不能脱离当前终端进程存在
-- 后面 Web / desktop 入口还没有独立 runtime 可挂接
-- 当前 runtime 仍然只是进程内分层，不是系统级守护进程
+后续边界：
 
-### 3.3 本阶段要做什么
+- 当前不做 marketplace
+- 当前不做默认技能集系统
+- 当前不做远端搜索
+- 动态感知仍然依赖每轮 `SkillRegistry.scan()`，不是热重载守护进程
 
-第一阶段只做 runtime 分层，不做系统守护进程注册。
+## 6. 模块五：真正的中断能力
 
-建议拆出下面这层：
+当前状态：`P0 / 下一优先级`
 
-```text
-elebot/runtime/
-  __init__.py
-  app.py
-  lifecycle.py
-  state.py
-```
+### 6.1 为什么现在先做它
 
-职责建议：
+模块一到模块四已经把主链路和结构边界收干净了，当前最大的缺口已经不是“职责混乱”，而是“交互不可真正中断”。
 
-- `app.py`
-  - 组装 `Bus`、provider、`AgentLoop`
-  - 暴露统一启动 / 停止入口
-- `lifecycle.py`
-  - 管理后台任务、关闭流程、异常传播
-- `state.py`
-  - 保存 runtime 级共享状态，例如运行标记、活跃会话映射、后台服务句柄
+如果这一步不先做，后面的多端入口、多通道、子代理都会直接继承同一个问题：
 
-当前代码事实对应关系已经落地为：
+- 用户无法明确打断当前长回复
+- 工具执行取消语义不清晰
+- 中断和失败容易混在一起
+- session 恢复语义会继续模糊
 
-- `app.py`
-  - 已负责装配 `Bus`、provider、`AgentLoop`
-  - 已暴露 `run_once()`、`run_interactive()`、`start()`、`wait()`、`stop()`、`close()`
-- `lifecycle.py`
-  - 已负责后台主循环的启动、等待、关闭与状态回收
-- `state.py`
-  - 已保存 `config`、`bus`、`provider`、`agent_loop`、`serve_task`、`started`
+### 6.2 目标
 
-也就是说，这一阶段不再是“建议结构”，而是已经按当前实现落地。
+这一步只解决单 runtime、单会话下的真实 interrupt，不扩未来能力。
 
-### 3.4 当前边界
+必须达成的结果：
 
-这一步不要做：
+- 用户在流式回复中途可以打断
+- 工具执行过程中可以打断
+- 中断状态和失败状态明确区分
+- 中断后 session 不损坏
+- 中断后还能继续原会话
 
-- `launchd`
-- Windows Service
-- `systemd`
-- 托盘
-- 菜单栏
+### 6.3 当前基础
 
-这里只把“进程内结构”整理对。
+当前已经具备的前置条件：
 
-### 3.5 验收标准
+- `runtime` 已统一装配主链路
+- `AgentLoop` 已经有会话级活跃任务映射
+- `AgentLoop.cancel_session_tasks()` 已成为公开 owner API
+- session 已经有运行中 checkpoint 恢复逻辑
 
-- `elebot agent` 不再自己直接拼所有运行时对象
-- CLI 可以调用统一 runtime 启动入口
-- runtime 可以在不依赖交互输入循环的情况下独立启动和停止
-- `tasks`、`skills`、`Bus`、`AgentLoop` 生命周期归一
+### 6.4 本模块固定边界
 
-当前验收结论：
+这一步不做：
 
-- 已满足
+- 多人协作式中断
+- 子代理级联中断
+- 跨端同步中断状态
+- 系统级后台调度
+- Web / desktop 入口扩展
 
-这里的“生命周期归一”按当前模块定义理解为：
+### 6.5 实现重点
 
-- CLI 不再直接管理主链路装配
-- runtime 统一承接启动 / 等待 / 停止 / 关闭入口
-
-它不要求本轮就落到 daemon 或系统服务。
-
-### 3.6 后续边界
-
-模块一完成后，后续仍然有几条明显边界，但它们不阻塞当前模块结项：
-
-1. 第二阶段
-  - 增加独立 runtime 常驻入口，例如 `elebot daemon`
-  - 让 runtime 不再依赖 CLI 交互循环才有存在意义
-2. 第三阶段
-   - 再评估是否接系统级守护
-   - 这里才进入 `launchd` / `systemd` / Windows Service 的范围
-
-### 3.7 当前风险
-
-当前模块虽然可以结项，但还留着几个代码层风险：
-
-1. `run_interactive()` 目前仍然把 `agent_loop` 和 `bus` 交给 `interactive.py`，说明终端交互生命周期还没有完全收口到 runtime。
-2. 现在的 runtime 只有进程内抽象，没有独立命令入口，因此“系统级后台运行”仍然只是完成了分层准备，不是产品能力完成。
-3. `RuntimeState` 当前只保存最小状态，没有显式的错误态、关闭原因或更细粒度运行指标，后续做 daemon 时大概率还要补。
-
----
-
-## 4. 模块二：真正的中断能力
-
-### 4.1 目标
-
-把当前 `/stop` 这种粗粒度“取消活跃任务”，推进成真正的交互级 interrupt。
-
-当前要解决的是：
-
-- 用户在回复流中途打断
-- 工具执行过程中打断
-- 中断后状态不乱
-- 中断后还能继续同一会话
-
-### 4.2 当前问题
-
-当前已有：
-
-- `/stop` 能取消当前会话活跃任务
-- `AgentLoop` 里有活跃任务映射
-- session 有 checkpoint 恢复能力
-
-但仍然缺：
-
-- 正在流式输出时的细粒度中断语义
-- 工具调用中的取消传播
-- 中断后的统一状态落盘
-- “中断”和“失败”之间的明确区分
-
-### 4.3 本阶段要做什么
-
-建议先定义统一的中断语义：
+建议统一三类中断语义：
 
 ```text
 user_interrupt
@@ -262,242 +257,151 @@ tool_interrupt
 runtime_interrupt
 ```
 
-实现重点：
+实现重点固定为：
 
+- `CLI`
+  - 把用户中途停止动作送进统一 interrupt 链路
+- `runtime`
+  - 暴露统一中断入口，不让入口层自己拼取消逻辑
 - `AgentLoop`
   - 接受显式 interrupt 信号
-  - 能把中断分发到当前活跃推理 / 工具执行任务
+  - 把中断分发到当前推理与工具执行
 - `AgentRunner`
-  - 区分正常错误和取消错误
-  - 中断时保留最小可恢复上下文
-- `Session`
+  - 区分普通错误和取消错误
+- `session`
   - checkpoint 明确记录“本轮被中断”
-- `CLI`
-  - 后续可以接键盘级中断或 UI 按钮中断
+  - 恢复时不把中断误判成失败
 
-### 4.4 当前边界
-
-这一阶段不追求：
-
-- 多人协作式中断
-- 子代理级联中断
-- 跨端同步中断状态
-
-先把单 runtime、单会话的中断打实。
-
-### 4.5 验收标准
+### 6.6 验收标准
 
 - 用户能明确中断当前长回复
 - 中断不会把 session 历史打坏
 - 工具执行被中断时能给出明确状态
 - 中断后可以继续在原 session 聊下去
+- 中断状态不会被显示成普通失败
 
----
+### 6.7 完成前必须补齐的回写
 
-## 5. 模块三：多端入口
+- 更新 `docs/RUNTIME.md`
+- 更新 `docs/CLI.md`
+- 更新 `docs/SESSION.md`
+- 如有必要，补一份专门讲 interrupt 的模块文档
+- 回写本文件中的状态、风险和剩余事项
 
-### 5.1 目标
+## 7. 模块六：多端入口
 
-在 runtime 稳定后，把 EleBot 从“只有终端入口”推进成“多入口共享同一个 runtime”。
-
-### 5.2 当前问题
-
-现在的入口事实是：
-
-- 主要入口仍然是 `elebot agent`
-- 终端 UI 与 runtime 生命周期耦合
-- 没有正式的 UI 进程 / API 进程 / desktop 壳分层
-
-### 5.3 本阶段要做什么
-
-这一步不先做复杂前端，而是先定义入口边界。
-
-建议的结构方向：
-
-```text
-elebot/
-  runtime/
-  cli/
-  desktop/   # 以后接 Electron 或其他桌面壳
-  web/       # 以后接 Web UI 或本地 API
-```
-
-核心原则：
-
-- `runtime` 只提供能力
-- `cli` / `desktop` / `web` 只提供入口与展示
-
-CLI 后续应该成为：
-
-```text
-CLI Frontend → Runtime API / Runtime Facade → AgentLoop
-```
-
-而不是继续直接手搓全部主链路依赖。
-
-### 5.4 当前边界
-
-这一步不要直接：
-
-- 大做 Electron UI
-- 上复杂前端框架
-- 恢复旧 API 模块
-
-先把“入口与 runtime 解耦”做出来。
-
-### 5.5 验收标准
-
-- CLI 不再是唯一形态
-- 新入口可以接入统一 runtime
-- 不同入口不会各自维护一套 agent 运行逻辑
-
----
-
-## 6. 模块四：多通道能力
-
-### 6.1 目标
-
-在 runtime 稳定后，把外部消息入口重新设计成“消息适配层”，而不是恢复旧 frozen 代码。
-
-### 6.2 当前问题
-
-旧的 `channels` / `gateway` 方向已经被删出默认主链路。  
-当前真实情况是：
-
-- `Bus` 还在
-- `InboundMessage` / `OutboundMessage` 还在
-- 但没有正式的多通道接入层
-
-### 6.3 本阶段要做什么
-
-后续多通道应该按“适配器”而不是“主架构中心”来设计。
-
-建议结构方向：
-
-```text
-elebot/channels/
-  base.py
-  telegram.py
-  discord.py
-  ...
-```
-
-但重新接回时必须满足：
-
-- 渠道只负责协议转换
-- 不持有 agent 主逻辑
-- 最终统一转成 `InboundMessage`
-- 输出统一转成 `OutboundMessage`
-
-核心原则是：
-
-```text
-Channel Adapter → Bus → AgentLoop
-```
-
-而不是：
-
-```text
-Channel 自己直接调一堆 agent 内部方法
-```
-
-### 6.4 当前边界
-
-这一步不要：
-
-- 恢复旧通道代码当兼容层
-- 先铺很多平台再慢慢清理
-
-应该一次只接一个通道，验证抽象再扩。
-
-### 6.5 验收标准
-
-- 通道层只做消息协议适配
-- 主链路仍然是 `Bus → AgentLoop`
-- 不同通道不会分叉出不同 agent 逻辑
-
----
-
-## 7. 模块五：子代理
+当前状态：`P1 / 未开始`
 
 ### 7.1 目标
 
-最后才考虑重新设计子代理，不恢复旧实现，不把它做成当前主链路依赖。
+在模块五稳定后，把 EleBot 从“只有终端入口”推进成“多入口共享同一个 runtime”。
 
-### 7.2 当前问题
+### 7.2 固定原则
 
-子代理之前已经明确移除。  
-这说明旧实现不适合当前阶段，也不应该按“功能缺失”心态去快速补回。
+未来如果接：
 
-真正难点在于：
+- Web
+- desktop
+- 其它本地入口
 
-- 上下文切分
-- 资源配额
-- 工具权限
-- 输出合并
-- 中断传播
-- session 一致性
+都应该复用 `ElebotRuntime` 暴露的统一入口，而不是：
 
-### 7.3 本阶段要做什么
+- 直接拼 `MessageBus`
+- 直接拼 `AgentLoop`
+- 再造一层新的 facade
 
-只有在前面 1 到 4 都稳定后，才开始讨论：
+### 7.3 验收标准
 
-- 子代理是后台 worker，还是会话内并发执行器
-- 子代理是否共享主 session
-- 子代理是否拥有独立工具权限
-- 主代理如何接收结果
+- CLI 不再是唯一入口形态
+- 新入口可以接入统一 runtime
+- 不同入口不会各自维护一套 agent 运行逻辑
+- 模块五的中断语义在新入口下保持一致
 
-建议方向是：
+## 8. 模块七：多通道能力
+
+当前状态：`P2 / 未开始`
+
+### 8.1 目标
+
+把外部消息入口重新设计成协议适配层，而不是恢复旧 frozen 代码。
+
+### 8.2 固定原则
+
+后续多通道应该按下面的主链路接入：
 
 ```text
-主代理负责任务拆分
-子代理只处理有边界的小任务
-结果通过结构化消息返回主代理
+Channel Adapter
+  ↓
+Bus
+  ↓
+AgentLoop
 ```
 
-### 7.4 当前边界
+通道层只负责：
 
-这一步不要：
+- 外部协议转 `InboundMessage`
+- `OutboundMessage` 转外部协议
 
-- 恢复旧版子代理代码
-- 先做多代理 UI
-- 一开始就做复杂树状代理拓扑
+通道层不负责：
 
-### 7.5 验收标准
+- 主执行逻辑
+- session 内状态修改
+- provider 选择
+
+### 8.3 验收标准
+
+- 通道层只做协议适配
+- 主链路仍然是 `Bus -> AgentLoop`
+- 不同通道不会分叉出不同 agent 逻辑
+- 模块五的中断语义在通道侧仍然成立
+
+## 9. 模块八：子代理
+
+当前状态：`P3 / 未开始`
+
+### 9.1 目标
+
+最后才考虑重新设计子代理，不恢复旧实现，也不把它做成当前主链路依赖。
+
+### 9.2 固定原则
+
+只有在前面几层稳定后，才开始讨论：
+
+- 子代理是否共享主 session
+- 子代理是否拥有独立工具权限
+- 结果如何结构化返回主代理
+- 中断如何传播
+
+### 9.3 验收标准
 
 - 子代理不是默认主链路依赖
 - 权限、上下文、结果归并边界清楚
 - 中断和失败语义与主代理一致
 
----
+## 10. 当前风险
 
-## 8. 分阶段建议
+当前最明确的风险只有这些：
 
-### Phase 1
+1. 中断语义还没有统一，`/stop` 目前本质上仍然是粗粒度取消。
+2. `runtime` 目前是进程内统一入口，不是独立后台服务。
+3. `status` 现在只是 CLI 侧状态查看，不是统一运行面板。
+4. model catalog 采用静态目录，模型事实变化需要显式更新仓库。
+5. 脏工作区下继续推进时，最容易把历史讨论误当成当前代码事实。
 
-- 系统级后台运行
-- 中断能力第一版
+## 11. 实际执行顺序
 
-### Phase 2
+后续实际开工顺序固定为：
 
-- 多端入口分层
+1. 先完成模块五 interrupt
+2. 跑通 interrupt 对 CLI 主链路的完整验证
+3. 再做一个最小多端入口验证 runtime 复用
+4. 然后才考虑通道
+5. 最后才考虑子代理
 
-### Phase 3
+## 12. 一句话原则
 
-- 多通道能力重建
-
-### Phase 4
-
-- 子代理重新设计
-
----
-
-## 9. 一句话原则
-
-下一阶段不要急着“加入口”或“加高级能力”，而是先把 EleBot 做成：
+下一阶段不要急着继续扩入口或加高级能力，而是先把 EleBot 做成：
 
 ```text
-一个可常驻、可中断、可复用的统一 runtime
+一个结构边界清楚、可中断、可复用的统一 runtime
 ```
-
-只有这个底座稳定，多端、多通道、子代理才不会重新把项目带回旧的复杂状态。

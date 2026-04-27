@@ -24,7 +24,7 @@ class ProviderSpec:
     display_name: str = ""  # 在 `elebot status` 中展示的名称。
 
     # 选择哪种提供方实现
-    # 可选值包括 "openai_compat"、"anthropic"、"azure_openai"、"openai_codex"、"github_copilot"
+    # 可选值包括 "openai_compat"、"anthropic"、"azure_openai"
     backend: str = "openai_compat"
 
     # 需要额外注入的环境变量，例如 (("ZHIPUAI_API_KEY", "{api_key}"),)
@@ -43,9 +43,6 @@ class ProviderSpec:
 
     # 针对特定模型的参数覆盖，例如 (("kimi-k2.5", {"temperature": 1.0}),)
     model_overrides: tuple[tuple[str, dict[str, Any]], ...] = ()
-
-    # OAuth 提供方通常不使用 API Key，例如 OpenAI Codex。
-    is_oauth: bool = False
 
     # 直连提供方跳过 API Key 校验，由用户自行提供全部连接信息。
     is_direct: bool = False
@@ -191,28 +188,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         display_name="OpenAI",
         backend="openai_compat",
         supports_max_completion_tokens=True,
-    ),
-    # OpenAI Codex 使用独立 OAuth 提供方实现。
-    ProviderSpec(
-        name="openai_codex",
-        keywords=("openai-codex",),
-        env_key="",
-        display_name="OpenAI Codex",
-        backend="openai_codex",
-        detect_by_base_keyword="codex",
-        default_api_base="https://chatgpt.com/backend-api",
-        is_oauth=True,
-    ),
-    # GitHub Copilot 使用 OAuth 登录。
-    ProviderSpec(
-        name="github_copilot",
-        keywords=("github_copilot", "copilot"),
-        env_key="",
-        display_name="Github Copilot",
-        backend="github_copilot",
-        default_api_base="https://api.githubcopilot.com",
-        strip_model_prefix=True,
-        is_oauth=True,
     ),
     # DeepSeek 提供 OpenAI 兼容接口。
     ProviderSpec(

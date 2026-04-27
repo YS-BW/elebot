@@ -14,7 +14,9 @@ from elebot.config.schema import Config
 from elebot.providers.base import LLMProvider
 from elebot.providers.factory import build_provider
 from elebot.runtime.lifecycle import RuntimeLifecycle
+from elebot.runtime.models import DreamLogResult, DreamRestoreResult, RuntimeStatusSnapshot
 from elebot.runtime.state import RuntimeState
+from elebot.tasks.models import ScheduledTask
 
 if TYPE_CHECKING:
     from elebot.providers.base import LLMProvider
@@ -112,6 +114,124 @@ class ElebotRuntime:
             当前 runtime 的 AgentLoop 实例。
         """
         return self.state.agent_loop
+
+    async def cancel_session_tasks(self, session_id: str) -> int:
+        """取消指定会话下的活跃任务。
+
+        参数:
+            session_id: 目标会话键。
+
+        返回:
+            本次成功发出取消请求的任务数量。
+        """
+        return await self.agent_loop.cancel_session_tasks(session_id)
+
+    def reset_session(self, session_id: str) -> None:
+        """重置指定会话。
+
+        参数:
+            session_id: 目标会话键。
+
+        返回:
+            无返回值。
+        """
+        self.agent_loop.reset_session(session_id)
+
+    async def get_status_snapshot(self, session_id: str) -> RuntimeStatusSnapshot:
+        """获取指定会话的运行状态快照。
+
+        参数:
+            session_id: 目标会话键。
+
+        返回:
+            对外可复用的 runtime 状态快照。
+        """
+        snapshot = await self.agent_loop.build_status_snapshot(session_id)
+        return RuntimeStatusSnapshot(
+            version=snapshot.version,
+            model=snapshot.model,
+            start_time=snapshot.start_time,
+            last_usage=snapshot.last_usage,
+            context_window_tokens=snapshot.context_window_tokens,
+            session_msg_count=snapshot.session_msg_count,
+            context_tokens_estimate=snapshot.context_tokens_estimate,
+            search_usage_text=snapshot.search_usage_text,
+        )
+
+    def trigger_dream(self, channel: str, chat_id: str) -> None:
+        """在后台触发一次 Dream。
+
+        参数:
+            channel: 结果回推的消息渠道。
+            chat_id: 结果回推的会话标识。
+
+        返回:
+            无返回值。
+        """
+        self.agent_loop.trigger_dream_background(channel, chat_id)
+
+    def list_tasks(self, session_id: str | None = None) -> list[ScheduledTask]:
+        """列出任务。
+
+        参数:
+            session_id: 可选的会话键过滤条件。
+
+        返回:
+            任务列表。
+        """
+        if session_id is None:
+            return self.agent_loop.task_service.list_all()
+        return self.agent_loop.task_service.list_by_session(session_id)
+
+    def remove_task(self, task_id: str) -> bool:
+        """删除指定任务。
+
+        参数:
+            task_id: 任务标识。
+
+        返回:
+            删除成功时返回 ``True``。
+        """
+        return self.agent_loop.task_service.remove(task_id)
+
+    def get_dream_log(self, sha: str | None = None) -> DreamLogResult:
+        """查看最近一次或指定 Dream 版本差异。
+
+        参数:
+            sha: 可选的目标提交 SHA。
+
+        返回:
+            对外可复用的 Dream 日志结果。
+        """
+        result = self.agent_loop.memory_store.show_dream_version(sha)
+        commit = result.commit
+        return DreamLogResult(
+            status=result.status,
+            requested_sha=result.requested_sha,
+            sha=commit.sha if commit else None,
+            timestamp=commit.timestamp if commit else None,
+            message=commit.message if commit else result.message,
+            diff=result.diff,
+            changed_files=result.changed_files,
+        )
+
+    def restore_dream_version(self, sha: str) -> DreamRestoreResult:
+        """恢复指定 Dream 版本。
+
+        参数:
+            sha: 需要回退的 Dream 提交 SHA。
+
+        返回:
+            对外可复用的 Dream 恢复结果。
+        """
+        result = self.agent_loop.memory_store.restore_dream_version(sha)
+        return DreamRestoreResult(
+            status=result.status,
+            requested_sha=result.requested_sha,
+            new_sha=result.new_sha,
+            changed_files=result.changed_files,
+            message=result.message,
+        )
 
     async def run_once(
         self,

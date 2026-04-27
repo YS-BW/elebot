@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from elebot.bus.events import InboundMessage
-from elebot.command.builtin import build_help_text, cmd_task_manage
+from elebot.command.builtin import build_help_text
+from elebot.command.handlers.tasks import cmd_task_manage
 from elebot.command.router import CommandContext
 from elebot.tasks.models import ScheduledTask
 
@@ -36,12 +37,13 @@ def _task(task_id: str = "task_1") -> ScheduledTask:
 
 @pytest.mark.asyncio
 async def test_task_command_lists_tasks(monkeypatch) -> None:
-    class _FakeStore:
-        def list_all(self):
+    class _FakeTaskService:
+        def list_by_session(self, session_key: str):
             return [_task()]
 
-    monkeypatch.setattr("elebot.command.builtin.TaskStore", lambda: _FakeStore())
-    out = await cmd_task_manage(_make_ctx())
+    ctx = _make_ctx()
+    ctx.loop = SimpleNamespace(task_service=_FakeTaskService())
+    out = await cmd_task_manage(ctx)
     assert "## Tasks" in out.content
     assert "`task_1`" in out.content
     assert "当前会话定时任务" in out.content
@@ -49,13 +51,13 @@ async def test_task_command_lists_tasks(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_task_command_remove(monkeypatch) -> None:
-    class _FakeStore:
-        def delete(self, task_id: str) -> bool:
+    class _FakeTaskService:
+        def remove(self, task_id: str) -> bool:
             return task_id == "task_1"
 
-    monkeypatch.setattr("elebot.command.builtin.TaskStore", lambda: _FakeStore())
     ctx = _make_ctx("/task remove task_1")
     ctx.args = "remove task_1"
+    ctx.loop = SimpleNamespace(task_service=_FakeTaskService())
     out = await cmd_task_manage(ctx)
     assert "已删除任务" in out.content
 

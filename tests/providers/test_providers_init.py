@@ -10,24 +10,18 @@ def test_importing_providers_package_is_lazy(monkeypatch) -> None:
     monkeypatch.delitem(sys.modules, "elebot.providers", raising=False)
     monkeypatch.delitem(sys.modules, "elebot.providers.anthropic_provider", raising=False)
     monkeypatch.delitem(sys.modules, "elebot.providers.openai_compat_provider", raising=False)
-    monkeypatch.delitem(sys.modules, "elebot.providers.openai_codex_provider", raising=False)
-    monkeypatch.delitem(sys.modules, "elebot.providers.github_copilot_provider", raising=False)
     monkeypatch.delitem(sys.modules, "elebot.providers.azure_openai_provider", raising=False)
 
     providers = importlib.import_module("elebot.providers")
 
     assert "elebot.providers.anthropic_provider" not in sys.modules
     assert "elebot.providers.openai_compat_provider" not in sys.modules
-    assert "elebot.providers.openai_codex_provider" not in sys.modules
-    assert "elebot.providers.github_copilot_provider" not in sys.modules
     assert "elebot.providers.azure_openai_provider" not in sys.modules
     assert providers.__all__ == [
         "LLMProvider",
         "LLMResponse",
         "AnthropicProvider",
         "OpenAICompatProvider",
-        "OpenAICodexProvider",
-        "GitHubCopilotProvider",
         "AzureOpenAIProvider",
     ]
 

@@ -6,10 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from elebot.agent.messages import build_image_content_blocks, detect_image_mime
 from elebot.agent.tools.base import Tool, tool_parameters
 from elebot.agent.tools.schema import BooleanSchema, IntegerSchema, StringSchema, tool_parameters_schema
 from elebot.agent.tools import file_state
-from elebot.utils.helpers import build_image_content_blocks, detect_image_mime
 from elebot.config.paths import get_media_dir
 
 

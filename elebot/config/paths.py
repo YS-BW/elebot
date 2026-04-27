@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from elebot.config.loader import get_config_path
-from elebot.utils.helpers import ensure_dir
+from elebot.utils.fs import ensure_dir
 
 
 ELEBOT_HOME_DIR = Path.home() / ".elebot"

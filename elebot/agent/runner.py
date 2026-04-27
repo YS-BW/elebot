@@ -10,18 +10,13 @@ from typing import Any
 
 from loguru import logger
 
+from elebot.agent.messages import build_assistant_message, find_legal_message_start
+from elebot.agent.tokens import estimate_message_tokens, estimate_prompt_tokens_chain
+from elebot.agent.tool_results import maybe_persist_tool_result
 from elebot.agent.hook import AgentHook, AgentHookContext
 from elebot.utils.prompt_templates import render_template
 from elebot.agent.tools.registry import ToolRegistry
 from elebot.providers.base import LLMProvider, ToolCallRequest
-from elebot.utils.helpers import (
-    build_assistant_message,
-    estimate_message_tokens,
-    estimate_prompt_tokens_chain,
-    find_legal_message_start,
-    maybe_persist_tool_result,
-    truncate_text,
-)
 from elebot.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
     build_finalization_retry_message,
@@ -30,6 +25,7 @@ from elebot.utils.runtime import (
     is_blank_text,
     repeated_external_lookup_error,
 )
+from elebot.utils.text import truncate_text
 
 _DEFAULT_ERROR_MESSAGE = "Sorry, I encountered an error calling the AI model."
 _PERSISTED_MODEL_ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model error.]"

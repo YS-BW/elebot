@@ -4,58 +4,51 @@
 
 相关源码：
 
-- [elebot/config/paths.py](../elebot/config/paths.py#L11-L50)
-- [elebot/config/schema.py](../elebot/config/schema.py#L28-L50)
-- [elebot/cli/commands.py](../elebot/cli/commands.py#L337-L364)
-- [elebot/agent/context.py](../elebot/agent/context.py#L19-L32)
-- [elebot/agent/memory.py](../elebot/agent/memory.py#L41-L60)
-- [elebot/session/manager.py](../elebot/session/manager.py#L100-L104)
+- [elebot/config/paths.py](../elebot/config/paths.py#L11-L40)
+- [elebot/config/schema.py](../elebot/config/schema.py#L147-L159)
+- [elebot/cli/commands/onboard.py](../elebot/cli/commands/onboard.py#L52-L164)
+- [elebot/utils/workspace.py](../elebot/utils/workspace.py#L10-L61)
+- [elebot/agent/loop.py](../elebot/agent/loop.py#L222-L230)
+- [elebot/agent/context.py](../elebot/agent/context.py#L24-L39)
+- [elebot/agent/memory/store.py](../elebot/agent/memory/store.py#L67-L90)
+- [elebot/session/manager.py](../elebot/session/manager.py#L98-L110)
 
 ## 1. workspace 是什么
 
 workspace 是 EleBot 的运行态根目录。
 
-默认路径在 [elebot/config/paths.py](../elebot/config/paths.py#L11-L13)：
-
-```python
-ELEBOT_HOME_DIR = Path.home() / ".elebot"
-DEFAULT_WORKSPACE_DIR = ELEBOT_HOME_DIR / "workspace"
-```
-
-所以默认就是：
+默认路径是：
 
 ```text
 ~/.elebot/workspace
 ```
 
-它不是源码目录，也不是你当前 shell 所在目录。
+它不是源码仓库目录，也不是当前 shell 所在目录。
 
 ## 2. workspace 从哪里决定
 
-优先级是：
+当前优先级是：
 
 1. `elebot agent --workspace ...`
-2. 配置文件 `agents.defaults.workspace`
+2. 配置文件里的 `agents.defaults.workspace`
 3. 默认值 `~/.elebot/workspace`
 
-对应代码：
+展开后的路径由 [elebot/config/schema.py](../elebot/config/schema.py#L154-L157) 的 `workspace_path` 提供。
 
-- [elebot/cli/commands.py](../elebot/cli/commands.py#L337-L364)
-- [elebot/config/schema.py](../elebot/config/schema.py#L28-L50)
-- [elebot/config/paths.py](../elebot/config/paths.py#L37-L40)
+## 3. 初始化时会生成哪些文件
 
-## 3. 当前在哪个目录执行命令，会不会自动切 workspace
+`onboard` 和 `agent` 启动前都会复用 [elebot/utils/workspace.py](../elebot/utils/workspace.py#L10-L61) 的 `sync_workspace_templates()`。
 
-不会。
+当前默认会补齐：
 
-`workspace` 不是按当前工作目录自动推导的。  
-你在任何目录执行：
+- `AGENTS.md`
+- `SOUL.md`
+- `USER.md`
+- `TOOLS.md`
+- `memory/MEMORY.md`
+- `memory/history.jsonl`
 
-```bash
-elebot agent
-```
-
-如果没传 `--workspace`，它还是用配置里的 workspace。
+也就是说，`history.jsonl` 从初始化开始就是当前主链路的一部分，不再存在 `HISTORY.md` 这条旧路径。
 
 ## 4. workspace 里通常会有什么
 
@@ -76,70 +69,56 @@ elebot agent
     └── *.jsonl
 ```
 
-对应代码入口：
+这些文件会直接进入主链路：
 
-- bootstrap 文件读取在 [elebot/agent/context.py](../elebot/agent/context.py#L19-L32)
-- memory 文件路径在 [elebot/agent/memory.py](../elebot/agent/memory.py#L41-L60)
-- session 文件路径在 [elebot/session/manager.py](../elebot/session/manager.py#L100-L104)
+- bootstrap 文件
+  - 进入 `ContextBuilder`
+- `memory/`
+  - 由 `MemoryStore` 维护
+- `sessions/`
+  - 由 `SessionManager` 维护
 
-## 5. 这些文件分别干什么
+## 5. `ContextBuilder` 和 workspace 现在怎么连起来
 
-### 5.1 `AGENTS.md`
+当前是 `AgentLoop` 先基于 workspace 创建 owner，再把它们注入给 `ContextBuilder`。
 
-工作区级的 agent 规则，会进入 system prompt。
+对应代码在：
 
-### 5.2 `SOUL.md`
+- [elebot/agent/loop.py](../elebot/agent/loop.py#L222-L230)
+- [elebot/agent/context.py](../elebot/agent/context.py#L24-L39)
 
-助手风格和行为倾向。
+这和旧的“`ContextBuilder` 内部自己创建 `MemoryStore`”已经不同。
 
-### 5.3 `USER.md`
+现在固定链路是：
 
-用户画像和长期稳定偏好。
-
-### 5.4 `TOOLS.md`
-
-工具使用规则和约束。
-
-### 5.5 `memory/MEMORY.md`
-
-项目长期记忆。
-
-### 5.6 `memory/history.jsonl`
-
-会话旧消息的归档摘要流。
-
-### 5.7 `sessions/*.jsonl`
-
-不同 session 的短期原始消息记录。
+```text
+workspace
+  ↓
+AgentLoop 创建 MemoryStore / SessionManager
+  ↓
+ContextBuilder 只接收注入
+```
 
 ## 6. `--session` 和 `--workspace` 的区别
 
-这个区别一定要分清。
-
-### 换 `--session`
-
-影响的是：
+换 `--session` 影响的是：
 
 - 当前对话线程
-- 当前短期上下文
 - `sessions/*.jsonl`
+- 当前短期上下文
 
 不影响：
 
-- `USER.md`
 - `SOUL.md`
+- `USER.md`
 - `MEMORY.md`
 - `history.jsonl`
 
-### 换 `--workspace`
+换 `--workspace` 则等于换整套运行世界：
 
-影响的是整套运行态目录。
-
-换了 workspace，就等于换了一整套：
-
-- sessions
-- memory
 - bootstrap 文件
+- memory
+- sessions
 
 所以可以直接记成：
 
@@ -147,45 +126,3 @@ elebot agent
 换 session = 换短期对话线程
 换 workspace = 换整套运行世界
 ```
-
-## 7. 为什么 workspace 会进上下文
-
-`ContextBuilder` 在初始化时直接绑定 workspace：
-
-```python
-self.workspace = workspace
-self.memory = MemoryStore(workspace)
-```
-
-对应代码在 [elebot/agent/context.py](../elebot/agent/context.py#L24-L32)。
-
-随后会从这个 workspace 里读取：
-
-- `AGENTS.md`
-- `SOUL.md`
-- `USER.md`
-- `TOOLS.md`
-- `memory/MEMORY.md`
-- `memory/history.jsonl`
-
-所以 workspace 不只是“存文件的地方”，它本身就定义了 agent 当前看到的世界。
-
-## 8. 你可以怎么理解 workspace
-
-最准确的理解方式是：
-
-> workspace = EleBot 当前运行态的根目录快照。
-
-它同时承载：
-
-- 短期会话
-- 长期记忆
-- 启动规则
-- 工具工作范围
-
-## 9. 读完这篇后，下一步看什么
-
-推荐继续看：
-
-- [SESSION](./SESSION.md)
-- [MEMORY](./MEMORY.md)

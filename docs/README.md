@@ -1,24 +1,25 @@
 # EleBot 文档索引
 
-这套文档不是按源码目录机械展开，而是按“理解主链路”的阅读顺序组织。
+这套文档按“先理解主链路，再看各个 owner”的顺序组织，不按源码目录机械展开。
 
 建议按下面顺序阅读：
 
 1. [ARCHITECTURE](./ARCHITECTURE.md)
 2. [RUNTIME](./RUNTIME.md)
 3. [CLI](./CLI.md)
-4. [BUS](./BUS.md)
-5. [SESSION](./SESSION.md)
-6. [TOOLS](./TOOLS.md)
-7. [PROVIDERS](./PROVIDERS.md)
-8. [CONTEXT](./CONTEXT.md)
-9. [MEMORY](./MEMORY.md)
-10. [AGENT](./AGENT.md)
-11. [TASKS](./TASKS.md)
-12. [WORKSPACE](./WORKSPACE.md)
-13. [SKILLS](./SKILLS.md)
+4. [COMMAND](./COMMAND.md)
+5. [AGENT](./AGENT.md)
+6. [CONTEXT](./CONTEXT.md)
+7. [SESSION](./SESSION.md)
+8. [MEMORY](./MEMORY.md)
+9. [TASKS](./TASKS.md)
+10. [PROVIDERS](./PROVIDERS.md)
+11. [TOOLS](./TOOLS.md)
+12. [BUS](./BUS.md)
+13. [WORKSPACE](./WORKSPACE.md)
+14. [SKILLS](./SKILLS.md)
 
-如果你只想先抓住主链路，可以先看这一条：
+如果你只想先抓住当前真实主链路，可以先记这一条：
 
 ```text
 用户输入
@@ -40,20 +41,23 @@ OutboundMessage
 CLI 渲染
 ```
 
-当前代码里，provider 装配入口已经收口到 `providers/factory.py`，而多入口复用底座是 `runtime`。
+当前代码里的几个关键事实：
 
-如果你现在是在理解 runtime 主链路，建议先看：
-
-1. [RUNTIME](./RUNTIME.md)
-2. [CLI](./CLI.md)
-3. [AGENT](./AGENT.md)
+- `runtime` 是多入口复用底座，不再经过 `facade`
+- CLI 只保留 `onboard`、`agent`、`status` 三个根命令
+- slash 命令由 `command` 模块负责协议和 handler 组织，但底层业务 owner 仍在 `AgentLoop`、`TaskService`、`MemoryStore`
+- provider 解析入口在 `providers/resolution.py`
+- provider 实例化入口在 `providers/factory.py`
+- 模型建议与推荐上下文窗口入口在 `providers/model_catalog.py`
+- `history.jsonl` 是当前唯一历史文件，`HISTORY.md` 已不属于当前实现
 
 源码总入口：
 
 - [README.md](../README.md#L1-L38)
-- [elebot/cli/commands.py](../elebot/cli/commands.py#L175-L351)
-- [elebot/runtime/app.py](../elebot/runtime/app.py#L23-L220)
-- [elebot/providers/factory.py](../elebot/providers/factory.py#L10-L82)
-- [elebot/runtime/lifecycle.py](../elebot/runtime/lifecycle.py#L10-L106)
-- [elebot/cli/interactive.py](../elebot/cli/interactive.py#L51-L200)
-- [elebot/agent/loop.py](../elebot/agent/loop.py#L154-L1073)
+- [elebot/cli/app.py](../elebot/cli/app.py#L1-L67)
+- [elebot/cli/commands/__init__.py](../elebot/cli/commands/__init__.py#L1-L23)
+- [elebot/runtime/app.py](../elebot/runtime/app.py#L25-L340)
+- [elebot/agent/loop.py](../elebot/agent/loop.py#L222-L920)
+- [elebot/providers/resolution.py](../elebot/providers/resolution.py#L11-L150)
+- [elebot/providers/factory.py](../elebot/providers/factory.py#L10-L72)
+- [elebot/providers/model_catalog.py](../elebot/providers/model_catalog.py#L10-L257)

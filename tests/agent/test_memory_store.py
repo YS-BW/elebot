@@ -1,8 +1,6 @@
 """Tests for the restructured MemoryStore — pure file I/O layer."""
 
-from datetime import datetime
 import json
-from pathlib import Path
 
 import pytest
 
@@ -106,7 +104,7 @@ class TestDreamCursor:
         assert store2.get_last_dream_cursor() == 3
 
 
-class TestLegacyHistoryMigration:
+class TestLegacyHistoryCleanup:
     def test_read_unprocessed_history_handles_entries_without_cursor(self, store):
         """JSONL entries with cursor=1 are correctly parsed and returned."""
         store.history_file.write_text(
@@ -116,103 +114,20 @@ class TestLegacyHistoryMigration:
         assert len(entries) == 1
         assert entries[0]["cursor"] == 1
 
-    def test_migrates_legacy_history_md_preserving_partial_entries(self, tmp_path):
+    def test_init_removes_legacy_history_and_backup_files(self, tmp_path):
         memory_dir = tmp_path / "memory"
         memory_dir.mkdir()
-        legacy_file = memory_dir / "HISTORY.md"
-        legacy_content = (
-            "[2026-04-01 10:00] User prefers dark mode.\n\n"
-            "[2026-04-01 10:05] [RAW] 2 messages\n"
-            "[2026-04-01 10:04] USER: hello\n"
-            "[2026-04-01 10:04] ASSISTANT: hi\n\n"
-            "Legacy chunk without timestamp.\n"
-            "Keep whatever content we can recover.\n"
-        )
-        legacy_file.write_text(legacy_content, encoding="utf-8")
+        (memory_dir / "HISTORY.md").write_text("legacy", encoding="utf-8")
+        (memory_dir / "HISTORY.md.bak").write_text("backup", encoding="utf-8")
+        (memory_dir / "HISTORY.md.bak.2").write_text("backup2", encoding="utf-8")
 
-        store = MemoryStore(tmp_path)
-        fallback_timestamp = datetime.fromtimestamp(
-            (memory_dir / "HISTORY.md.bak").stat().st_mtime,
-        ).strftime("%Y-%m-%d %H:%M")
+        MemoryStore(tmp_path)
 
-        entries = store.read_unprocessed_history(since_cursor=0)
-        assert [entry["cursor"] for entry in entries] == [1, 2, 3]
-        assert entries[0]["timestamp"] == "2026-04-01 10:00"
-        assert entries[0]["content"] == "User prefers dark mode."
-        assert entries[1]["timestamp"] == "2026-04-01 10:05"
-        assert entries[1]["content"].startswith("[RAW] 2 messages")
-        assert "USER: hello" in entries[1]["content"]
-        assert entries[2]["timestamp"] == fallback_timestamp
-        assert entries[2]["content"].startswith("Legacy chunk without timestamp.")
-        assert store.read_file(store._cursor_file).strip() == "3"
-        assert store.read_file(store._dream_cursor_file).strip() == "3"
-        assert not legacy_file.exists()
-        assert (memory_dir / "HISTORY.md.bak").read_text(encoding="utf-8") == legacy_content
+        assert not (memory_dir / "HISTORY.md").exists()
+        assert not (memory_dir / "HISTORY.md.bak").exists()
+        assert not (memory_dir / "HISTORY.md.bak.2").exists()
 
-    def test_migrates_consecutive_entries_without_blank_lines(self, tmp_path):
-        memory_dir = tmp_path / "memory"
-        memory_dir.mkdir()
-        legacy_file = memory_dir / "HISTORY.md"
-        legacy_content = (
-            "[2026-04-01 10:00] First event.\n"
-            "[2026-04-01 10:01] Second event.\n"
-            "[2026-04-01 10:02] Third event.\n"
-        )
-        legacy_file.write_text(legacy_content, encoding="utf-8")
-
-        store = MemoryStore(tmp_path)
-
-        entries = store.read_unprocessed_history(since_cursor=0)
-        assert len(entries) == 3
-        assert [entry["content"] for entry in entries] == [
-            "First event.",
-            "Second event.",
-            "Third event.",
-        ]
-
-    def test_raw_archive_stays_single_entry_while_following_events_split(self, tmp_path):
-        memory_dir = tmp_path / "memory"
-        memory_dir.mkdir()
-        legacy_file = memory_dir / "HISTORY.md"
-        legacy_content = (
-            "[2026-04-01 10:05] [RAW] 2 messages\n"
-            "[2026-04-01 10:04] USER: hello\n"
-            "[2026-04-01 10:04] ASSISTANT: hi\n"
-            "[2026-04-01 10:06] Normal event after raw block.\n"
-        )
-        legacy_file.write_text(legacy_content, encoding="utf-8")
-
-        store = MemoryStore(tmp_path)
-
-        entries = store.read_unprocessed_history(since_cursor=0)
-        assert len(entries) == 2
-        assert entries[0]["content"].startswith("[RAW] 2 messages")
-        assert "USER: hello" in entries[0]["content"]
-        assert entries[1]["content"] == "Normal event after raw block."
-
-    def test_nonstandard_date_headers_still_start_new_entries(self, tmp_path):
-        memory_dir = tmp_path / "memory"
-        memory_dir.mkdir()
-        legacy_file = memory_dir / "HISTORY.md"
-        legacy_content = (
-            "[2026-03-25–2026-04-02] Multi-day summary.\n"
-            "[2026-03-26/27] Cross-day summary.\n"
-        )
-        legacy_file.write_text(legacy_content, encoding="utf-8")
-
-        store = MemoryStore(tmp_path)
-        fallback_timestamp = datetime.fromtimestamp(
-            (memory_dir / "HISTORY.md.bak").stat().st_mtime,
-        ).strftime("%Y-%m-%d %H:%M")
-
-        entries = store.read_unprocessed_history(since_cursor=0)
-        assert len(entries) == 2
-        assert entries[0]["timestamp"] == fallback_timestamp
-        assert entries[0]["content"] == "[2026-03-25–2026-04-02] Multi-day summary."
-        assert entries[1]["timestamp"] == fallback_timestamp
-        assert entries[1]["content"] == "[2026-03-26/27] Cross-day summary."
-
-    def test_existing_history_jsonl_skips_legacy_migration(self, tmp_path):
+    def test_init_keeps_current_history_jsonl_while_removing_legacy_files(self, tmp_path):
         memory_dir = tmp_path / "memory"
         memory_dir.mkdir()
         history_file = memory_dir / "history.jsonl"
@@ -220,8 +135,8 @@ class TestLegacyHistoryMigration:
             '{"cursor": 7, "timestamp": "2026-04-01 12:00", "content": "existing"}\n',
             encoding="utf-8",
         )
-        legacy_file = memory_dir / "HISTORY.md"
-        legacy_file.write_text("[2026-04-01 10:00] legacy\n\n", encoding="utf-8")
+        (memory_dir / "HISTORY.md").write_text("legacy", encoding="utf-8")
+        (memory_dir / "HISTORY.md.bak").write_text("backup", encoding="utf-8")
 
         store = MemoryStore(tmp_path)
 
@@ -229,39 +144,37 @@ class TestLegacyHistoryMigration:
         assert len(entries) == 1
         assert entries[0]["cursor"] == 7
         assert entries[0]["content"] == "existing"
-        assert legacy_file.exists()
+        assert not (memory_dir / "HISTORY.md").exists()
         assert not (memory_dir / "HISTORY.md.bak").exists()
 
-    def test_empty_history_jsonl_still_allows_legacy_migration(self, tmp_path):
-        memory_dir = tmp_path / "memory"
-        memory_dir.mkdir()
-        history_file = memory_dir / "history.jsonl"
-        history_file.write_text("", encoding="utf-8")
-        legacy_file = memory_dir / "HISTORY.md"
-        legacy_file.write_text("[2026-04-01 10:00] legacy\n\n", encoding="utf-8")
 
-        store = MemoryStore(tmp_path)
+class TestDreamHistoryOwnerApi:
+    def test_show_dream_version_reports_never_run_before_init(self, store):
+        result = store.show_dream_version()
 
-        entries = store.read_unprocessed_history(since_cursor=0)
-        assert len(entries) == 1
-        assert entries[0]["cursor"] == 1
-        assert entries[0]["timestamp"] == "2026-04-01 10:00"
-        assert entries[0]["content"] == "legacy"
-        assert not legacy_file.exists()
-        assert (memory_dir / "HISTORY.md.bak").exists()
+        assert result.status == "never_run"
 
-    def test_migrates_legacy_history_with_invalid_utf8_bytes(self, tmp_path):
-        memory_dir = tmp_path / "memory"
-        memory_dir.mkdir()
-        legacy_file = memory_dir / "HISTORY.md"
-        legacy_file.write_bytes(
-            b"[2026-04-01 10:00] Broken \xff data still needs migration.\n\n"
-        )
+    def test_list_and_show_dream_versions_after_commit(self, store):
+        store.git.init()
+        store.write_soul("updated soul")
+        sha = store.git.auto_commit("dream: latest, 1 change(s)")
 
-        store = MemoryStore(tmp_path)
+        versions = store.list_dream_versions()
+        result = store.show_dream_version()
 
-        entries = store.read_unprocessed_history(since_cursor=0)
-        assert len(entries) == 1
-        assert entries[0]["timestamp"] == "2026-04-01 10:00"
-        assert "Broken" in entries[0]["content"]
-        assert "migration." in entries[0]["content"]
+        assert versions[0].sha == sha
+        assert result.status == "ok"
+        assert result.commit is not None
+        assert result.commit.sha == sha
+        assert "SOUL.md" in result.changed_files
+
+    def test_restore_dream_version_returns_new_safe_commit(self, store):
+        store.git.init()
+        store.write_soul("updated soul")
+        sha = store.git.auto_commit("dream: latest, 1 change(s)")
+
+        result = store.restore_dream_version(sha)
+
+        assert result.status == "ok"
+        assert result.new_sha is not None
+        assert "SOUL.md" in result.changed_files

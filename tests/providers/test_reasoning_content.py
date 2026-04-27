@@ -7,8 +7,9 @@ providers that return a reasoning_content field (e.g. MiMo, DeepSeek-R1).
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from elebot.providers.base import LLMResponse, ToolCallRequest
 from elebot.providers.openai_compat_provider import OpenAICompatProvider
-
+from elebot.providers.registry import find_by_name
 
 # ── _parse: non-streaming ─────────────────────────────────────────────────
 
@@ -124,5 +125,97 @@ def test_parse_chunks_sdk_reasoning_content_none_when_absent() -> None:
     chunks = [_make_reasoning_chunk(None, "hello", "stop")]
 
     result = OpenAICompatProvider._parse_chunks(chunks)
+
+    assert result.reasoning_content is None
+
+
+def test_sanitize_messages_backfills_reasoning_content_for_deepseek_tool_calls() -> None:
+    """DeepSeek 工具调用历史在重放前应补齐空的 reasoning_content。"""
+    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider(spec=find_by_name("deepseek"))
+
+    sanitized = provider._sanitize_messages(
+        [
+            {"role": "user", "content": "run command"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1234567890",
+                        "type": "function",
+                        "function": {"name": "exec", "arguments": "{}"},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1234567890",
+                "name": "exec",
+                "content": "ok",
+            },
+        ]
+    )
+
+    assistant_message = next(message for message in sanitized if message.get("role") == "assistant")
+    assert assistant_message["reasoning_content"] == ""
+
+
+def test_sanitize_messages_keeps_other_providers_unchanged() -> None:
+    """非 DeepSeek provider 不应强行补 reasoning_content。"""
+    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider(spec=find_by_name("dashscope"))
+
+    sanitized = provider._sanitize_messages(
+        [
+            {"role": "user", "content": "run command"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1234567890",
+                        "type": "function",
+                        "function": {"name": "exec", "arguments": "{}"},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1234567890",
+                "name": "exec",
+                "content": "ok",
+            },
+        ]
+    )
+
+    assistant_message = next(message for message in sanitized if message.get("role") == "assistant")
+    assert "reasoning_content" not in assistant_message
+
+
+def test_normalize_response_backfills_reasoning_content_for_deepseek_tool_calls() -> None:
+    """DeepSeek 缺失 reasoning_content 的工具调用响应要归一化为空字符串。"""
+    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider(spec=find_by_name("deepseek"))
+
+    result = provider._normalize_reasoning_response(
+        LLMResponse(
+            content="",
+            tool_calls=[ToolCallRequest(id="call_1", name="exec", arguments={})],
+            reasoning_content=None,
+        )
+    )
+
+    assert result.reasoning_content == ""
+
+
+def test_normalize_response_keeps_none_for_non_tool_call_response() -> None:
+    """普通非工具调用响应缺少 reasoning_content 时继续保持 None。"""
+    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider(spec=find_by_name("deepseek"))
+
+    result = provider._normalize_reasoning_response(
+        LLMResponse(content="hello", tool_calls=[], reasoning_content=None)
+    )
 
     assert result.reasoning_content is None

@@ -9,7 +9,7 @@ from typing import Any
 
 from elebot.tasks.models import ScheduledTask
 from elebot.tasks.scheduler import compute_next_run
-from elebot.utils.helpers import timestamp
+from elebot.utils.time import timestamp
 
 _DAILY_TIME_PATTERN = re.compile(r"^\d{2}:\d{2}$")
 

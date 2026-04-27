@@ -1,21 +1,25 @@
-# EleBot 整体架构总览
+# EleBot 整体架构
 
-这篇文档只讲当前默认主链路，不讲已经删除或不在默认入口里的旧模块。
+这篇文档只讲当前默认主链路，不讨论已经删除或不在默认入口里的旧模块。
 
 相关源码：
 
-- [README.md](../README.md#L1-L38)
-- [elebot/cli/commands.py](../elebot/cli/commands.py#L175-L351)
-- [elebot/runtime/app.py](../elebot/runtime/app.py#L23-L220)
-- [elebot/runtime/lifecycle.py](../elebot/runtime/lifecycle.py#L10-L106)
-- [elebot/providers/factory.py](../elebot/providers/factory.py#L10-L82)
+- [elebot/cli/app.py](../elebot/cli/app.py#L1-L67)
+- [elebot/cli/commands/__init__.py](../elebot/cli/commands/__init__.py#L1-L23)
+- [elebot/runtime/app.py](../elebot/runtime/app.py#L25-L340)
+- [elebot/runtime/models.py](../elebot/runtime/models.py#L8-L43)
 - [elebot/bus/queue.py](../elebot/bus/queue.py#L8-L40)
-- [elebot/agent/loop.py](../elebot/agent/loop.py#L154-L1073)
-- [elebot/agent/context.py](../elebot/agent/context.py#L17-L267)
-- [elebot/session/manager.py](../elebot/session/manager.py#L14-L209)
-- [elebot/agent/memory.py](../elebot/agent/memory.py#L31-L866)
+- [elebot/agent/loop.py](../elebot/agent/loop.py#L222-L920)
+- [elebot/command/router.py](../elebot/command/router.py#L15-L82)
+- [elebot/command/builtin.py](../elebot/command/builtin.py#L12-L66)
+- [elebot/tasks/service.py](../elebot/tasks/service.py#L16-L208)
+- [elebot/agent/memory/store.py](../elebot/agent/memory/store.py#L18-L320)
+- [elebot/providers/resolution.py](../elebot/providers/resolution.py#L11-L150)
+- [elebot/providers/factory.py](../elebot/providers/factory.py#L10-L72)
 
-## 1. 先记住当前主链路
+## 1. 当前主链路
+
+先记住当前真实链路：
 
 ```text
 用户输入
@@ -28,263 +32,185 @@ MessageBus
   ↓
 AgentLoop.run() / process_direct()
   ↓
-ContextBuilder.build_messages()
+ContextBuilder + Session + Memory
   ↓
-AgentRunner.run()
+AgentRunner
   ↓
 Provider / Tools
   ↓
 OutboundMessage
   ↓
-CLI 渲染输出
-```
-
-当前主链路模块可以直接记成：
-
-- `cli`
-  - 命令入口、交互输入、终端渲染
-- `runtime`
-  - 运行时装配、长期主循环生命周期管理
-- `bus`
-  - 入站和出站消息中介
-- `agent`
-  - 调度、上下文、工具循环、记忆整理
-- `session`
-  - 单个会话的短期状态
-- `config`
-  - 配置解析和运行目录路径
-- `providers`
-  - 模型调用适配层
-- `command`
-  - `/new`、`/stop`、`/dream` 这类本地命令
-- `utils`
-  - 路径、模板、token 估算、git store 等基础能力
-
-## 2. 为什么现在多了一个 runtime 层
-
-现在的 `runtime` 层不是新产品入口，而是把原来散在 CLI 里的运行时装配动作收口了。
-
-对应代码在 [elebot/runtime/app.py](../elebot/runtime/app.py#L38-L90)：
-
-```python
-bus = resolved_bus_factory()
-provider = resolved_provider_builder(config)
-agent_loop = resolved_agent_loop_factory(
-    bus=bus,
-    provider=provider,
-    workspace=config.workspace_path,
-    model=defaults.model,
-    ...
-)
-```
-
-它做的事很明确：
-
-- 统一创建 `MessageBus`
-- 统一创建 provider
-- 统一创建 `AgentLoop`
-- 把运行态对象塞进 `RuntimeState`
-
-所以现在的结构已经从：
-
-```text
-CLI 直接拼所有主链路对象
-```
-
-变成：
-
-```text
-CLI 调 runtime
-runtime 装配主链路
-agent 继续执行主逻辑
-```
-
-## 3. 现在有哪些入口与复用方式
-
-### 3.1 交互终端模式
-
-入口在 [elebot/cli/commands.py](../elebot/cli/commands.py#L350-L351)：
-
-```python
-asyncio.run(runtime.run_interactive(session_id=session_id, markdown=markdown))
-```
-
-执行命令：
-
-```bash
-elebot agent
-```
-
-这条链路会：
-
-- 先由 CLI 装配 runtime
-- 由 runtime 托管 `AgentLoop.run()` 的生命周期
-- 再由交互层通过 bus 收发消息
-
-### 3.2 单次命令模式
-
-同样在 [elebot/cli/commands.py](../elebot/cli/commands.py#L322-L349)：
-
-```python
-response = await runtime.run_once(
-    message,
-    session_id=session_id,
-    on_progress=_cli_progress,
-    on_stream=renderer.on_delta,
-    on_stream_end=renderer.on_end,
-)
-```
-
-执行命令：
-
-```bash
-elebot agent -m "你好"
-```
-
-这条链路不会进入长期 `run()` 主循环，而是通过 runtime 复用 `AgentLoop.process_direct(...)`。
-
-### 3.3 如果以后接新入口，应该怎么复用
-
-当前仓库已经没有 `facade` 这层程序化包装。
-
-```python
-runtime = ElebotRuntime.from_config(config)
-```
-
-这意味着以后如果要接：
-
-- Web
-- desktop
-- channel
-
-都应该直接复用 [elebot/runtime/app.py](../elebot/runtime/app.py#L38-L90) 里的装配入口，让 runtime 继续统一创建：
-
-- `MessageBus`
-- provider
-- `AgentLoop`
-
-而 provider 的具体路由和实例化则统一收口在 [elebot/providers/factory.py](../elebot/providers/factory.py#L10-L82)。
-
-这条复用原则的重点不是“补回一个 SDK 层”，而是避免后续入口再复制一套平行的运行时装配逻辑。
-
-## 4. 交互模式实际怎么流动
-
-当前交互模式不要再按“CLI 直接起 agent_loop.run()”去理解，而要按下面这条链路看：
-
-```text
-commands.agent()
-  ↓
-_make_runtime(config)
-  ↓
-runtime.run_interactive()
-interactive.run_interactive_loop(manage_agent_loop=False)
-  ↓
-bus.publish_inbound()
-  ↓
-AgentLoop.run()
-  ↓
-bus.publish_outbound()
-  ↓
 CLI 渲染
 ```
 
-其中最关键的代码在 [elebot/runtime/app.py](../elebot/runtime/app.py#L145-L176)：
-
-```python
-await run_interactive_loop(
-    agent_loop=self.agent_loop,
-    bus=self.bus,
-    session_id=session_id,
-    markdown=markdown,
-    renderer_factory=renderer_factory,
-    manage_agent_loop=False,
-)
-```
-
-`manage_agent_loop=False` 的意思是：
-
-- 主循环已经由 runtime 生命周期托管
-- 交互层只负责输入输出
-
-更准确地说，`runtime.start()` 和 `runtime.close()` 现在是包在 `runtime.run_interactive()` 内部按需处理的，不再由 CLI 显式控制。
-
-## 5. 当前项目的几个核心边界
-
-### 5.1 `workspace` 不是源码目录
-
-源码目录是项目仓库。  
-workspace 是运行时目录，默认是 `~/.elebot/workspace`。
-
-路径逻辑在：
-
-- [elebot/config/paths.py](../elebot/config/paths.py#L11-L50)
-- [elebot/config/schema.py](../elebot/config/schema.py#L28-L50)
-
-### 5.2 `session` 不是长期记忆
-
-`session` 保存的是单个会话线程的短期消息状态，文件在：
-
-- [elebot/session/manager.py](../elebot/session/manager.py#L14-L209)
-
-### 5.3 `memory` 不是单一文件
-
-记忆系统由这些文件组成：
+如果是任务触发，则链路是：
 
 ```text
-workspace/
-├── USER.md
-├── SOUL.md
-├── memory/
-│   ├── MEMORY.md
-│   ├── history.jsonl
-│   ├── .cursor
-│   └── .dream_cursor
-└── sessions/
-    └── *.jsonl
+tasks.json
+  ↓
+TaskService
+  ↓
+Bus.publish_inbound()
+  ↓
+AgentLoop
 ```
 
-对应实现：
+## 2. 当前 owner 边界
 
-- [elebot/agent/memory.py](../elebot/agent/memory.py#L31-L866)
-- [elebot/session/manager.py](../elebot/session/manager.py#L14-L209)
+### 2.1 `config`
 
-## 6. 现在 bus 为什么重要
+`config` 只保存配置事实：
 
-`bus` 代码很短，但它仍然是主链路中介层。
+- 默认模型
+- 默认 provider
+- provider 凭证
+- workspace
+- tools 配置
 
-看 [elebot/bus/queue.py](../elebot/bus/queue.py#L8-L40)：
+它不再负责 provider 解析。
 
-```python
-class MessageBus:
-    def __init__(self):
-        self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
-        self.outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue()
-```
+### 2.2 `providers`
 
-在当前实现里：
+`providers` 现在拆成两层：
 
-- CLI 负责发布 `InboundMessage`
-- `AgentLoop` 负责消费 `InboundMessage`
-- `AgentLoop` 负责发布 `OutboundMessage`
-- CLI 负责消费 `OutboundMessage`
+- `resolution.py`
+  - 负责 provider 选择
+- `factory.py`
+  - 负责 provider 实例化
 
-runtime 不替代 bus，它只是把 bus 和主循环的装配关系固定下来。
+也就是说，provider 相关的结构判断现在已经收口回 provider 模块自身。
 
-## 7. 你可以怎么理解这个项目
+### 2.3 `runtime`
 
-最简单的理解方式是：
+`runtime` 是对外复用底座。
+
+它负责：
+
+- 装配 `Bus`
+- 装配 provider
+- 装配 `AgentLoop`
+- 承接生命周期
+- 暴露薄控制 API
+
+但它不承载领域业务实现。
+
+### 2.4 `agent`
+
+`AgentLoop` 仍然是主执行 owner。
+
+它负责：
+
+- 消费入站消息
+- 串起 session、memory、command、tasks、tools
+- 调用 `AgentRunner`
+- 回写 `OutboundMessage`
+
+### 2.5 `command`
+
+`command` 现在只负责：
+
+- slash 协议
+- 路由规则
+- handler 组织
+
+handler 必须调用公开 owner API，不再直接碰：
+
+- `loop._active_tasks`
+- `TaskStore`
+- `GitStore`
+
+### 2.6 `tasks`
+
+`tasks` 现在也分成两层：
+
+- `TaskStore`
+  - 纯持久化仓库
+- `TaskService`
+  - 任务领域 owner
+
+命令、工具、runtime 复用的都是 `TaskService`。
+
+### 2.7 `agent/memory`
+
+记忆系统现在是 package，而不是单文件：
+
+- `store.py`
+  - 文件事实和 Dream 历史 owner
+- `consolidator.py`
+  - token 压缩
+- `dream.py`
+  - Dream 整理流程
+
+## 3. runtime 为什么存在
+
+当前 runtime 的意义不是再造一个产品入口，而是把入口层共有的装配动作收口。
+
+现在的关系应该理解成：
 
 ```text
-EleBot = 一个终端前端
-       + 一个 runtime 装配层
-       + 一个消息总线
-       + 一条 agent 主循环
-       + 一套 session / memory 状态层
-       + 一组 provider / tool 执行器
+CLI / Web / desktop
+  ↓
+ElebotRuntime
+  ↓
+Bus + provider + AgentLoop
 ```
 
-下一步建议阅读：
+而不是：
 
-- [RUNTIME](./RUNTIME.md)
-- [CLI](./CLI.md)
-- [BUS](./BUS.md)
+```text
+每个入口都自己拼一遍底层对象
+```
+
+这也是为什么当前仓库不再保留 `facade`。
+
+## 4. runtime 暴露什么能力
+
+`ElebotRuntime` 现在对外暴露的是一层薄控制 API，例如：
+
+- `cancel_session_tasks()`
+- `reset_session()`
+- `get_status_snapshot()`
+- `trigger_dream()`
+- `list_tasks()`
+- `remove_task()`
+- `get_dream_log()`
+- `restore_dream_version()`
+
+这些 API 的特点是：
+
+- 只做委托
+- 不自己承载业务逻辑
+- 供未来多入口直接调用
+
+真实 owner 仍然在：
+
+- `AgentLoop`
+- `TaskService`
+- `MemoryStore`
+
+## 5. command 为什么还独立存在
+
+`command` 并不是多余的一层。
+
+它解决的是 slash 协议问题：
+
+- 文本命令如何分发
+- 不同命令 handler 如何组织
+- 帮助文本如何维护
+
+但它不再是业务 owner。
+
+所以当前分层是：
+
+```text
+command = 协议层
+runtime / agent / tasks / memory = 业务 owner
+```
+
+## 6. 当前项目最重要的结构事实
+
+这一轮结构收口之后，当前项目有三条必须记住的事实：
+
+1. 未来多入口统一复用 runtime，而不是重新引入 facade。
+2. 任务领域统一从 `TaskService` 对外，命令和工具都不直接依赖 `TaskStore`。
+3. Dream 历史统一从 `MemoryStore` 对外，命令层不再知道 `GitStore` 细节。

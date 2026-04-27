@@ -6,12 +6,11 @@ import platform
 from pathlib import Path
 from typing import Any
 
-from elebot.utils.helpers import current_time_str
-
 from elebot.agent.memory import MemoryStore
+from elebot.agent.messages import build_assistant_message, detect_image_mime
 from elebot.agent.skills import SkillRegistry
 from elebot.utils.prompt_templates import render_template
-from elebot.utils.helpers import build_assistant_message, detect_image_mime
+from elebot.utils.time import current_time_str
 
 
 class ContextBuilder:
@@ -22,7 +21,13 @@ class ContextBuilder:
     _MAX_RECENT_HISTORY = 50
     _RUNTIME_CONTEXT_END = "[/运行时上下文]"
 
-    def __init__(self, workspace: Path, timezone: str | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        memory_store: MemoryStore,
+        skill_registry: SkillRegistry,
+        timezone: str | None = None,
+    ):
         """绑定上下文构造所需的工作区依赖。
 
         这里不缓存最终提示词，只缓存读取入口，
@@ -30,8 +35,8 @@ class ContextBuilder:
         """
         self.workspace = workspace
         self.timezone = timezone
-        self.memory = MemoryStore(workspace)
-        self.skills = SkillRegistry()
+        self.memory_store = memory_store
+        self.skill_registry = skill_registry
 
     def build_system_prompt(
         self,
@@ -49,39 +54,29 @@ class ContextBuilder:
             可直接作为 `system` 消息发送的完整提示词文本。
         """
         parts = [self._get_identity(channel=channel)]
-        self.skills = SkillRegistry(root=self.skills.root)
 
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
             parts.append(bootstrap)
 
-        memory = self.memory.get_memory_context()
+        memory = self.memory_store.get_memory_context()
         if memory:
             parts.append(f"# 记忆\n\n{memory}")
 
-        skills_summary = self.skills.build_prompt_summary()
+        skills_summary = self.skill_registry.build_prompt_summary()
         if skills_summary:
             parts.append(skills_summary)
 
-        entries = self.memory.read_unprocessed_history(since_cursor=self.memory.get_last_dream_cursor())
+        entries = self.memory_store.read_unprocessed_history(
+            since_cursor=self.memory_store.get_last_dream_cursor()
+        )
         if entries:
             capped = entries[-self._MAX_RECENT_HISTORY:]
             parts.append("# 最近历史\n\n" + "\n".join(
                 f"- [{e['timestamp']}] {e['content']}" for e in capped
             ))
 
-        parts.append(
-            "# 定时任务规则\n\n"
-            "- 当用户明确表达“提醒我”“帮我创建任务”“到时候通知我”等强意图时，"
-            "先复述你解析出的时间、事项和提醒方式，请求确认；只有用户明确确认后，"
-            "才可以调用 `create_task`。\n"
-            "- 当用户只是提到未来事件、预约、截止时间、会议、出行安排时，"
-            "你可以主动询问是否需要创建提醒，但不能直接创建任务。\n"
-            "- 当你从用户让你读取的文件中发现明确的未来日程时，"
-            "你也可以主动提出提醒建议，但不能直接创建任务。\n"
-            "- 用户未确认前，不得调用 `create_task`。\n"
-            "- 用户确认语义包括：是、创建吧、帮我加上、可以提醒我。"
-        )
+        parts.append(render_template("agent/task_rules.md"))
 
         return "\n\n---\n\n".join(parts)
 
@@ -158,8 +153,12 @@ class ContextBuilder:
         返回：
             按当前 Provider 约定整理好的消息列表。
         """
-        runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone, session_summary=session_summary)
-        self._record_explicit_skill_mentions(current_message, channel=channel, chat_id=chat_id)
+        runtime_ctx = self._build_runtime_context(
+            channel,
+            chat_id,
+            self.timezone,
+            session_summary=session_summary,
+        )
         user_content = self._build_user_content(current_message, media)
 
         # 这里把运行时上下文和用户正文合并成一条消息，
@@ -238,30 +237,3 @@ class ContextBuilder:
             thinking_blocks=thinking_blocks,
         ))
         return messages
-
-    def _record_explicit_skill_mentions(
-        self,
-        current_message: str,
-        *,
-        channel: str | None = None,
-        chat_id: str | None = None,
-    ) -> None:
-        """记录用户显式提到的 skill。
-
-        参数:
-            current_message: 当前用户消息。
-            channel: 当前通道。
-            chat_id: 当前会话标识。
-
-        返回:
-            无返回值。
-        """
-        lowered = current_message.lower()
-        for skill in self.skills.scan():
-            if skill.key.lower() in lowered or skill.metadata.name.lower() in lowered:
-                self.skills.record_usage(
-                    skill,
-                    channel=channel,
-                    chat_id=chat_id,
-                    trigger="explicit",
-                )

@@ -12,25 +12,19 @@ __all__ = [
     "LLMResponse",
     "AnthropicProvider",
     "OpenAICompatProvider",
-    "OpenAICodexProvider",
-    "GitHubCopilotProvider",
     "AzureOpenAIProvider",
 ]
 
 _LAZY_IMPORTS = {
     "AnthropicProvider": ".anthropic_provider",
     "OpenAICompatProvider": ".openai_compat_provider",
-    "OpenAICodexProvider": ".openai_codex_provider",
-    "GitHubCopilotProvider": ".github_copilot_provider",
     "AzureOpenAIProvider": ".azure_openai_provider",
 }
 
 if TYPE_CHECKING:
     from elebot.providers.anthropic_provider import AnthropicProvider
     from elebot.providers.azure_openai_provider import AzureOpenAIProvider
-    from elebot.providers.github_copilot_provider import GitHubCopilotProvider
     from elebot.providers.openai_compat_provider import OpenAICompatProvider
-    from elebot.providers.openai_codex_provider import OpenAICodexProvider
 
 
 def __getattr__(name: str):

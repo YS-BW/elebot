@@ -69,10 +69,10 @@ class GitStore:
                 author=b"elebot <elebot@dream>",
                 committer=b"elebot <elebot@dream>",
             )
-            logger.info("Git store initialized at {}", self._workspace)
+            logger.info("Git 记忆仓库已初始化：{}", self._workspace)
             return True
         except Exception:
-            logger.warning("Git store init failed for {}", self._workspace)
+            logger.warning("Git 记忆仓库初始化失败：{}", self._workspace)
             return False
 
     # 日常提交操作

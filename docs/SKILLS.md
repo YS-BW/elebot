@@ -1,6 +1,6 @@
 # Skills
 
-EleBot 现在支持一套全局 `skill` 目录，用来给 agent 提供可复用的任务说明包。
+EleBot 当前支持一套全局 `skill` 目录，用来给 agent 提供可复用的任务说明包。
 
 这里的 `skill` 不是独立工具系统，也不会自动变成 tool。  
 它的作用是：
@@ -8,6 +8,17 @@ EleBot 现在支持一套全局 `skill` 目录，用来给 agent 提供可复用
 - 让模型先知道“有哪些可复用 workflow”
 - 当任务相关时，再去读取对应 `SKILL.md`
 - 再由 `SKILL.md` 指引模型继续读取示例、参考资料，或执行脚本
+
+相关源码：
+
+- [elebot/config/paths.py](../elebot/config/paths.py#L11-L14)
+- [elebot/agent/skills/registry.py](../elebot/agent/skills/registry.py#L14-L144)
+- [elebot/agent/skills/parser.py](../elebot/agent/skills/parser.py#L8-L60)
+- [elebot/agent/skills/manager.py](../elebot/agent/skills/manager.py#L38-L347)
+- [elebot/agent/skills/logging.py](../elebot/agent/skills/logging.py#L11-L40)
+- [elebot/agent/context.py](../elebot/agent/context.py#L16-L81)
+- [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L25-L126)
+- [elebot/command/handlers/skills.py](../elebot/command/handlers/skills.py#L10-L97)
 
 ## 1. 全局目录
 
@@ -17,7 +28,7 @@ EleBot 只认一个全局目录：
 ~/.elebot/skills
 ```
 
-系统常量定义在 [paths.py#L7-L10](../elebot/config/paths.py#L7-L10)，扫描入口在 [skills.py#L10-L76](../elebot/agent/skills.py#L10-L76)。
+系统常量在 `config/paths.py`，扫描入口在 `SkillRegistry`，写操作 owner 在 `SkillManager`。
 
 ## 2. 目录结构
 
@@ -47,24 +58,6 @@ EleBot 只认一个全局目录：
 - `name`
 - `description`
 
-解析逻辑在 [skills.py#L78-L138](../elebot/agent/skills.py#L78-L138)。
-
-示例：
-
-```md
----
-name: Release Note
-description: 根据代码改动生成发布说明。
----
-
-# Release Note
-
-## 适用场景
-
-- 用户要求整理发布说明
-- 需要把 git diff 转成结构化文本
-```
-
 如果没有 frontmatter：
 
 - `name` 回退为目录名
@@ -72,34 +65,28 @@ description: 根据代码改动生成发布说明。
 
 ## 4. agent 怎么知道有哪些 skill
 
-`ContextBuilder` 会在构造 system prompt 时，注入一段 “可用 Skills” 摘要。接入点在 [context.py#L20-L59](../elebot/agent/context.py#L20-L59)。
+`ContextBuilder.build_system_prompt()` 每轮都会调用 `SkillRegistry.build_prompt_summary()`，把全局 skill 摘要注入到 system prompt。
 
-这段摘要只包含：
+当前注入的是 metadata 摘要，不是 `SKILL.md` 正文。
 
-- skill 键名
-- `name`
-- `description`
-- `SKILL.md` 的读取路径提示
-
-不会把 `SKILL.md` 正文直接塞进上下文。
-
-可以把它理解成：
+所以可以把它理解成：
 
 ```text
-启动 / 每轮构造上下文
+每轮构造 system prompt
   ↓
 扫描 ~/.elebot/skills
   ↓
 读取每个 SKILL.md 的 name + description
   ↓
-注入 system prompt
-  ↓
-模型知道“当前有哪些 skill 可用”
+注入“可用 Skills”摘要
 ```
+
+这件事按轮重扫，没有缓存。  
+也就是说，运行中的 agent 在下一轮请求时就能看到你刚安装或删除的 skill。
 
 ## 5. skill 的触发方式
 
-当前没有单独的触发器。
+当前没有独立 trigger。
 
 触发方式只有两种：
 
@@ -110,93 +97,100 @@ description: 根据代码改动生成发布说明。
 
 ## 6. examples / references / scripts 什么时候用
 
-系统不会自动猜测这些目录什么时候该读。  
+系统不会自动猜这些目录什么时候该读。  
 触发时机由 `SKILL.md` 自己说明。
 
 推荐约定：
 
 - `template.md`
-  用于固定输出结构；需要生成固定格式时再读
+  - 固定输出结构
 - `examples/`
-  用于示例输入输出；需要参考范例时再读
+  - 示例输入输出
 - `references/`
-  用于长文档、schema、接口说明；需要补充规则时再读
+  - 长文档、schema、接口说明
 - `scripts/`
-  用于确定性步骤；`SKILL.md` 明确要求执行时再跑
-
-也就是说：
-
-```text
-metadata 负责“让模型知道这个 skill 存在”
-SKILL.md 负责“告诉模型下一步该读什么、执行什么”
-```
+  - 确定性步骤，明确要求时再执行
 
 ## 7. 脚本怎么执行
 
 Skill 没有独立 runtime。  
 脚本执行仍然走现有工具系统。
 
-主链路默认工具注册在 [loop.py#L253-L291](../elebot/agent/loop.py#L253-L291)，其中：
+主链路默认工具注册在 [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L25-L126)。
 
-- `read_file` 负责读取 `SKILL.md`、`examples/`、`references/`
-- `exec` 负责执行 `scripts/` 下的脚本
+为了支持全局 skill，默认工具注册时会把 `~/.elebot/skills` 加进额外允许访问目录，这样：
 
-为了支持全局 skill，主链路在限制目录模式下也会额外放行 `~/.elebot/skills`：
+- 文件工具可以读取 `SKILL.md`、`examples/`、`references/`
+- shell 工具也可以在限制目录模式下执行 `scripts/`
 
-- 文件访问放行逻辑在 [loop.py#L253-L291](../elebot/agent/loop.py#L253-L291)
-- shell 路径校验放行逻辑在 [shell.py#L285-L332](../elebot/agent/tools/shell.py#L285-L332)
+## 8. 当前怎么管理 skill
 
-## 8. 一个推荐的 `SKILL.md` 写法
+当前正式支持三条命令：
 
-```md
----
-name: Release Note
-description: 根据仓库改动生成发布说明。
----
+- `/skill list`
+  - 查看当前已经安装的 skill
+- `/skill install <source>`
+  - 安装一个 skill
+- `/skill uninstall <name>`
+  - 卸载一个 skill
 
-# Release Note
+这里的 owner 分工固定为：
 
-## 适用场景
+- `SkillRegistry`
+  - 只读扫描、摘要生成、状态展示、使用记录
+- `SkillManager`
+  - 安装和卸载
+- `command/handlers/skills.py`
+  - 只做 slash 协议解析和展示文案
 
-- 用户要求生成发布说明
-- 需要把提交记录整理成结构化文档
+裸 `/skill` 已不是当前实现的一部分。
 
-## 使用步骤
+## 9. 安装来源规则
 
-1. 先查看仓库改动和提交记录
-2. 如果需要固定输出格式，读取 `template.md`
-3. 如果需要参考示例，读取 `examples/`
-4. 如果需要业务规则或字段说明，读取 `references/`
-5. 如果需要校验输出，执行 `scripts/validate.sh`
-```
+`/skill install <source>` 只支持三类来源：
 
-这样写的核心价值是：
+- 本地目录
+  - 目录根必须直接包含 `SKILL.md`
+- 直接下载链接
+  - 内容必须能解压成唯一一个 skill 目录
+- Git 链接
+  - 仓库根本身就是 skill 目录
+  - 或 GitHub `tree/.../<subdir>` 明确指向 skill 子目录
 
-- metadata 负责“被发现”
-- 正文负责“怎么做”
-- 目录资源负责“按需补充”
+当前固定规则是：
 
-## 9. 当前边界
+- 最终必须解析出唯一一个合法 skill 目录
+- 合法标准只有一个：目录根存在 `SKILL.md`
+- 安装键名直接使用目录名
+- 落盘路径固定是 `~/.elebot/skills/<目录名>`
+- 如果目标目录已存在，直接失败，不覆盖
+- 不支持只给一个裸 `SKILL.md` 文件
+- 不支持多 skill 压缩包自动挑选
+- 不做迁移，不改已有 skill 内容
+
+## 10. 当前还支持什么管理能力
 
 当前已经支持：
 
-- `/skill` 命令查看当前 skill 列表
-- `/skill uninstall <name>` 卸载一个 skill
-- 按轮重扫全局 skill 目录，新增、删除、修改后下一轮自动生效
+- `onboard` 首次初始化时尝试预装默认 skill
+- 按轮重扫全局 skill 目录
+- 安装、列出、卸载 skill
 - 记录最小 skill 使用日志到 `~/.elebot/logs/skill_usage.jsonl`
 
-Skill 使用日志按 JSONL 追加写入，便于后续排查：
+当前 `onboard` 会尝试安装两份本地默认 skill 源：
 
-```json
-{"skill":"release-note","name":"Release Note","description":"生成发布说明","channel":"cli","chat_id":"direct","trigger":"explicit"}
-```
+- `skill-creator`
+- `skills-vercel-labs.find-skills-master-e60e5845d52b0b8e69d1faaff7dbb2cc1b62bd59`
+
+如果这些本地来源存在，`onboard` 会直接把它们复制进 `~/.elebot/skills`；如果目标目录已经存在，则跳过，不覆盖。
 
 仍然不支持：
 
 - skill marketplace
+- 远端搜索
 - 自动强制触发器
 - 子代理联动
 
-当前的目标很单纯：
+当前目标很单纯：
 
 **让模型能发现全局 skill，并按 `SKILL.md` 的说明去使用它。**

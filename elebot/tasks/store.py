@@ -7,7 +7,7 @@ from pathlib import Path
 
 from elebot.config.paths import get_tasks_store_path
 from elebot.tasks.models import ScheduledTask
-from elebot.utils.helpers import timestamp
+from elebot.utils.time import timestamp
 
 
 class TaskStore:

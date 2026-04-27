@@ -1,6 +1,6 @@
 """elebot 命令行模块入口。"""
 
-from elebot.cli.commands import app as cli_app
+from elebot.cli.app import app as cli_app
 
 
 def main() -> None:

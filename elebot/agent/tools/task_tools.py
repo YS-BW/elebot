@@ -13,7 +13,7 @@ from elebot.tasks.helpers import (
     build_task_proposal_payload,
     format_task_summary,
 )
-from elebot.tasks.store import TaskStore
+from elebot.tasks.service import TaskService
 
 PENDING_TASK_PROPOSAL_KEY = "pending_task_proposal"
 TASK_CONFIRM_YES = {"是", "创建吧", "帮我加上", "可以提醒我"}
@@ -24,21 +24,21 @@ class _TaskTool(Tool):
 
     def __init__(
         self,
-        store: TaskStore | None = None,
+        task_service: TaskService,
         default_timezone: str | None = None,
         session_manager: SessionManager | None = None,
     ):
         """初始化任务工具。
 
         参数:
-            store: 任务存储。
+            task_service: 任务领域服务。
             default_timezone: 默认时区名称。
             session_manager: 会话管理器。
 
         返回:
             无返回值。
         """
-        self.store = store or TaskStore()
+        self.task_service = task_service
         self.default_timezone = default_timezone
         self.session_manager = session_manager
 
@@ -154,7 +154,7 @@ class CreateTaskTool(_TaskTool):
         )
         if error or task is None:
             return f"Error: {error}"
-        self.store.upsert(task)
+        self.task_service.upsert(task)
         self._save_pending_proposal(session_key, None)
         return (
             f"已创建任务：`{task.task_id}`\n"
@@ -297,9 +297,9 @@ class ListTasksTool(_TaskTool):
         返回:
             任务列表文本。
         """
-        tasks = self.store.list_all()
+        tasks = self.task_service.list_all()
         if session_key:
-            tasks = [task for task in tasks if task.session_key == session_key]
+            tasks = self.task_service.list_by_session(session_key)
         if not tasks:
             return "当前没有任务。"
         lines = ["当前任务："]
@@ -364,7 +364,7 @@ class UpdateTaskTool(_TaskTool):
         **kwargs: Any,
     ) -> str:
         """更新任务。"""
-        existing = self.store.get(task_id)
+        existing = self.task_service.get(task_id)
         if existing is None:
             return f"找不到任务：`{task_id}`。"
         task, error = build_scheduled_task(
@@ -382,7 +382,7 @@ class UpdateTaskTool(_TaskTool):
         )
         if error or task is None:
             return f"Error: {error}"
-        self.store.upsert(task)
+        self.task_service.upsert(task)
         return (
             f"已更新任务：`{task.task_id}`\n"
             f"{format_task_summary(task)}"
@@ -442,6 +442,6 @@ class RemoveTaskTool(_TaskTool):
         返回:
             删除结果文本。
         """
-        if self.store.delete(task_id):
+        if self.task_service.remove(task_id):
             return f"已删除任务：`{task_id}`。"
         return f"找不到任务：`{task_id}`。"

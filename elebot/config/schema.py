@@ -29,8 +29,8 @@ class AgentDefaults(Base):
     """Agent 默认配置。"""
 
     workspace: str = "~/.elebot/workspace"
-    model: str = "qwen3_6_plus"
-    provider: str = "dashscope"
+    model: str = "deepseek-v4-flash"
+    provider: str = "deepseek"
     max_tokens: int = 8192
     context_window_tokens: int = 65_536
     context_block_limit: int | None = None
@@ -91,8 +91,6 @@ class ProvidersConfig(Base):
     volcengine_coding_plan: ProviderConfig = Field(default_factory=ProviderConfig)
     byteplus: ProviderConfig = Field(default_factory=ProviderConfig)
     byteplus_coding_plan: ProviderConfig = Field(default_factory=ProviderConfig)
-    openai_codex: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)
-    github_copilot: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)
     qianfan: ProviderConfig = Field(default_factory=ProviderConfig)
 
 
@@ -157,103 +155,5 @@ class Config(BaseSettings):
     def workspace_path(self) -> Path:
         """返回展开后的工作区路径。"""
         return Path(self.agents.defaults.workspace).expanduser()
-
-    def _match_provider(
-        self, model: str | None = None
-    ) -> tuple["ProviderConfig | None", str | None]:
-        """Match provider config and its registry name. Returns (config, spec_name)."""
-        from elebot.providers.registry import PROVIDERS, find_by_name
-
-        model_lower = (model or self.agents.defaults.model).lower()
-        model_prefix = model_lower.split("/", 1)[0] if "/" in model_lower else ""
-        normalized_prefix = model_prefix.replace("-", "_")
-
-        # 显式模型前缀必须优先，避免默认 provider 抢走已声明路由的模型。
-        if model_prefix:
-            spec = find_by_name(normalized_prefix)
-            if spec is not None:
-                return getattr(self.providers, spec.name, None), spec.name
-
-        forced = self.agents.defaults.provider
-        if forced != "auto":
-            spec = find_by_name(forced)
-            if spec:
-                p = getattr(self.providers, spec.name, None)
-                return (p, spec.name) if p else (None, None)
-            raise ValueError(f"Unknown provider configured: {forced}")
-
-        model_normalized = model_lower.replace("-", "_")
-
-        def _kw_matches(kw: str) -> bool:
-            kw = kw.lower()
-            return kw in model_lower or kw.replace("-", "_") in model_normalized
-
-        # 显式 provider 前缀优先，避免 `github-copilot/...codex` 被误判为 openai_codex。
-        for spec in PROVIDERS:
-            p = getattr(self.providers, spec.name, None)
-            if p and model_prefix and normalized_prefix == spec.name:
-                if spec.is_oauth or spec.is_local or p.api_key:
-                    return p, spec.name
-
-        # 关键字匹配顺序跟随 PROVIDERS 注册表，保证行为稳定。
-        for spec in PROVIDERS:
-            p = getattr(self.providers, spec.name, None)
-            if p and any(_kw_matches(kw) for kw in spec.keywords):
-                if spec.is_oauth or spec.is_local or p.api_key:
-                    return p, spec.name
-
-        # 本地 provider 常常承载无前缀模型名，因此需要在这里补一层兜底匹配。
-        # 如果 api_base 能命中特征关键字，则优先使用该 provider，避免按注册顺序误选。
-        local_fallback: tuple[ProviderConfig, str] | None = None
-        for spec in PROVIDERS:
-            if not spec.is_local:
-                continue
-            p = getattr(self.providers, spec.name, None)
-            if not (p and p.api_base):
-                continue
-            if spec.detect_by_base_keyword and spec.detect_by_base_keyword in p.api_base:
-                return p, spec.name
-            if local_fallback is None:
-                local_fallback = (p, spec.name)
-        if local_fallback:
-            return local_fallback
-
-        # 最后按网关优先顺序兜底，但 OAuth provider 不能走兜底分支。
-        for spec in PROVIDERS:
-            if spec.is_oauth:
-                continue
-            p = getattr(self.providers, spec.name, None)
-            if p and p.api_key:
-                return p, spec.name
-        return None, None
-
-    def get_provider(self, model: str | None = None) -> ProviderConfig | None:
-        """返回匹配到的 provider 配置。"""
-        p, _ = self._match_provider(model)
-        return p
-
-    def get_provider_name(self, model: str | None = None) -> str | None:
-        """返回匹配到的 provider 注册名。"""
-        _, name = self._match_provider(model)
-        return name
-
-    def get_api_key(self, model: str | None = None) -> str | None:
-        """返回给定模型对应的 API Key。"""
-        p = self.get_provider(model)
-        return p.api_key if p else None
-
-    def get_api_base(self, model: str | None = None) -> str | None:
-        """返回给定模型对应的 API Base。"""
-        from elebot.providers.registry import find_by_name
-
-        p, name = self._match_provider(model)
-        if p and p.api_base:
-            return p.api_base
-        # 这里只给网关和本地 provider 补默认 api_base，标准 provider 由构造器自行解析。
-        if name:
-            spec = find_by_name(name)
-            if spec and (spec.is_gateway or spec.is_local) and spec.default_api_base:
-                return spec.default_api_base
-        return None
 
     model_config = ConfigDict(env_prefix="ELEBOT_", env_nested_delimiter="__")

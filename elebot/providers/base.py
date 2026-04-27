@@ -12,7 +12,7 @@ from typing import Any
 
 from loguru import logger
 
-from elebot.utils.helpers import image_placeholder_text
+from elebot.utils.text import image_placeholder_text
 
 
 @dataclass

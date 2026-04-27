@@ -13,9 +13,9 @@ from urllib.parse import quote, urlparse
 import httpx
 from loguru import logger
 
+from elebot.agent.messages import build_image_content_blocks
 from elebot.agent.tools.base import Tool, tool_parameters
 from elebot.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
-from elebot.utils.helpers import build_image_content_blocks
 
 if TYPE_CHECKING:
     from elebot.config.schema import WebSearchConfig

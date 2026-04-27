@@ -71,3 +71,22 @@ async def test_service_tick_ignores_non_due_task(tmp_path, monkeypatch) -> None:
     await service.tick()
 
     assert bus.inbound_size == 0
+
+
+def test_service_list_by_session_remove_and_upsert(tmp_path) -> None:
+    """TaskService 应作为统一任务 owner 暴露查询与写入接口。"""
+    store = TaskStore(tmp_path / "tasks.json")
+    task = _task()
+    store.upsert(task)
+    bus = MessageBus()
+    service = TaskService(bus, store=store, default_timezone="Asia/Shanghai")
+
+    assert service.list_by_session("cli:direct") == [task]
+    assert service.get("task_1") == task
+
+    task.content = "提醒提交日报"
+    service.upsert(task)
+    assert service.get("task_1").content == "提醒提交日报"
+
+    assert service.remove("task_1") is True
+    assert service.list_all() == []

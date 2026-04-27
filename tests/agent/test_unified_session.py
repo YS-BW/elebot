@@ -22,11 +22,11 @@ import pytest
 from elebot.agent.loop import AgentLoop
 from elebot.bus.events import InboundMessage
 from elebot.bus.queue import MessageBus
-from elebot.command.builtin import cmd_new, register_builtin_commands
+from elebot.command.builtin import register_builtin_commands
+from elebot.command.handlers.session import cmd_new
 from elebot.command.router import CommandContext, CommandRouter
 from elebot.config.schema import AgentDefaults, Config
 from elebot.session.manager import Session, SessionManager
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -233,14 +233,19 @@ class TestCmdNewUnifiedSession:
         sessions.save(shared)
         assert len(sessions.get_or_create("unified:default").messages) == 2
 
-        # _schedule_background is a *sync* method that schedules a coroutine via
-        # asyncio.create_task().  Mirror that exactly so the coroutine is consumed
-        # and no RuntimeWarning is emitted.
-        loop = SimpleNamespace(
-            sessions=sessions,
-            consolidator=SimpleNamespace(archive=AsyncMock(return_value=True)),
-        )
-        loop._schedule_background = lambda coro: asyncio.ensure_future(coro)
+        async def _archive(_messages):
+            return True
+
+        def _reset_session(session_key: str) -> None:
+            session = sessions.get_or_create(session_key)
+            snapshot = session.messages[session.last_consolidated:]
+            session.clear()
+            sessions.save(session)
+            sessions.invalidate(session.key)
+            if snapshot:
+                asyncio.ensure_future(_archive(snapshot))
+
+        loop = SimpleNamespace(reset_session=_reset_session)
 
         msg = InboundMessage(
             channel="telegram", sender_id="user1", chat_id="111", content="/new",
@@ -269,11 +274,19 @@ class TestCmdNewUnifiedSession:
         shared.add_message("user", "shared message")
         sessions.save(shared)
 
-        loop = SimpleNamespace(
-            sessions=sessions,
-            consolidator=SimpleNamespace(archive=AsyncMock(return_value=True)),
-        )
-        loop._schedule_background = lambda coro: asyncio.ensure_future(coro)
+        async def _archive(_messages):
+            return True
+
+        def _reset_session(session_key: str) -> None:
+            session = sessions.get_or_create(session_key)
+            snapshot = session.messages[session.last_consolidated:]
+            session.clear()
+            sessions.save(session)
+            sessions.invalidate(session.key)
+            if snapshot:
+                asyncio.ensure_future(_archive(snapshot))
+
+        loop = SimpleNamespace(reset_session=_reset_session)
 
         msg = InboundMessage(
             channel="telegram", sender_id="user1", chat_id="111", content="/new",
@@ -412,7 +425,7 @@ class TestStopCommandWithUnifiedSession:
         from elebot.agent.loop import UNIFIED_SESSION_KEY
 
         loop = _make_loop(tmp_path, unified_session=True)
-        
+
         # Create a message from telegram channel
         msg = _make_msg(channel="telegram", chat_id="123456")
 
@@ -438,7 +451,7 @@ class TestStopCommandWithUnifiedSession:
     async def test_stop_command_finds_task_in_unified_mode(self, tmp_path: Path):
         """cmd_stop can cancel tasks when unified_session=True."""
         from elebot.agent.loop import UNIFIED_SESSION_KEY
-        from elebot.command.builtin import cmd_stop
+        from elebot.command.handlers.session import cmd_stop
 
         loop = _make_loop(tmp_path, unified_session=True)
 
@@ -471,7 +484,7 @@ class TestStopCommandWithUnifiedSession:
     async def test_stop_command_cross_channel_in_unified_mode(self, tmp_path: Path):
         """In unified mode, /stop from one channel cancels tasks from another channel."""
         from elebot.agent.loop import UNIFIED_SESSION_KEY
-        from elebot.command.builtin import cmd_stop
+        from elebot.command.handlers.session import cmd_stop
 
         loop = _make_loop(tmp_path, unified_session=True)
 
