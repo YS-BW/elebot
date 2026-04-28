@@ -33,7 +33,7 @@ EleBot 当前阶段的目标不变：
 - skill 的安装、卸载、列表管理
 - tasks 的自然语言创建、确认后落盘、后台轮询、系统消息触发
 - 最小工具调用闭环
-- DeepSeek tool-call transcript 的 `reasoning_content` 协议修复
+- DeepSeek assistant transcript 的 `reasoning_content` 协议修复
 - 单 runtime、单会话下的真实 interrupt
 
 ### 2.2 当前还没有
@@ -95,7 +95,8 @@ utils         = 低层通用小工具
 - 首次 `onboard` 默认 provider 是 `deepseek`
 - 首次 `onboard` 默认模型是 `deepseek-v4-flash`
 - `onboard` 当前会尝试预装两份本地默认 skill 源
-- DeepSeek 的 tool-call transcript 协议修复固定收口在 provider 层
+- DeepSeek 的 assistant transcript 协议修复固定收口在 provider 层
+- DeepSeek 重放历史时，tool-call assistant 和模型错误占位 assistant 都会在 provider 出站前补齐空的 `reasoning_content`
 - `Ctrl+C` 仍然退出交互进程
 - `Esc` 现在是当前交互轮次的真实中断键
 - `Esc` 的监听已固定为“孤立按键判定”，不会把终端控制序列残留到下一次输入

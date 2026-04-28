@@ -161,6 +161,48 @@ def test_sanitize_messages_backfills_reasoning_content_for_deepseek_tool_calls()
     assert assistant_message["reasoning_content"] == ""
 
 
+def test_sanitize_messages_backfills_reasoning_content_for_deepseek_error_placeholder() -> None:
+    """DeepSeek 重放带占位 assistant 历史时也要补齐空的 reasoning_content。"""
+    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider(spec=find_by_name("deepseek"))
+
+    sanitized = provider._sanitize_messages(
+        [
+            {"role": "user", "content": "run command"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1234567890",
+                        "type": "function",
+                        "function": {"name": "exec", "arguments": "{}"},
+                    }
+                ],
+                "reasoning_content": "",
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1234567890",
+                "name": "exec",
+                "content": "ok",
+            },
+            {
+                "role": "assistant",
+                "content": "[Assistant reply unavailable due to model error.]",
+            },
+            {"role": "user", "content": "retry"},
+        ]
+    )
+
+    assistant_messages = [
+        message for message in sanitized if message.get("role") == "assistant"
+    ]
+    assert len(assistant_messages) == 2
+    assert assistant_messages[0]["reasoning_content"] == ""
+    assert assistant_messages[1]["reasoning_content"] == ""
+
+
 def test_sanitize_messages_keeps_other_providers_unchanged() -> None:
     """非 DeepSeek provider 不应强行补 reasoning_content。"""
     with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
@@ -186,6 +228,26 @@ def test_sanitize_messages_keeps_other_providers_unchanged() -> None:
                 "name": "exec",
                 "content": "ok",
             },
+        ]
+    )
+
+    assistant_message = next(message for message in sanitized if message.get("role") == "assistant")
+    assert "reasoning_content" not in assistant_message
+
+
+def test_sanitize_messages_keeps_other_provider_error_placeholder_unchanged() -> None:
+    """非 DeepSeek provider 不应给普通 assistant 历史强行补 reasoning_content。"""
+    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider(spec=find_by_name("dashscope"))
+
+    sanitized = provider._sanitize_messages(
+        [
+            {"role": "user", "content": "run command"},
+            {
+                "role": "assistant",
+                "content": "[Assistant reply unavailable due to model error.]",
+            },
+            {"role": "user", "content": "retry"},
         ]
     )
 

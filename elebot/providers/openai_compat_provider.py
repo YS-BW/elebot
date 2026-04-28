@@ -199,7 +199,7 @@ class OpenAICompatProvider(LLMProvider):
         return bool(self._spec and self._spec.name == "deepseek")
 
     def _normalize_reasoning_request_message(self, message: dict[str, Any]) -> None:
-        """补齐 DeepSeek 工具调用消息必需的推理字段。
+        """补齐 DeepSeek assistant 历史回放必需的推理字段。
 
         参数:
             message: 已完成基础清洗、准备发送给模型的单条消息；会在原地修改。
@@ -211,10 +211,9 @@ class OpenAICompatProvider(LLMProvider):
             return
         if message.get("role") != "assistant":
             return
-        if not message.get("tool_calls"):
-            return
         if message.get("reasoning_content") is None:
-            # DeepSeek 在 thinking mode 下要求多轮 tool-call transcript 原样带回该字段。
+            # DeepSeek 在 thinking mode 下要求 assistant transcript 原样带回该字段，
+            # 这里统一回填空字符串，既能兜住旧 session，也不伪造真实思考文本。
             message["reasoning_content"] = ""
 
     def _normalize_reasoning_response(self, response: LLMResponse) -> LLMResponse:
@@ -307,7 +306,8 @@ class OpenAICompatProvider(LLMProvider):
                 if clean.get("role") == "assistant":
                     # 某些兼容网关不接受带有 tool_calls 且 content 非空的 assistant 消息。
                     clean["content"] = None
-                    self._normalize_reasoning_request_message(clean)
+            if clean.get("role") == "assistant":
+                self._normalize_reasoning_request_message(clean)
             if "tool_call_id" in clean and clean["tool_call_id"]:
                 clean["tool_call_id"] = map_id(clean["tool_call_id"])
         return self._enforce_role_alternation(sanitized)
