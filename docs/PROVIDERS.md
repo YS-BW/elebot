@@ -157,13 +157,16 @@ runtime 和 CLI 只复用这些能力，不再各自保留第二套 provider 知
 - 首次 `onboard` 生成的默认 provider 是 `deepseek`
 - 首次 `onboard` 生成的默认模型是 `deepseek-v4-flash`
 
-## 9. DeepSeek 的 tool-call transcript 为什么要补 `reasoning_content`
+## 9. DeepSeek 的 assistant transcript 为什么要补 `reasoning_content`
 
-当前 DeepSeek 还有一个已经坐实的协议事实：在 thinking mode 下，如果上一轮 assistant 消息带了 `tool_calls`，那么下一轮重放这段 transcript 时，消息里必须继续带回 `reasoning_content`。
+当前 DeepSeek 还有一个已经坐实的协议事实：在 thinking mode 下，下一轮重放 assistant transcript 时，消息里必须继续带回 `reasoning_content`。最容易出问题的是两类历史：
 
-EleBot 现在把这层修补固定放在 [OpenAICompatProvider._sanitize_messages()](../elebot/providers/openai_compat_provider.py#L278-L311) 和 [OpenAICompatProvider._normalize_reasoning_response()](../elebot/providers/openai_compat_provider.py#L220-L233) 里：
+- 带 `tool_calls` 的 assistant 消息
+- 工具调用后因为模型报错而落盘的 assistant 占位消息
 
-- 出站时，如果当前 provider 是 DeepSeek，且 assistant 消息带 `tool_calls` 但缺少 `reasoning_content`，会补成空字符串 `""`
+EleBot 现在把这层修补固定放在 [OpenAICompatProvider._sanitize_messages()](../elebot/providers/openai_compat_provider.py#L277-L313) 和 [OpenAICompatProvider._normalize_reasoning_response()](../elebot/providers/openai_compat_provider.py#L219-L232) 里：
+
+- 出站时，如果当前 provider 是 DeepSeek，且任意 assistant 历史消息缺少 `reasoning_content`，会补成空字符串 `""`
 - 入站时，如果 DeepSeek 返回了工具调用，但解析后的 `reasoning_content` 仍然缺失，也会归一化成 `""`
 
 这样做的边界是固定的：
