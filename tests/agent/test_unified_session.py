@@ -230,6 +230,11 @@ class TestCmdNewUnifiedSession:
         shared = sessions.get_or_create("unified:default")
         shared.add_message("user", "hello from telegram")
         shared.add_message("assistant", "hi there")
+        shared.metadata = {
+            "runtime_checkpoint": {"phase": "tool"},
+            "pending_task_proposal": {"when": "tomorrow"},
+            "_last_summary": "old-summary",
+        }
         sessions.save(shared)
         assert len(sessions.get_or_create("unified:default").messages) == 2
 
@@ -239,7 +244,7 @@ class TestCmdNewUnifiedSession:
         def _reset_session(session_key: str) -> None:
             session = sessions.get_or_create(session_key)
             snapshot = session.messages[session.last_consolidated:]
-            session.clear()
+            session.clear(clear_metadata=True)
             sessions.save(session)
             sessions.invalidate(session.key)
             if snapshot:
@@ -260,6 +265,7 @@ class TestCmdNewUnifiedSession:
         sessions.invalidate("unified:default")
         reloaded = sessions.get_or_create("unified:default")
         assert reloaded.messages == []
+        assert reloaded.metadata == {}
 
     @pytest.mark.asyncio
     async def test_cmd_new_in_unified_mode_does_not_affect_other_sessions(self, tmp_path: Path):
@@ -280,7 +286,7 @@ class TestCmdNewUnifiedSession:
         def _reset_session(session_key: str) -> None:
             session = sessions.get_or_create(session_key)
             snapshot = session.messages[session.last_consolidated:]
-            session.clear()
+            session.clear(clear_metadata=True)
             sessions.save(session)
             sessions.invalidate(session.key)
             if snapshot:
@@ -299,6 +305,19 @@ class TestCmdNewUnifiedSession:
         sessions.invalidate("discord:999")
         assert sessions.get_or_create("unified:default").messages == []
         assert len(sessions.get_or_create("discord:999").messages) == 1
+
+    def test_session_clear_can_keep_or_drop_metadata(self):
+        """普通 clear 默认保留 metadata，显式参数才会清掉运行态。"""
+        session = Session(
+            key="cli:test",
+            metadata={"runtime_checkpoint": {"phase": "tool"}},
+        )
+
+        session.clear()
+        assert session.metadata == {"runtime_checkpoint": {"phase": "tool"}}
+
+        session.clear(clear_metadata=True)
+        assert session.metadata == {}
 
 
 # ---------------------------------------------------------------------------
@@ -412,12 +431,12 @@ class TestConsolidationUnaffectedByUnifiedSession:
 
 
 # ---------------------------------------------------------------------------
-# TestStopCommandWithUnifiedSession — /stop command integration
+# TestInterruptWithUnifiedSession — explicit interrupt integration
 # ---------------------------------------------------------------------------
 
 
-class TestStopCommandWithUnifiedSession:
-    """Verify /stop command works correctly with unified session enabled."""
+class TestInterruptWithUnifiedSession:
+    """Verify interrupt_session works correctly with unified session enabled."""
 
     @pytest.mark.asyncio
     async def test_active_tasks_use_effective_key_in_unified_mode(self, tmp_path: Path):
@@ -448,10 +467,9 @@ class TestStopCommandWithUnifiedSession:
         assert "telegram:123456" not in loop._active_tasks
 
     @pytest.mark.asyncio
-    async def test_stop_command_finds_task_in_unified_mode(self, tmp_path: Path):
-        """cmd_stop can cancel tasks when unified_session=True."""
+    async def test_interrupt_session_finds_task_in_unified_mode(self, tmp_path: Path):
+        """interrupt_session can cancel tasks when unified_session=True."""
         from elebot.agent.loop import UNIFIED_SESSION_KEY
-        from elebot.command.handlers.session import cmd_stop
 
         loop = _make_loop(tmp_path, unified_session=True)
 
@@ -462,29 +480,17 @@ class TestStopCommandWithUnifiedSession:
         task = asyncio.create_task(long_running())
         loop._active_tasks[UNIFIED_SESSION_KEY] = [task]
 
-        # Create a message that would have session_key=UNIFIED_SESSION_KEY after dispatch
-        msg = InboundMessage(
-            channel="telegram",
-            chat_id="123456",
-            sender_id="user1",
-            content="/stop",
-            session_key_override=UNIFIED_SESSION_KEY,  # Simulate post-dispatch state
-        )
+        result = loop.interrupt_session(UNIFIED_SESSION_KEY)
+        await asyncio.sleep(0)
 
-        ctx = CommandContext(msg=msg, session=None, key=UNIFIED_SESSION_KEY, raw="/stop", loop=loop)
-
-        # Execute /stop
-        result = await cmd_stop(ctx)
-
-        # Verify task was cancelled
         assert task.cancelled() or task.done()
-        assert "已停止 1 个任务" in result.content
+        assert result.accepted is True
+        assert result.cancelled_tasks == 1
 
     @pytest.mark.asyncio
-    async def test_stop_command_cross_channel_in_unified_mode(self, tmp_path: Path):
-        """In unified mode, /stop from one channel cancels tasks from another channel."""
+    async def test_interrupt_session_cross_channel_in_unified_mode(self, tmp_path: Path):
+        """In unified mode, explicit interrupt cancels tasks from any channel session."""
         from elebot.agent.loop import UNIFIED_SESSION_KEY
-        from elebot.command.handlers.session import cmd_stop
 
         loop = _make_loop(tmp_path, unified_session=True)
 
@@ -496,18 +502,8 @@ class TestStopCommandWithUnifiedSession:
         task2 = asyncio.create_task(long_running())
         loop._active_tasks[UNIFIED_SESSION_KEY] = [task1, task2]
 
-        # /stop from discord should cancel tasks started from telegram
-        msg = InboundMessage(
-            channel="discord",
-            chat_id="789012",
-            sender_id="user2",
-            content="/stop",
-            session_key_override=UNIFIED_SESSION_KEY,
-        )
+        result = loop.interrupt_session(UNIFIED_SESSION_KEY)
+        await asyncio.sleep(0)
 
-        ctx = CommandContext(msg=msg, session=None, key=UNIFIED_SESSION_KEY, raw="/stop", loop=loop)
-
-        result = await cmd_stop(ctx)
-
-        # Both tasks should be cancelled
-        assert "已停止 2 个任务" in result.content
+        assert result.accepted is True
+        assert result.cancelled_tasks == 2

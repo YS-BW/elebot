@@ -9,6 +9,7 @@ from elebot.agent.tools.notebook import NotebookEditTool
 from elebot.agent.tools.registry import ToolRegistry
 from elebot.agent.tools.search import GlobTool, GrepTool
 from elebot.agent.tools.shell import ExecTool
+from elebot.agent.tools.skill_tools import InstallSkillTool, ListSkillsTool, UninstallSkillTool
 from elebot.agent.tools.task_tools import (
     CreateTaskTool,
     ListTasksTool,
@@ -91,6 +92,9 @@ def register_default_tools(
             WebSearchTool(config=web_config.search, proxy=web_config.proxy)
         )
         registry.register(WebFetchTool(proxy=web_config.proxy))
+    registry.register(ListSkillsTool())
+    registry.register(InstallSkillTool())
+    registry.register(UninstallSkillTool())
     registry.register(
         ProposeTaskTool(
             task_service=task_service,

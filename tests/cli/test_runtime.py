@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -89,6 +92,7 @@ async def test_runtime_run_interactive_delegates_without_restarting_loop(monkeyp
     assert captured["session_id"] == "cli:test"
     assert captured["markdown"] is True
     assert captured["manage_agent_loop"] is False
+    assert captured["interrupt_session"] == runtime.interrupt_session
     agent_loop.run.assert_awaited_once()
     agent_loop.stop.assert_called_once()
     agent_loop.close_mcp.assert_awaited_once()
@@ -99,7 +103,15 @@ async def test_runtime_control_apis_delegate_to_owner_objects() -> None:
     """runtime 新增控制面应只委托给 owner，不自行承载业务逻辑。"""
     config = Config()
     agent_loop = MagicMock()
-    agent_loop.cancel_session_tasks = AsyncMock(return_value=2)
+    agent_loop.interrupt_session = MagicMock(
+        return_value=MagicMock(
+            session_id="cli:test",
+            reason="user_interrupt",
+            accepted=True,
+            cancelled_tasks=1,
+            already_interrupting=False,
+        )
+    )
     agent_loop.reset_session = MagicMock()
     agent_loop.build_status_snapshot = AsyncMock(
         return_value=MagicMock(
@@ -141,7 +153,7 @@ async def test_runtime_control_apis_delegate_to_owner_objects() -> None:
         agent_loop_factory=lambda **_kwargs: agent_loop,
     )
 
-    assert await runtime.cancel_session_tasks("cli:test") == 2
+    interrupt = runtime.interrupt_session("cli:test")
     runtime.reset_session("cli:test")
     snapshot = await runtime.get_status_snapshot("cli:test")
     runtime.trigger_dream("cli", "direct")
@@ -151,7 +163,7 @@ async def test_runtime_control_apis_delegate_to_owner_objects() -> None:
     dream_log = runtime.get_dream_log()
     dream_restore = runtime.restore_dream_version("abcd1234")
 
-    agent_loop.cancel_session_tasks.assert_awaited_once_with("cli:test")
+    agent_loop.interrupt_session.assert_called_once_with("cli:test", "user_interrupt")
     agent_loop.reset_session.assert_called_once_with("cli:test")
     agent_loop.build_status_snapshot.assert_awaited_once_with("cli:test")
     agent_loop.trigger_dream_background.assert_called_once_with("cli", "direct")
@@ -161,5 +173,26 @@ async def test_runtime_control_apis_delegate_to_owner_objects() -> None:
     agent_loop.memory_store.show_dream_version.assert_called_once_with(None)
     agent_loop.memory_store.restore_dream_version.assert_called_once_with("abcd1234")
     assert snapshot.model == "test-model"
+    assert interrupt.cancelled_tasks == 1
     assert dream_log.sha == "abcd1234"
     assert dream_restore.new_sha == "eeee9999"
+
+
+def test_cli_entry_import_does_not_trigger_runtime_cycle() -> None:
+    """CLI 入口导入不应因为 runtime 顶层导出触发循环依赖。
+
+    参数:
+        无。
+
+    返回:
+        无返回值。
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [sys.executable, "-c", "import elebot.__main__"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

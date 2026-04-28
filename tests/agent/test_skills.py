@@ -130,6 +130,45 @@ def test_install_local_skill_and_registry_scan_updates(tmp_path) -> None:
     assert [item.key for item in registry.scan()] == ["demo"]
 
 
+def test_install_local_skill_uses_symlink_when_supported(tmp_path, monkeypatch) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    source_dir = source_root / "demo"
+    _write_skill(source_root, "demo", "---\nname: Demo\ndescription: 本地测试\n---\n")
+    skills_root = tmp_path / "skills"
+
+    manager = SkillManager(skills_root)
+    monkeypatch.setattr(manager, "_should_link_local_skill", lambda: True)
+
+    ok, message = manager.install(str(source_dir))
+
+    assert ok is True
+    assert "已安装 skill" in message
+    installed_dir = skills_root / "demo"
+    assert installed_dir.is_symlink()
+    assert installed_dir.resolve() == source_dir.resolve()
+
+
+def test_install_local_skill_copies_when_symlink_disabled(tmp_path, monkeypatch) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    source_dir = source_root / "demo"
+    _write_skill(source_root, "demo", "---\nname: Demo\ndescription: 本地测试\n---\n")
+    skills_root = tmp_path / "skills"
+
+    manager = SkillManager(skills_root)
+    monkeypatch.setattr(manager, "_should_link_local_skill", lambda: False)
+
+    ok, message = manager.install(str(source_dir))
+
+    assert ok is True
+    assert "已安装 skill" in message
+    installed_dir = skills_root / "demo"
+    assert installed_dir.exists()
+    assert installed_dir.is_symlink() is False
+    assert (installed_dir / "SKILL.md").exists()
+
+
 def test_install_local_skill_requires_skill_md(tmp_path) -> None:
     source_dir = tmp_path / "source" / "broken"
     source_dir.mkdir(parents=True)
@@ -235,6 +274,26 @@ def test_uninstall_removes_skill_and_registry_scan_updates(tmp_path) -> None:
     assert ok is True
     assert "已卸载 skill" in message
     assert SkillRegistry(skills_root).scan() == []
+
+
+def test_uninstall_symlink_skill_only_removes_link(tmp_path, monkeypatch) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    source_dir = source_root / "demo"
+    _write_skill(source_root, "demo", "---\nname: Demo\n---\n")
+    skills_root = tmp_path / "skills"
+
+    manager = SkillManager(skills_root)
+    monkeypatch.setattr(manager, "_should_link_local_skill", lambda: True)
+    ok, _message = manager.install(str(source_dir))
+    assert ok is True
+
+    ok, message = manager.uninstall("demo")
+
+    assert ok is True
+    assert "已卸载 skill" in message
+    assert source_dir.exists()
+    assert (skills_root / "demo").exists() is False
 
 
 def test_uninstall_missing_skill_fails(tmp_path) -> None:

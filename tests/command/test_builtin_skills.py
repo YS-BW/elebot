@@ -55,6 +55,7 @@ def test_help_text_contains_new_skills_commands() -> None:
     assert "/skill install <source>" in help_text
     assert "/skill uninstall <name>" in help_text
     assert "/skill —" not in help_text
+    assert "/stop" not in help_text
 
 
 @pytest.mark.asyncio

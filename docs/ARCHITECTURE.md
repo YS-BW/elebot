@@ -167,7 +167,7 @@ Bus + provider + AgentLoop
 
 `ElebotRuntime` 现在对外暴露的是一层薄控制 API，例如：
 
-- `cancel_session_tasks()`
+- `interrupt_session()`
 - `reset_session()`
 - `get_status_snapshot()`
 - `trigger_dream()`

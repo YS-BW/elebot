@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from elebot.command.handlers.dream import cmd_dream, cmd_dream_log, cmd_dream_restore
 from elebot.command.handlers.runtime import cmd_help, cmd_restart, cmd_status
-from elebot.command.handlers.session import cmd_new, cmd_stop
+from elebot.command.handlers.session import cmd_new
 from elebot.command.handlers.skills import cmd_skill_manage
 from elebot.command.handlers.tasks import cmd_task_manage
 from elebot.command.router import CommandRouter
 
 SLASH_COMMAND_SPECS: list[tuple[str, str]] = [
     ("/new", "开始新会话"),
-    ("/stop", "停止当前任务"),
     ("/restart", "重启 elebot"),
     ("/status", "查看当前状态"),
     ("/dream", "手动触发 Dream 整理"),
@@ -50,7 +49,6 @@ def register_builtin_commands(router: CommandRouter) -> None:
     返回:
         无返回值。
     """
-    router.priority("/stop", cmd_stop)
     router.priority("/restart", cmd_restart)
     router.priority("/status", cmd_status)
     router.exact("/new", cmd_new)

@@ -6,13 +6,13 @@
 
 - [elebot/command/__init__.py](../elebot/command/__init__.py#L1-L6)
 - [elebot/command/router.py](../elebot/command/router.py#L15-L82)
-- [elebot/command/builtin.py](../elebot/command/builtin.py#L12-L66)
-- [elebot/command/handlers/session.py](../elebot/command/handlers/session.py#L9-L43)
+- [elebot/command/builtin.py](../elebot/command/builtin.py#L12-L64)
+- [elebot/command/handlers/session.py](../elebot/command/handlers/session.py#L9-L24)
 - [elebot/command/handlers/runtime.py](../elebot/command/handlers/runtime.py#L15-L83)
 - [elebot/command/handlers/dream.py](../elebot/command/handlers/dream.py#L10-L200)
 - [elebot/command/handlers/tasks.py](../elebot/command/handlers/tasks.py#L9-L57)
 - [elebot/command/handlers/skills.py](../elebot/command/handlers/skills.py#L10-L97)
-- [elebot/agent/loop.py](../elebot/agent/loop.py#L283-L319)
+- [elebot/agent/loop.py](../elebot/agent/loop.py#L902-L1042)
 
 ## 1. `command` 现在负责什么
 
@@ -29,6 +29,7 @@
 - 直接管理任务存储
 - 直接管理 Dream Git 历史
 - 直接操作 `loop._active_tasks`
+- 解释 interrupt 语义
 
 ## 2. 当前文件结构
 
@@ -67,17 +68,19 @@ command/
 3. prefix
 4. interceptors
 
-这意味着像 `/stop`、`/status` 这种命令，可以在进入模型之前直接被主链路拦住处理。
+这意味着像 `/status`、`/restart` 这种命令，可以在进入模型之前直接被主链路拦住处理。
 
 `/skill` 现在只注册了前缀命令，没有裸命令注册。  
-所以合法形式是 `/skill list`、`/skill install ...`、`/skill uninstall ...`。
+所以合法形式是：
+
+- `/skill list`
+- `/skill install <source>`
+- `/skill uninstall <name>`
 
 ## 4. handler 现在分别委托给谁
 
 ### 4.1 session 类命令
 
-- `/stop`
-  - 调 `ctx.loop.cancel_session_tasks(ctx.key)`
 - `/new`
   - 调 `ctx.loop.reset_session(ctx.key)`
 
@@ -146,7 +149,23 @@ command 保留在 command 模块
   = 把业务锁死在 CLI 里
 ```
 
-## 6. 当前固定边界
+## 6. interrupt 为什么不再属于 command
+
+现在已经固定下来的事实是：
+
+- interrupt 不再属于 slash 命令
+- `/stop` 已移除
+- CLI 的 `Esc` 会直接走 `runtime.interrupt_session()`
+
+因此 `command` 当前不会再提供：
+
+- `/stop`
+- `/interrupt`
+- `/cancel`
+
+中断现在是 runtime 控制动作，不是命令协议。
+
+## 7. 当前固定边界
 
 这一轮之后，下面这些做法都不应该再出现：
 

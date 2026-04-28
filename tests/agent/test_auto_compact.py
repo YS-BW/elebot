@@ -2,16 +2,16 @@
 
 import asyncio
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from elebot.agent.loop import AgentLoop
 from elebot.bus.events import InboundMessage
 from elebot.bus.queue import MessageBus
-from elebot.config.schema import AgentDefaults
 from elebot.command import CommandContext
+from elebot.config.schema import AgentDefaults
 from elebot.providers.base import LLMResponse
 
 
@@ -187,7 +187,6 @@ class TestAutoCompact:
     async def test_auto_compact_empty_session(self, tmp_path):
         """_archive on empty session should not archive."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
-        session = loop.sessions.get_or_create("cli:test")
 
         archive_called = False
 
@@ -294,7 +293,7 @@ class TestAutoCompactIdleDetection:
 
     @pytest.mark.asyncio
     async def test_auto_compact_does_not_affect_priority_commands(self, tmp_path):
-        """Priority commands (/stop, /restart) bypass _process_message entirely via run()."""
+        """Priority commands (/status, /restart) bypass _process_message entirely via run()."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
         session.add_message("user", "old message")
@@ -303,12 +302,12 @@ class TestAutoCompactIdleDetection:
 
         # Priority commands are dispatched in run() before _process_message is called.
         # Simulate that path directly via dispatch_priority.
-        raw = "/stop"
+        raw = "/status"
         msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content=raw)
         ctx = CommandContext(msg=msg, session=session, key="cli:test", raw=raw, loop=loop)
         result = await loop.commands.dispatch_priority(ctx)
         assert result is not None
-        assert "已停止" in result.content or "当前没有可停止的任务" in result.content
+        assert "Model:" in result.content or "Session:" in result.content
 
         # Session should be untouched since priority commands skip _process_message
         session_after = loop.sessions.get_or_create("cli:test")

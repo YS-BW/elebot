@@ -6,11 +6,12 @@
 
 - [elebot/agent/tools/base.py](../elebot/agent/tools/base.py#L21-L377)
 - [elebot/agent/tools/registry.py](../elebot/agent/tools/registry.py#L8-L166)
-- [elebot/agent/loop.py](../elebot/agent/loop.py#L208-L302)
+- [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L26-L130)
 - [elebot/agent/runner.py](../elebot/agent/runner.py#L568-L724)
 - [elebot/agent/tools/filesystem.py](../elebot/agent/tools/filesystem.py#L16-L220)
 - [elebot/agent/tools/search.py](../elebot/agent/tools/search.py#L90-L240)
 - [elebot/agent/tools/shell.py](../elebot/agent/tools/shell.py#L21-L240)
+- [elebot/agent/tools/skill_tools.py](../elebot/agent/tools/skill_tools.py#L1-L193)
 - [elebot/agent/tools/web.py](../elebot/agent/tools/web.py#L75-L220)
 - [elebot/agent/tools/notebook.py](../elebot/agent/tools/notebook.py#L40-L179)
 
@@ -44,7 +45,7 @@ tool.execute(...)
 
 ## 2. 默认工具在哪里注册
 
-默认工具注册在 [elebot/agent/loop.py](../elebot/agent/loop.py#L252-L281) 的 `_register_default_tools()`：
+默认工具注册在 [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L26-L130) 的 `register_default_tools()`：
 
 ```python
 self.tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
@@ -58,6 +59,9 @@ if self.exec_config.enable:
 if self.web_config.enable:
     self.tools.register(WebSearchTool(...))
     self.tools.register(WebFetchTool(...))
+self.tools.register(ListSkillsTool())
+self.tools.register(InstallSkillTool())
+self.tools.register(UninstallSkillTool())
 ```
 
 当前主链路默认可见的内置工具有：
@@ -72,8 +76,11 @@ if self.web_config.enable:
 - `exec`（取决于配置）
 - `web_search`（取决于配置）
 - `web_fetch`（取决于配置）
+- `list_skills`
+- `install_skill`
+- `uninstall_skill`
 
-另外还可能接入动态的 `mcp_*` 工具，连接逻辑在 [elebot/agent/loop.py](../elebot/agent/loop.py#L282-L302)。
+另外还可能接入动态的 `mcp_*` 工具，连接逻辑在 `AgentLoop` 的 MCP 注册流程里。
 
 ## 3. 一个工具最少要实现什么
 

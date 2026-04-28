@@ -9,9 +9,11 @@
 - [elebot/cli/commands/onboard.py](../elebot/cli/commands/onboard.py#L16-L164)
 - [elebot/cli/commands/agent.py](../elebot/cli/commands/agent.py#L21-L105)
 - [elebot/cli/commands/status.py](../elebot/cli/commands/status.py#L11-L60)
+- [elebot/cli/history.py](../elebot/cli/history.py#L120-L149)
 - [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L109)
-- [elebot/runtime/app.py](../elebot/runtime/app.py#L40-L340)
-- [elebot/command/builtin.py](../elebot/command/builtin.py#L12-L66)
+- [elebot/cli/interactive.py](../elebot/cli/interactive.py#L52-L254)
+- [elebot/cli/keys.py](../elebot/cli/keys.py#L17-L416)
+- [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L352)
 
 ## 1. CLI 现在保留哪些命令
 
@@ -23,15 +25,13 @@
 
 `provider login` 已经随 OAuth provider 一起移除，CLI 不再保留那套登录入口。
 
-根入口做的事情很薄：
+根入口本身很薄，只做三件事：
 
-1. 创建 `Typer` app
-2. 注册当前保留的命令
-3. 处理 `--version`
+1. 创建 `Typer` app。
+2. 注册当前保留的命令。
+3. 处理 `--version`。
 
-这部分现在集中在 [elebot/cli/app.py](../elebot/cli/app.py#L24-L67) 和 [elebot/cli/commands/__init__.py](../elebot/cli/commands/__init__.py#L12-L23)。
-
-## 1.1 `onboard` 当前会做什么
+## 2. `onboard` 当前会做什么
 
 当前 `elebot onboard` 的默认初始化行为已经固定为：
 
@@ -39,12 +39,12 @@
 - 默认把 provider 设为 `deepseek`
 - 默认把模型设为 `deepseek-v4-flash`
 - 补齐 workspace 启动模板和 `memory/history.jsonl`
-- 尝试安装两份默认 skill 源
+- 尝试安装两份默认本地 skill
 - 输出中文下一步提示，并把 API Key 获取地址指向 DeepSeek 平台
 
-这部分逻辑都在 [elebot/cli/commands/onboard.py](../elebot/cli/commands/onboard.py#L18-L157)。
+这部分逻辑都在 [elebot/cli/commands/onboard.py](../elebot/cli/commands/onboard.py#L22-L164)。
 
-## 2. `elebot agent` 的真实启动链路
+## 3. `elebot agent` 的真实启动链路
 
 `agent` 命令现在不再自己拼 `Bus + provider + AgentLoop`。
 
@@ -62,15 +62,7 @@ _make_runtime()
 ElebotRuntime
 ```
 
-对应代码就在 [elebot/cli/commands/agent.py](../elebot/cli/commands/agent.py#L31-L105)：
-
-```python
-loaded_config = _load_runtime_config(config, workspace)
-sync_workspace_templates(loaded_config.workspace_path)
-runtime = _make_runtime(loaded_config)
-```
-
-这里可以直接看出 CLI 的边界：
+CLI 自己的职责固定为：
 
 - 解析参数
 - 处理 `--config` / `--workspace`
@@ -80,9 +72,9 @@ runtime = _make_runtime(loaded_config)
 
 真正的运行时装配在 [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L40-L86)。
 
-## 3. 单次模式和交互模式怎么分
+## 4. 单次模式和交互模式怎么分
 
-### 3.1 单次模式
+### 4.1 单次模式
 
 执行：
 
@@ -90,11 +82,11 @@ runtime = _make_runtime(loaded_config)
 elebot agent -m "你好"
 ```
 
-CLI 会调用 `runtime.run_once(...)`，对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L236-L263)。
+CLI 会调用 `runtime.run_once(...)`，对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L258-L319)。
 
 这条链路直接复用 `AgentLoop.process_direct(...)`，不会进入长期后台循环。
 
-### 3.2 交互模式
+### 4.2 交互模式
 
 执行：
 
@@ -102,17 +94,54 @@ CLI 会调用 `runtime.run_once(...)`，对应 [elebot/runtime/app.py](../elebot
 elebot agent
 ```
 
-CLI 会调用 `runtime.run_interactive(...)`，对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L265-L297)。
+CLI 会调用 `runtime.run_interactive(...)`，对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L287-L319)。
 
 这时候 runtime 会：
 
 1. 按需启动 `AgentLoop.run()`
-2. 调用 `interactive.py` 处理终端输入输出
+2. 调 `interactive.py` 处理终端输入输出
 3. 在退出时统一收尾
 
 关键点是 `manage_agent_loop=False`，说明交互层只负责终端体验，不再托管主循环生命周期。
 
-## 4. `runtime_support.py` 现在负责什么
+## 5. 交互模式里的 `Ctrl+C` 和 `Esc`
+
+模块五完成后，交互层的按键语义已经固定：
+
+- `Ctrl+C`
+  - 退出当前交互进程
+- `Esc`
+  - 只在活跃回复期间生效
+  - 会中断当前这一轮回复或工具执行
+  - 只有“孤立的 Esc”才会触发中断
+  - 终端回复的控制序列会被完整消费，不会把 `[38;1R`、`??` 这类残留带进下一次输入
+- 等待输入时按 `Esc`
+  - 不会触发中断
+  - 仍然交给 `prompt_toolkit` 的普通输入行为
+
+另外，当前 CLI prompt 已经显式禁用 `prompt_toolkit` 的 CPR（cursor position report）查询。
+这样终端不会再把 `ESC[6n` 的回复漏成 `[23;1R` 这类伪输入。
+
+现在的 interrupt 链路是：
+
+```text
+CLI 按键
+  ↓
+EscInterruptWatcher
+  ↓
+runtime.interrupt_session()
+  ↓
+AgentLoop.interrupt_session()
+```
+
+交互层收到 `Esc` 后只会做两件事：
+
+1. 调统一 interrupt API
+2. 打印一条本地提示：`正在中断当前回复...`
+
+它不会直接退出进程，也不会自己解释中断后的 session 语义。
+
+## 6. `runtime_support.py` 现在负责什么
 
 CLI 侧只保留了一个很薄的辅助层：[elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L109)。
 
@@ -131,7 +160,7 @@ CLI 侧只保留了一个很薄的辅助层：[elebot/cli/runtime_support.py](..
 
 所以它不是第二套 runtime，也不是第二套 provider owner，只是 CLI 适配层。
 
-## 5. slash 命令和 CLI 的关系
+## 7. slash 命令和 CLI 的关系
 
 slash 命令不属于 CLI 根命令系统。
 
@@ -147,14 +176,20 @@ command handler 调 owner API
 
 也就是说：
 
-- `/stop`
 - `/task`
 - `/dream`
 - `/status`
+- `/new`
 
-这些都不是 `Typer` 子命令，而是 agent 主链路里的文本协议，协议定义在 [elebot/command/builtin.py](../elebot/command/builtin.py#L12-L66)。
+这些都不是 `Typer` 子命令，而是 agent 主链路里的文本协议。
 
-## 6. 以后接 Web 或 desktop 时该复用哪里
+当前中断已经完全退出 slash 命令协议：
+
+- `/stop` 已移除
+- 不新增 `/interrupt`
+- 不新增 `/cancel`
+
+## 8. 以后接 Web 或 desktop 时该复用哪里
 
 当前固定原则没有变：
 
@@ -163,4 +198,4 @@ CLI 是一个入口
 runtime 是统一底座
 ```
 
-以后如果接 Web UI、desktop 或其他前端，应该复用 [elebot/runtime/app.py](../elebot/runtime/app.py#L40-L340) 的 `ElebotRuntime`，而不是重新在入口层复制一套装配逻辑。
+以后如果接 Web UI、desktop 或其他前端，应该复用 [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L363) 的 `ElebotRuntime`，而不是重新在入口层复制一套装配逻辑。

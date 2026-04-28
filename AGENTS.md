@@ -431,6 +431,9 @@ ContextBuilder 注入 metadata
 - 不接受只有 happy path 的测试
 - 主链路变更后要跑对应局部测试
 - 测试失败时先判断是环境问题还是代码问题
+- 只要改了代码，最终验证阶段必须额外执行一次真实的 `elebot agent` 启动测试
+- 这条真实测试不能只用 `--help` 代替，必须实际进入 CLI → runtime → AgentLoop 的启动链路
+- 如果真实测试因为 API Key、网络、TTY 或 provider 环境失败，必须在汇报里明确区分是“启动链路失败”还是“启动成功但运行环境失败”
 
 建议策略：
 

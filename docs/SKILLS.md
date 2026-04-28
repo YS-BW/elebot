@@ -2,7 +2,7 @@
 
 EleBot 当前支持一套全局 `skill` 目录，用来给 agent 提供可复用的任务说明包。
 
-这里的 `skill` 不是独立工具系统，也不会自动变成 tool。  
+这里的 `skill` 本身不是独立运行时，也不会因为目录里有 `SKILL.md` 就自动变成 tool。  
 它的作用是：
 
 - 让模型先知道“有哪些可复用 workflow”
@@ -14,10 +14,11 @@ EleBot 当前支持一套全局 `skill` 目录，用来给 agent 提供可复用
 - [elebot/config/paths.py](../elebot/config/paths.py#L11-L14)
 - [elebot/agent/skills/registry.py](../elebot/agent/skills/registry.py#L14-L144)
 - [elebot/agent/skills/parser.py](../elebot/agent/skills/parser.py#L8-L60)
-- [elebot/agent/skills/manager.py](../elebot/agent/skills/manager.py#L38-L347)
+- [elebot/agent/skills/manager.py](../elebot/agent/skills/manager.py#L39-L413)
 - [elebot/agent/skills/logging.py](../elebot/agent/skills/logging.py#L11-L40)
 - [elebot/agent/context.py](../elebot/agent/context.py#L16-L81)
-- [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L25-L126)
+- [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L26-L130)
+- [elebot/agent/tools/skill_tools.py](../elebot/agent/tools/skill_tools.py#L1-L193)
 - [elebot/command/handlers/skills.py](../elebot/command/handlers/skills.py#L10-L97)
 
 ## 1. 全局目录
@@ -93,7 +94,8 @@ EleBot 只认一个全局目录：
 1. 模型根据用户请求和 skill metadata 自行判断
 2. 用户显式说“使用某个 skill”，模型再去读取该 skill
 
-也就是说，skill 现在是 prompt 驱动的，不是 tool 调度驱动的。
+也就是说，skill 的内容使用仍然是 prompt 驱动的。  
+但 skill 的安装、卸载和列表管理现在已经额外暴露成 agent tools，可以直接被模型调用。
 
 ## 6. examples / references / scripts 什么时候用
 
@@ -116,7 +118,7 @@ EleBot 只认一个全局目录：
 Skill 没有独立 runtime。  
 脚本执行仍然走现有工具系统。
 
-主链路默认工具注册在 [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L25-L126)。
+主链路默认工具注册在 [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L26-L130)。
 
 为了支持全局 skill，默认工具注册时会把 `~/.elebot/skills` 加进额外允许访问目录，这样：
 
@@ -145,6 +147,17 @@ Skill 没有独立 runtime。
 
 裸 `/skill` 已不是当前实现的一部分。
 
+除了 slash 命令，当前主链路还注册了 3 个 agent tools：
+
+- `list_skills`
+- `install_skill`
+- `uninstall_skill`
+
+这些 tool 和 `/skill` 命令共用同一组 owner：
+
+- 读操作走 `SkillRegistry`
+- 写操作走 `SkillManager`
+
 ## 9. 安装来源规则
 
 `/skill install <source>` 只支持三类来源：
@@ -163,6 +176,12 @@ Skill 没有独立 runtime。
 - 合法标准只有一个：目录根存在 `SKILL.md`
 - 安装键名直接使用目录名
 - 落盘路径固定是 `~/.elebot/skills/<目录名>`
+- 本地目录来源：
+  - 类 Unix 平台优先创建符号链接
+  - Windows 平台使用复制目录
+- 远端下载和 Git 来源：
+  - 先物化到临时目录
+  - 再复制到 `~/.elebot/skills/<目录名>`
 - 如果目标目录已存在，直接失败，不覆盖
 - 不支持只给一个裸 `SKILL.md` 文件
 - 不支持多 skill 压缩包自动挑选
@@ -182,7 +201,11 @@ Skill 没有独立 runtime。
 - `skill-creator`
 - `skills-vercel-labs.find-skills-master-e60e5845d52b0b8e69d1faaff7dbb2cc1b62bd59`
 
-如果这些本地来源存在，`onboard` 会直接把它们复制进 `~/.elebot/skills`；如果目标目录已经存在，则跳过，不覆盖。
+如果这些本地来源存在，`onboard` 会直接调用 `SkillManager.install()`：
+
+- 类 Unix 平台安装为符号链接
+- Windows 平台安装为复制目录
+- 如果目标目录已经存在，则跳过，不覆盖
 
 仍然不支持：
 

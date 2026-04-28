@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
+
+InterruptReason = Literal["user_interrupt", "runtime_interrupt", "tool_interrupt"]
 
 
 @dataclass(slots=True)
@@ -17,6 +20,17 @@ class RuntimeStatusSnapshot:
     session_msg_count: int
     context_tokens_estimate: int
     search_usage_text: str | None = None
+
+
+@dataclass(slots=True)
+class InterruptResult:
+    """描述一次会话中断请求的处理结果。"""
+
+    session_id: str
+    reason: InterruptReason
+    accepted: bool
+    cancelled_tasks: int
+    already_interrupting: bool = False
 
 
 @dataclass(slots=True)

@@ -4,9 +4,11 @@
 
 相关源码：
 
-- [elebot/session/manager.py](../elebot/session/manager.py#L14-L209)
-- [elebot/agent/loop.py](../elebot/agent/loop.py#L779-L1094)
-- [elebot/command/handlers/session.py](../elebot/command/handlers/session.py#L9-L43)
+- [elebot/session/manager.py](../elebot/session/manager.py#L15-L219)
+- [elebot/agent/loop.py](../elebot/agent/loop.py#L424-L440)
+- [elebot/command/handlers/session.py](../elebot/command/handlers/session.py#L9-L24)
+- [tests/agent/test_loop_save_turn.py](../tests/agent/test_loop_save_turn.py#L14-L203)
+- [tests/agent/test_unified_session.py](../tests/agent/test_unified_session.py#L210-L319)
 
 ## 1. 先记一句话
 
@@ -92,6 +94,12 @@ session 文件固定放在：
 如果一轮执行在中途停掉，系统会把尚未完整写回的状态先放进 `metadata`。  
 下一轮进来时，再由 `AgentLoop` 把这些内容恢复成合法历史。
 
+当前 checkpoint 会明确记录：
+
+- `phase`
+- `interrupted`
+- `interrupt_reason`
+
 所以现在可以把 session 分成两层理解：
 
 - `messages`
@@ -99,7 +107,30 @@ session 文件固定放在：
 - `metadata`
   - 运行中附加状态
 
-## 7. `/new` 现在做了什么
+## 7. interrupted turn 现在怎么落盘
+
+模块五完成后，interrupt 已经固定了恢复策略：
+
+- 半截自然语言回复不落进 session
+- 已形成的 assistant tool-call 会保留
+- 已完成工具结果会保留
+- 未完成工具调用会补一条 interrupted 标记
+- interrupted 不再写成 `Error: ...`
+
+未完成工具的补位文本固定为：
+
+```text
+Interrupted: tool execution stopped before completion.
+```
+
+这样做的目的只有一个：
+
+```text
+让下一轮还能继续原 session
+但不把半截正文伪装成完整回复
+```
+
+## 8. `/new` 现在做了什么
 
 `/new` 不再在命令层自己清理 session。
 
@@ -117,6 +148,7 @@ AgentLoop.reset_session()
 
 - 取出当前未归档消息
 - 清空 session
+- 清空 `session.metadata` 里的运行态附加状态
 - 立即保存
 - 后台把旧消息送去归档
 
@@ -124,6 +156,8 @@ AgentLoop.reset_session()
 
 ```text
 清空当前短期会话
+  +
+清空当前运行态 metadata
   +
 把旧内容转进长期归档链路
 ```

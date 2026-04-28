@@ -1,4 +1,3 @@
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -6,8 +5,7 @@ from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.shortcuts.prompt import CompleteStyle
 
-from elebot.cli import history
-from elebot.cli import render
+from elebot.cli import history, render
 from elebot.cli import stream as stream_mod
 
 
@@ -50,18 +48,25 @@ def test_init_prompt_session_creates_session(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "elebot.config.paths.get_cli_history_path", lambda: tmp_path / "history"
     )
+    fake_output = MagicMock()
+    fake_output.enable_cpr = True
 
-    with patch("elebot.cli.history.PromptSession") as mock_session_cls:
+    with patch("elebot.cli.history.PromptSession") as mock_session_cls, patch(
+        "elebot.cli.history.create_output", return_value=fake_output
+    ) as mock_create_output:
         history.init_prompt_session()
 
     assert history._PROMPT_SESSION is not None
     mock_session_cls.assert_called_once()
+    mock_create_output.assert_called_once_with(always_prefer_tty=True)
     _, kwargs = mock_session_cls.call_args
     assert kwargs["multiline"] is False
     assert kwargs["enable_open_in_editor"] is False
     assert kwargs["complete_while_typing"] is True
     assert kwargs["complete_style"] is CompleteStyle.COLUMN
     assert isinstance(kwargs["completer"], history.SlashCommandCompleter)
+    assert kwargs["output"] is fake_output
+    assert fake_output.enable_cpr is False
 
 
 def test_slash_command_completer_returns_all_commands_on_slash() -> None:

@@ -62,10 +62,19 @@ class Session:
             out.append(entry)
         return out
 
-    def clear(self) -> None:
-        """清空会话消息并重置状态。"""
+    def clear(self, *, clear_metadata: bool = False) -> None:
+        """清空会话短期消息，并按需清理运行态附加状态。
+
+        参数:
+            clear_metadata: 是否同时清空 ``metadata`` 里的运行期附加状态。
+
+        返回:
+            无返回值。
+        """
         self.messages = []
         self.last_consolidated = 0
+        if clear_metadata:
+            self.metadata = {}
         self.updated_at = datetime.now()
 
     def retain_recent_legal_suffix(self, max_messages: int) -> None:

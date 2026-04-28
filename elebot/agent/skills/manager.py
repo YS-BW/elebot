@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -63,6 +64,24 @@ class SkillManager:
             return False, "请提供 skill 来源。"
 
         ensure_dir(self.root)
+        local_path = Path(source_text).expanduser()
+        if local_path.exists():
+            try:
+                skill_dir = self._resolve_local_skill_dir(local_path)
+            except Exception as exc:
+                return False, str(exc)
+
+            skill_key = skill_dir.name
+            target_dir = self.root / skill_key
+            if self._target_exists(target_dir):
+                return (
+                    False,
+                    f"skill 已存在：`{skill_key}`。请先执行 `/skill uninstall {skill_key}`。",
+                )
+
+            self._install_local_skill_dir(skill_dir, target_dir)
+            return True, f"已安装 skill：`{skill_key}`。"
+
         with tempfile.TemporaryDirectory(prefix="elebot-skill-") as temp_dir:
             staging_root = Path(temp_dir)
             try:
@@ -72,7 +91,7 @@ class SkillManager:
 
             skill_key = skill_dir.name
             target_dir = self.root / skill_key
-            if target_dir.exists():
+            if self._target_exists(target_dir):
                 return (
                     False,
                     f"skill 已存在：`{skill_key}`。请先执行 `/skill uninstall {skill_key}`。",
@@ -91,13 +110,66 @@ class SkillManager:
             ``(是否成功, 提示文本)``。
         """
         skill_dir = self.root / skill_key
-        if not skill_dir.exists():
+        if not skill_dir.exists() and not skill_dir.is_symlink():
             return False, f"找不到 skill：`{skill_key}`。"
+        if skill_dir.is_symlink():
+            skill_dir.unlink()
+            return True, f"已卸载 skill：`{skill_key}`。"
         if not (skill_dir / "SKILL.md").is_file():
             return False, f"`{skill_key}` 不是合法 skill 目录。"
 
         shutil.rmtree(skill_dir)
         return True, f"已卸载 skill：`{skill_key}`。"
+
+    def _resolve_local_skill_dir(self, source_dir: Path) -> Path:
+        """解析并校验本地来源目录。
+
+        参数:
+            source_dir: 用户给出的本地目录。
+
+        返回:
+            校验通过后的 skill 根目录。
+        """
+        if not source_dir.is_dir():
+            raise ValueError("本地来源必须是目录，不能直接传 `SKILL.md` 文件。")
+        return self._require_skill_dir(source_dir, "本地目录")
+
+    def _target_exists(self, target_dir: Path) -> bool:
+        """判断目标 skill 路径是否已经被占用。
+
+        参数:
+            target_dir: 目标安装目录。
+
+        返回:
+            已存在文件、目录或符号链接时返回 ``True``。
+        """
+        return target_dir.exists() or target_dir.is_symlink()
+
+    def _should_link_local_skill(self) -> bool:
+        """判断本地 skill 安装是否应优先使用符号链接。
+
+        参数:
+            无。
+
+        返回:
+            非 Windows 平台返回 ``True``，Windows 返回 ``False``。
+        """
+        return os.name != "nt"
+
+    def _install_local_skill_dir(self, source_dir: Path, target_dir: Path) -> None:
+        """按平台策略安装本地 skill 目录。
+
+        参数:
+            source_dir: 已校验的本地 skill 目录。
+            target_dir: 目标安装路径。
+
+        返回:
+            无返回值。
+        """
+        if self._should_link_local_skill():
+            target_dir.symlink_to(source_dir.resolve(), target_is_directory=True)
+            return
+        shutil.copytree(source_dir, target_dir)
 
     def _materialize_skill_dir(self, source: str, staging_root: Path) -> Path:
         """将来源解析成一个可复制的合法 skill 目录。
@@ -109,12 +181,6 @@ class SkillManager:
         返回:
             已解析出的 skill 目录路径。
         """
-        local_path = Path(source).expanduser()
-        if local_path.exists():
-            if not local_path.is_dir():
-                raise ValueError("本地来源必须是目录，不能直接传 `SKILL.md` 文件。")
-            return self._require_skill_dir(local_path, "本地目录")
-
         github_tree = self._parse_github_tree_source(source)
         if github_tree is not None:
             return self._materialize_github_tree_source(

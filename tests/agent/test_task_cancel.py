@@ -1,4 +1,4 @@
-"""Tests for /stop task cancellation."""
+"""Tests for session interrupt handling."""
 
 from __future__ import annotations
 
@@ -8,12 +8,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from elebot.config.schema import AgentDefaults
+from elebot.runtime.models import InterruptResult
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 
 
 def _make_loop(*, exec_config=None):
-    """Create a minimal AgentLoop with mocked dependencies."""
+    """创建一个最小可用的 AgentLoop 测试实例。
+
+    参数:
+        exec_config: 可选的执行工具配置。
+
+    返回:
+        `(loop, bus)` 二元组。
+    """
     from elebot.agent.loop import AgentLoop
     from elebot.bus.queue import MessageBus
 
@@ -23,32 +31,29 @@ def _make_loop(*, exec_config=None):
     workspace = MagicMock()
     workspace.__truediv__ = MagicMock(return_value=MagicMock())
 
-    with patch("elebot.agent.loop.ContextBuilder"), \
-         patch("elebot.agent.loop.SessionManager"):
+    with patch("elebot.agent.loop.ContextBuilder"), patch("elebot.agent.loop.SessionManager"):
         loop = AgentLoop(bus=bus, provider=provider, workspace=workspace, exec_config=exec_config)
     return loop, bus
 
 
-class TestHandleStop:
+class TestInterruptSession:
     @pytest.mark.asyncio
-    async def test_stop_no_active_task(self):
-        from elebot.bus.events import InboundMessage
-        from elebot.command.handlers.session import cmd_stop
-        from elebot.command.router import CommandContext
+    async def test_interrupt_session_rejects_when_no_active_task(self):
+        loop, _bus = _make_loop()
 
-        loop, bus = _make_loop()
-        msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="/stop")
-        ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw="/stop", loop=loop)
-        out = await cmd_stop(ctx)
-        assert "当前没有可停止的任务" in out.content
+        result = loop.interrupt_session("test:c1")
+
+        assert result == InterruptResult(
+            session_id="test:c1",
+            reason="user_interrupt",
+            accepted=False,
+            cancelled_tasks=0,
+            already_interrupting=False,
+        )
 
     @pytest.mark.asyncio
-    async def test_stop_cancels_active_task(self):
-        from elebot.bus.events import InboundMessage
-        from elebot.command.handlers.session import cmd_stop
-        from elebot.command.router import CommandContext
-
-        loop, bus = _make_loop()
+    async def test_interrupt_session_cancels_active_task(self):
+        loop, _bus = _make_loop()
         cancelled = asyncio.Event()
 
         async def slow_task():
@@ -62,39 +67,34 @@ class TestHandleStop:
         await asyncio.sleep(0)
         loop._active_tasks["test:c1"] = [task]
 
-        msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="/stop")
-        ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw="/stop", loop=loop)
-        out = await cmd_stop(ctx)
+        result = loop.interrupt_session("test:c1")
+        await asyncio.sleep(0)
 
+        assert result.accepted is True
+        assert result.cancelled_tasks == 1
         assert cancelled.is_set()
-        assert "已停止 1 个任务" in out.content
+        assert loop._peek_interrupt_state("test:c1") is not None
 
     @pytest.mark.asyncio
-    async def test_stop_cancels_multiple_tasks(self):
-        from elebot.bus.events import InboundMessage
-        from elebot.command.handlers.session import cmd_stop
-        from elebot.command.router import CommandContext
+    async def test_interrupt_session_rejects_duplicate_request(self):
+        loop, _bus = _make_loop()
 
-        loop, bus = _make_loop()
-        events = [asyncio.Event(), asyncio.Event()]
+        async def slow_task():
+            await asyncio.sleep(60)
 
-        async def slow(idx):
-            try:
-                await asyncio.sleep(60)
-            except asyncio.CancelledError:
-                events[idx].set()
-                raise
-
-        tasks = [asyncio.create_task(slow(i)) for i in range(2)]
+        task = asyncio.create_task(slow_task())
         await asyncio.sleep(0)
-        loop._active_tasks["test:c1"] = tasks
+        loop._active_tasks["test:c1"] = [task]
 
-        msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="/stop")
-        ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw="/stop", loop=loop)
-        out = await cmd_stop(ctx)
+        first = loop.interrupt_session("test:c1")
+        second = loop.interrupt_session("test:c1")
 
-        assert all(e.is_set() for e in events)
-        assert "已停止 2 个任务" in out.content
+        assert first.accepted is True
+        assert second.already_interrupting is True
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 class TestDispatch:
@@ -117,6 +117,56 @@ class TestDispatch:
         await loop._dispatch(msg)
         out = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
         assert out.content == "hi"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_interrupted_turn_publishes_interrupted_message(self):
+        from elebot.bus.events import InboundMessage
+        from elebot.session.manager import Session
+
+        loop, bus = _make_loop()
+        session = Session(
+            key="test:c1",
+            metadata={
+                loop._RUNTIME_CHECKPOINT_KEY: {
+                    "phase": "awaiting_tools",
+                    "assistant_message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_pending",
+                                "type": "function",
+                                "function": {"name": "exec", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    "completed_tool_results": [],
+                    "pending_tool_calls": [
+                        {
+                            "id": "call_pending",
+                            "type": "function",
+                            "function": {"name": "exec", "arguments": "{}"},
+                        }
+                    ],
+                }
+            },
+        )
+        loop.sessions.get_or_create.return_value = session
+        msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="hello")
+
+        async def fake_process(*_args, **_kwargs):
+            raise asyncio.CancelledError()
+
+        loop._process_message = fake_process
+        loop._interrupt_requests["test:c1"] = MagicMock(reason="user_interrupt", handled=False)
+
+        await loop._dispatch(msg)
+
+        out = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+        assert out.content == "已中断当前回复。"
+        assert out.metadata["_interrupted"] is True
+        assert session.metadata.get(loop._RUNTIME_CHECKPOINT_KEY) is None
+        assert session.messages[-1]["content"] == "Interrupted: tool execution stopped before completion."
 
     @pytest.mark.asyncio
     async def test_dispatch_streaming_preserves_message_metadata(self):
@@ -159,7 +209,7 @@ class TestDispatch:
     async def test_processing_lock_serializes(self):
         from elebot.bus.events import InboundMessage, OutboundMessage
 
-        loop, bus = _make_loop()
+        loop, _bus = _make_loop()
         order = []
 
         async def mock_process(m, **kwargs):

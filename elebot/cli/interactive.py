@@ -15,6 +15,7 @@ from elebot.cli.history import (
     read_interactive_input_async,
     restore_terminal,
 )
+from elebot.cli.keys import create_interrupt_watcher
 from elebot.cli.render import (
     console,
     print_agent_response,
@@ -56,6 +57,8 @@ async def run_interactive_loop(
     markdown: bool,
     renderer_factory: Callable[..., StreamRenderer] = StreamRenderer,
     manage_agent_loop: bool = True,
+    interrupt_session: Callable[[str, str], Any] | None = None,
+    interrupt_watcher_factory: Callable[[], Any | None] = create_interrupt_watcher,
 ) -> None:
     """运行交互聊天循环，并通过 bus 与 agent 协作。
 
@@ -66,6 +69,8 @@ async def run_interactive_loop(
         markdown: 是否按 Markdown 渲染回复。
         renderer_factory: 流式渲染器工厂，便于测试注入。
         manage_agent_loop: 是否由交互循环负责启动和关闭 `agent_loop`。
+        interrupt_session: 当前活跃轮次的中断回调。
+        interrupt_watcher_factory: 中断按键监听器工厂。
 
     返回:
         无返回值。
@@ -165,7 +170,56 @@ async def run_interactive_loop(
                     )
                 )
 
-                await turn_done.wait()
+                watcher = interrupt_watcher_factory() if interrupt_session is not None else None
+                interrupt_task: asyncio.Task[Any] | None = None
+                turn_done_task = asyncio.create_task(turn_done.wait())
+                try:
+                    if watcher is not None:
+                        interrupt_task = asyncio.create_task(watcher.wait())
+                        while not turn_done.is_set():
+                            wait_set = {turn_done_task}
+                            if interrupt_task is not None:
+                                wait_set.add(interrupt_task)
+                            done, _pending = await asyncio.wait(
+                                wait_set,
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            if turn_done_task in done:
+                                break
+                            if interrupt_task is not None and interrupt_task in done:
+                                interrupt_task.result()
+                                interrupt_result = interrupt_session(
+                                    session_id,
+                                    "user_interrupt",
+                                )
+                                if (
+                                    getattr(interrupt_result, "accepted", False)
+                                    or getattr(interrupt_result, "already_interrupting", False)
+                                ):
+                                    await print_interactive_progress_line(
+                                        "正在中断当前回复...",
+                                        thinking,
+                                    )
+                                interrupt_task = None
+                                watcher.close()
+                                await turn_done.wait()
+                                break
+                    else:
+                        await turn_done.wait()
+                finally:
+                    turn_done_task.cancel()
+                    if interrupt_task is not None:
+                        interrupt_task.cancel()
+                    if watcher is not None:
+                        watcher.close()
+                    await asyncio.gather(
+                        *[
+                            task
+                            for task in (turn_done_task, interrupt_task)
+                            if task is not None
+                        ],
+                        return_exceptions=True,
+                    )
 
                 if turn_response:
                     content, metadata = turn_response[0]

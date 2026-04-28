@@ -30,12 +30,14 @@ EleBot 当前阶段的目标不变：
 - session 持久化
 - workspace 模板初始化
 - 全局 skills 扫描与 prompt 注入
+- skill 的安装、卸载、列表管理
 - tasks 的自然语言创建、确认后落盘、后台轮询、系统消息触发
 - 最小工具调用闭环
+- DeepSeek tool-call transcript 的 `reasoning_content` 协议修复
+- 单 runtime、单会话下的真实 interrupt
 
 ### 2.2 当前还没有
 
-- 真正完整的中断能力
 - 系统级调度后端
 - 正式的 Web / desktop 多端入口
 - 多通道能力
@@ -66,14 +68,14 @@ AgentLoop
 当前已经收口成下面这组 owner 分工：
 
 ```text
-config      = 只保存配置事实
-providers   = provider 元数据、解析、装配、model catalog
-runtime     = 统一对外复用入口与生命周期
-agent       = 执行循环、上下文装配、会话内控制
-command     = slash 命令协议与 handler 组织
-tasks       = 任务领域服务与持久化
-agent/memory= 记忆存储、压缩与 Dream
-utils       = 低层通用小工具
+config        = 只保存配置事实
+providers     = provider 元数据、解析、装配、model catalog
+runtime       = 统一对外复用入口与生命周期
+agent         = 执行循环、上下文装配、会话内控制
+command       = slash 命令协议与 handler 组织
+tasks         = 任务领域服务与持久化
+agent/memory  = 记忆存储、压缩与 Dream
+utils         = 低层通用小工具
 ```
 
 ### 2.5 当前必须固定下来的事实
@@ -82,16 +84,24 @@ utils       = 低层通用小工具
 - provider 实例化入口在 `elebot/providers/factory.py`
 - 模型目录 owner 在 `elebot/providers/model_catalog.py`
 - `runtime` 是未来多入口唯一可复用底座
+- `runtime` 对外不再暴露 `cancel_session_tasks()`，用户级中断入口固定为 `interrupt_session()`
 - `TaskService` 是任务领域统一对外入口
 - `MemoryStore` 是 Dream 历史 owner
 - 历史唯一来源固定为 `memory/history.jsonl`
 - `HISTORY.md` 已不是当前实现的一部分
 - skill 管理 owner 在 `agent/skills`
 - 裸 `/skill` 已移除，只保留 `/skill list|install|uninstall`
+- agent 默认工具现在已经包含 `list_skills` / `install_skill` / `uninstall_skill`
 - 首次 `onboard` 默认 provider 是 `deepseek`
 - 首次 `onboard` 默认模型是 `deepseek-v4-flash`
 - `onboard` 当前会尝试预装两份本地默认 skill 源
-- DeepSeek 的 tool-call transcript 协议修复已经固定收口在 provider 层
+- DeepSeek 的 tool-call transcript 协议修复固定收口在 provider 层
+- `Ctrl+C` 仍然退出交互进程
+- `Esc` 现在是当前交互轮次的真实中断键
+- `Esc` 的监听已固定为“孤立按键判定”，不会把终端控制序列残留到下一次输入
+- `/stop` 已彻底移除，不再属于命令协议
+- interrupted 历史只保留结构化事实，不保留半截自然语言
+- `/new` 现在会清空短期消息和运行态 `metadata`
 
 ## 3. 模块完成定义
 
@@ -110,15 +120,14 @@ utils       = 低层通用小工具
 
 从现在开始，后续优先级固定为：
 
-- `P0`：模块五，真正的中断能力
-- `P1`：模块六，多端入口
-- `P2`：模块七，多通道能力
-- `P3`：模块八，子代理
+- `P0`：模块六，多端入口
+- `P1`：模块七，多通道能力
+- `P2`：模块八，子代理
 
 另外还有两条边界必须固定下来：
 
-- 模块一到模块四已经完成，后续默认只接受缺陷修复、文档同步和必要的小范围事实回写
-- 不应把 `status` 面板增强、model catalog 动态化、skill marketplace、WebUI 包装之类事项插到模块五之前
+- 模块一到模块五已经完成，后续默认只接受缺陷修复、文档同步和必要的小范围事实回写
+- 不应把 status 面板增强、model catalog 动态化、skill marketplace、WebUI 包装之类事项插到模块六之前
 
 ## 5. 已完成模块回顾
 
@@ -193,6 +202,8 @@ utils       = 低层通用小工具
 - skill 安装支持本地目录、直接下载链接、Git 链接、GitHub `tree` 子目录链接
 - skill 协议固定为 `/skill list|install|uninstall`
 - 裸 `/skill` 已移除
+- 本地 skill 安装在类 Unix 平台默认使用符号链接，在 Windows 平台使用复制目录
+- agent 已可直接通过内置 tools 调用 skill 的安装、卸载和列表能力
 
 后续边界：
 
@@ -201,102 +212,92 @@ utils       = 低层通用小工具
 - 当前不做远端搜索
 - 动态感知仍然依赖每轮 `SkillRegistry.scan()`，不是热重载守护进程
 
-## 6. 模块五：真正的中断能力
+### 5.5 模块五：真正的中断能力
 
-当前状态：`P0 / 下一优先级`
+当前状态：`已完成`
 
-### 6.1 为什么现在先做它
+本轮已经落地的事实：
 
-模块一到模块四已经把主链路和结构边界收干净了，当前最大的缺口已经不是“职责混乱”，而是“交互不可真正中断”。
+- `Ctrl+C`
+  - 保持退出当前交互进程
+- `Esc`
+  - 只在活跃回复期间生效
+  - 会中断当前这一轮回复或工具执行
+- `runtime` 新增统一控制面：
+  - `interrupt_session(session_id, reason="user_interrupt")`
+- `InterruptReason` / `InterruptResult` 已落地到 `runtime`
+- `AgentLoop.interrupt_session()` 已成为统一会话级中断入口
+- 中断请求会先登记 session 状态，再取消活跃任务
+- 重复按 `Esc` 不会重复堆中断请求
+- `_dispatch()` 已把显式取消收口成 interrupted，而不是普通 error
+- 中断终态固定为：
+  - 用户可见文案：`已中断当前回复。`
+  - metadata：`_interrupted=True`、`_interrupt_reason=...`
+- session checkpoint 已固定 interrupted 语义：
+  - 不保留半截自然语言
+  - 保留 assistant tool-call
+  - 保留已完成 tool result
+  - 未完成 tool 会补 interrupted 标记
+- `/stop` 已删除，不新增 `/interrupt` 或 `/cancel`
 
-如果这一步不先做，后面的多端入口、多通道、子代理都会直接继承同一个问题：
+本轮已经实际验证：
 
-- 用户无法明确打断当前长回复
-- 工具执行取消语义不清晰
-- 中断和失败容易混在一起
-- session 恢复语义会继续模糊
+- `tests/cli/test_interactive.py`
+- `tests/cli/test_runtime.py`
+- `tests/cli/test_commands.py`
+- `tests/agent/test_task_cancel.py`
+- `tests/agent/test_unified_session.py`
+- `tests/agent/test_loop_save_turn.py`
+- `tests/agent/test_runner.py`
+- `tests/command`
+- `python -m compileall elebot tests -q`
 
-### 6.2 目标
+后续边界：
 
-这一步只解决单 runtime、单会话下的真实 interrupt，不扩未来能力。
+- 当前只保证 TTY 交互模式下的 `Esc` interrupt
+- 不把 interrupt 顺手扩到 Web / desktop / channel
+- 不恢复 `/stop`
+- 不把 interrupted 历史伪装成 error
 
-必须达成的结果：
+### 5.6 模块五后的缺陷修复：CLI 输入污染与 `/new` 状态清理
 
-- 用户在流式回复中途可以打断
-- 工具执行过程中可以打断
-- 中断状态和失败状态明确区分
-- 中断后 session 不损坏
-- 中断后还能继续原会话
+当前状态：`已完成`
 
-### 6.3 当前基础
+本轮已经落地的事实：
 
-当前已经具备的前置条件：
+- `EscInterruptWatcher` 不再把首个 `ESC` 字节直接当成中断
+- 当前实现会先区分“孤立 Esc”与终端控制序列
+- `ESC [ 38 ; 1 R` 这类 CPR/ANSI 回复会被完整消费，不再把 `[38;1R` 残留到下一次输入
+- 方向键、功能键等常见 escape sequence 不再误判成中断
+- `PromptSession` 的 output 已显式禁用 CPR，避免普通对话轮次把 `[23;1R` 这类终端回包漏成伪输入
+- `/new` 仍然复用 `AgentLoop.reset_session()`，但现在会显式清空：
+  - `messages`
+  - `last_consolidated`
+  - `session.metadata`
+- `/new` 清理后仍然沿用原 session key 和会话文件，不额外创建新文件
 
-- `runtime` 已统一装配主链路
-- `AgentLoop` 已经有会话级活跃任务映射
-- `AgentLoop.cancel_session_tasks()` 已成为公开 owner API
-- session 已经有运行中 checkpoint 恢复逻辑
+本轮已经实际验证：
 
-### 6.4 本模块固定边界
+- `tests/cli/test_keys.py`
+- `tests/cli/test_interactive.py`
+- `tests/agent/test_unified_session.py`
+- `python -m compileall elebot tests -q`
 
-这一步不做：
+后续边界：
 
-- 多人协作式中断
-- 子代理级联中断
-- 跨端同步中断状态
-- 系统级后台调度
-- Web / desktop 入口扩展
+- 不改变 `Ctrl+C` 退出语义
+- 不保留 typed-ahead 字符
+- 不把这轮缺陷修复扩成新的 CLI 输入能力设计
 
-### 6.5 实现重点
+## 6. 模块六：多端入口
 
-建议统一三类中断语义：
+当前状态：`P0 / 未开始`
 
-```text
-user_interrupt
-tool_interrupt
-runtime_interrupt
-```
+### 6.1 目标
 
-实现重点固定为：
+把 EleBot 从“只有终端入口”推进成“多入口共享同一个 runtime”。
 
-- `CLI`
-  - 把用户中途停止动作送进统一 interrupt 链路
-- `runtime`
-  - 暴露统一中断入口，不让入口层自己拼取消逻辑
-- `AgentLoop`
-  - 接受显式 interrupt 信号
-  - 把中断分发到当前推理与工具执行
-- `AgentRunner`
-  - 区分普通错误和取消错误
-- `session`
-  - checkpoint 明确记录“本轮被中断”
-  - 恢复时不把中断误判成失败
-
-### 6.6 验收标准
-
-- 用户能明确中断当前长回复
-- 中断不会把 session 历史打坏
-- 工具执行被中断时能给出明确状态
-- 中断后可以继续在原 session 聊下去
-- 中断状态不会被显示成普通失败
-
-### 6.7 完成前必须补齐的回写
-
-- 更新 `docs/RUNTIME.md`
-- 更新 `docs/CLI.md`
-- 更新 `docs/SESSION.md`
-- 如有必要，补一份专门讲 interrupt 的模块文档
-- 回写本文件中的状态、风险和剩余事项
-
-## 7. 模块六：多端入口
-
-当前状态：`P1 / 未开始`
-
-### 7.1 目标
-
-在模块五稳定后，把 EleBot 从“只有终端入口”推进成“多入口共享同一个 runtime”。
-
-### 7.2 固定原则
+### 6.2 固定原则
 
 未来如果接：
 
@@ -310,22 +311,22 @@ runtime_interrupt
 - 直接拼 `AgentLoop`
 - 再造一层新的 facade
 
-### 7.3 验收标准
+### 6.3 验收标准
 
 - CLI 不再是唯一入口形态
 - 新入口可以接入统一 runtime
 - 不同入口不会各自维护一套 agent 运行逻辑
 - 模块五的中断语义在新入口下保持一致
 
-## 8. 模块七：多通道能力
+## 7. 模块七：多通道能力
 
-当前状态：`P2 / 未开始`
+当前状态：`P1 / 未开始`
 
-### 8.1 目标
+### 7.1 目标
 
 把外部消息入口重新设计成协议适配层，而不是恢复旧 frozen 代码。
 
-### 8.2 固定原则
+### 7.2 固定原则
 
 后续多通道应该按下面的主链路接入：
 
@@ -348,22 +349,22 @@ AgentLoop
 - session 内状态修改
 - provider 选择
 
-### 8.3 验收标准
+### 7.3 验收标准
 
 - 通道层只做协议适配
 - 主链路仍然是 `Bus -> AgentLoop`
 - 不同通道不会分叉出不同 agent 逻辑
 - 模块五的中断语义在通道侧仍然成立
 
-## 9. 模块八：子代理
+## 8. 模块八：子代理
 
-当前状态：`P3 / 未开始`
+当前状态：`P2 / 未开始`
 
-### 9.1 目标
+### 8.1 目标
 
 最后才考虑重新设计子代理，不恢复旧实现，也不把它做成当前主链路依赖。
 
-### 9.2 固定原则
+### 8.2 固定原则
 
 只有在前面几层稳定后，才开始讨论：
 
@@ -372,36 +373,35 @@ AgentLoop
 - 结果如何结构化返回主代理
 - 中断如何传播
 
-### 9.3 验收标准
+### 8.3 验收标准
 
 - 子代理不是默认主链路依赖
 - 权限、上下文、结果归并边界清楚
 - 中断和失败语义与主代理一致
 
-## 10. 当前风险
+## 9. 当前风险
 
 当前最明确的风险只有这些：
 
-1. 中断语义还没有统一，`/stop` 目前本质上仍然是粗粒度取消。
+1. interrupt 现在只保证 TTY 交互下的 `Esc`，还没有扩到未来多端入口。
 2. `runtime` 目前是进程内统一入口，不是独立后台服务。
-3. `status` 现在只是 CLI 侧状态查看，不是统一运行面板。
+3. tasks 仍然是应用内轮询，不是系统级调度。
 4. model catalog 采用静态目录，模型事实变化需要显式更新仓库。
 5. 脏工作区下继续推进时，最容易把历史讨论误当成当前代码事实。
 
-## 11. 实际执行顺序
+## 10. 实际执行顺序
 
 后续实际开工顺序固定为：
 
-1. 先完成模块五 interrupt
-2. 跑通 interrupt 对 CLI 主链路的完整验证
-3. 再做一个最小多端入口验证 runtime 复用
-4. 然后才考虑通道
-5. 最后才考虑子代理
+1. 先做模块六，多端入口的最小 runtime 复用验证
+2. 再做模块七，多通道协议适配
+3. 最后才考虑模块八，子代理
+4. 模块一到模块五只做缺陷修复、测试补齐、文档同步
 
-## 12. 一句话原则
+## 11. 一句话原则
 
-下一阶段不要急着继续扩入口或加高级能力，而是先把 EleBot 做成：
+下一阶段不要急着继续扩高级能力，而是先把 EleBot 做成：
 
 ```text
-一个结构边界清楚、可中断、可复用的统一 runtime
+一个可中断、可复用、可接多入口的统一 runtime
 ```

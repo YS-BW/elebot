@@ -124,7 +124,7 @@ def test_restore_runtime_checkpoint_rehydrates_completed_and_pending_tools() -> 
     assert session.messages[0]["role"] == "assistant"
     assert session.messages[1]["tool_call_id"] == "call_done"
     assert session.messages[2]["tool_call_id"] == "call_pending"
-    assert "interrupted before this tool finished" in session.messages[2]["content"].lower()
+    assert session.messages[2]["content"] == "Interrupted: tool execution stopped before completion."
 
 
 def test_restore_runtime_checkpoint_dedupes_overlapping_tail() -> None:
@@ -200,3 +200,4 @@ def test_restore_runtime_checkpoint_dedupes_overlapping_tail() -> None:
     assert session.messages[0]["role"] == "assistant"
     assert session.messages[1]["tool_call_id"] == "call_done"
     assert session.messages[2]["tool_call_id"] == "call_pending"
+    assert session.messages[2]["content"] == "Interrupted: tool execution stopped before completion."

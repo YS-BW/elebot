@@ -29,6 +29,7 @@ from elebot.command import CommandContext, CommandRouter, register_builtin_comma
 from elebot.config.paths import GLOBAL_SKILLS_DIR
 from elebot.config.schema import AgentDefaults
 from elebot.providers.base import LLMProvider
+from elebot.runtime.models import InterruptReason, InterruptResult
 from elebot.session.manager import Session, SessionManager
 from elebot.tasks.service import TaskService
 from elebot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
@@ -52,6 +53,7 @@ class DirectProcessResult:
     messages: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     stop_reason: str = "completed"
     session_key: str = ""
+    interrupt_reason: InterruptReason | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -66,6 +68,15 @@ class LoopStatusSnapshot:
     session_msg_count: int
     context_tokens_estimate: int
     search_usage_text: str | None = None
+
+
+@dataclasses.dataclass(slots=True)
+class SessionInterruptState:
+    """描述一个会话当前挂起的中断请求。"""
+
+    reason: InterruptReason
+    requested_at: float
+    handled: bool = False
 
 
 class _LoopHook(AgentHook):
@@ -236,7 +247,8 @@ class AgentLoop:
         self._mcp_stacks: dict[str, AsyncExitStack] = {}
         self._mcp_connected = False
         self._mcp_connecting = False
-        self._active_tasks: dict[str, list[asyncio.Task]] = {}  # 按会话聚合活跃任务，便于停止和追踪。
+        self._active_tasks: dict[str, list[asyncio.Task]] = {}  # 按会话聚合活跃任务，便于中断和追踪。
+        self._interrupt_requests: dict[str, SessionInterruptState] = {}
         self._background_tasks: list[asyncio.Task] = []
         self._session_locks: dict[str, asyncio.Lock] = {}
         # 每个会话维护独立待注入队列，避免处理中途追问时再并发拉起新任务。
@@ -295,6 +307,7 @@ class AgentLoop:
         返回:
             本次成功发出取消请求的任务数量。
         """
+        session_key = self._normalize_control_session_key(session_key)
         tasks = self._active_tasks.pop(session_key, [])
         cancelled = sum(1 for task in tasks if not task.done() and task.cancel())
         for task in tasks:
@@ -303,6 +316,110 @@ class AgentLoop:
             except (asyncio.CancelledError, Exception):
                 pass
         return cancelled
+
+    def interrupt_session(
+        self,
+        session_key: str,
+        reason: InterruptReason = "user_interrupt",
+    ) -> InterruptResult:
+        """向指定会话发出一次显式中断请求。
+
+        参数:
+            session_key: 目标会话键。
+            reason: 本次中断的触发原因。
+
+        返回:
+            本次中断请求的受理结果。
+        """
+        session_key = self._normalize_control_session_key(session_key)
+        current = self._interrupt_requests.get(session_key)
+        if current is not None and not current.handled:
+            return InterruptResult(
+                session_id=session_key,
+                reason=current.reason,
+                accepted=False,
+                cancelled_tasks=0,
+                already_interrupting=True,
+            )
+
+        active_tasks = [task for task in self._active_tasks.get(session_key, []) if not task.done()]
+        if not active_tasks:
+            return InterruptResult(
+                session_id=session_key,
+                reason=reason,
+                accepted=False,
+                cancelled_tasks=0,
+                already_interrupting=False,
+            )
+
+        self._interrupt_requests[session_key] = SessionInterruptState(
+            reason=reason,
+            requested_at=time.time(),
+        )
+        cancelled = 0
+        for task in active_tasks:
+            if task.cancel():
+                cancelled += 1
+        return InterruptResult(
+            session_id=session_key,
+            reason=reason,
+            accepted=cancelled > 0,
+            cancelled_tasks=cancelled,
+            already_interrupting=False,
+        )
+
+    def _peek_interrupt_state(self, session_key: str) -> SessionInterruptState | None:
+        """读取当前会话的挂起中断请求。
+
+        参数:
+            session_key: 目标会话键。
+
+        返回:
+            存在未处理请求时返回其中断状态，否则返回 ``None``。
+        """
+        state = self._interrupt_requests.get(session_key)
+        if state is None or state.handled:
+            return None
+        return state
+
+    def _consume_interrupt_state(self, session_key: str) -> SessionInterruptState | None:
+        """消费并清理当前会话的挂起中断请求。
+
+        参数:
+            session_key: 目标会话键。
+
+        返回:
+            被消费的中断状态；不存在时返回 ``None``。
+        """
+        state = self._interrupt_requests.pop(session_key, None)
+        if state is None:
+            return None
+        state.handled = True
+        return state
+
+    def _clear_interrupt_state(self, session_key: str) -> None:
+        """清理当前会话的中断请求状态。
+
+        参数:
+            session_key: 目标会话键。
+
+        返回:
+            无返回值。
+        """
+        self._interrupt_requests.pop(session_key, None)
+
+    def _normalize_control_session_key(self, session_key: str) -> str:
+        """把控制面会话键归一化到实际的运行态键值。
+
+        参数:
+            session_key: 入口层传入的会话键。
+
+        返回:
+            当前主循环实际用于追踪活跃任务的会话键。
+        """
+        if self._unified_session and session_key != UNIFIED_SESSION_KEY:
+            return UNIFIED_SESSION_KEY
+        return session_key
 
     def reset_session(self, session_key: str) -> None:
         """清空指定会话，并把未归档消息转入后台摘要。
@@ -315,7 +432,8 @@ class AgentLoop:
         """
         session = self.sessions.get_or_create(session_key)
         snapshot = session.messages[session.last_consolidated :]
-        session.clear()
+        # `/new` 的语义是开始一段全新的短期对话，所以这里需要连同运行态元数据一起清空。
+        session.clear(clear_metadata=True)
         self.sessions.save(session)
         self.sessions.invalidate(session.key)
         if snapshot:
@@ -615,7 +733,7 @@ class AgentLoop:
                         effective_key,
                     )
                     continue
-            # 统一会话模式下必须先算出真实键值，`/stop` 才能定位到对应任务。
+            # 统一会话模式下必须先算出真实键值，显式中断才能定位到对应任务。
             task = asyncio.create_task(self._dispatch(msg))
             self._active_tasks.setdefault(effective_key, []).append(task)
             task.add_done_callback(
@@ -700,8 +818,26 @@ class AgentLoop:
                             content="", metadata=msg.metadata or {},
                         ))
                 except asyncio.CancelledError:
-                    logger.info("Task cancelled for session {}", session_key)
-                    raise
+                    interrupt_state = self._consume_interrupt_state(session_key)
+                    if interrupt_state is None:
+                        logger.info("Task cancelled for session {}", session_key)
+                        raise
+                    logger.info(
+                        "Task interrupted for session {} with reason {}",
+                        session_key,
+                        interrupt_state.reason,
+                    )
+                    session = self.sessions.get_or_create(session_key)
+                    self._finalize_interrupted_turn(session, interrupt_state.reason)
+                    if msg.metadata.get("scheduled_trigger"):
+                        self.task_service.mark_finished(
+                            msg.metadata.get("task_id"),
+                            status="interrupted",
+                            error=None,
+                        )
+                    await self.bus.publish_outbound(
+                        self._build_interrupted_outbound(msg, interrupt_state.reason)
+                    )
                 except Exception:
                     logger.exception("Error processing message for session {}", session_key)
                     await self.bus.publish_outbound(OutboundMessage(
@@ -788,6 +924,7 @@ class AgentLoop:
         raw = msg.content.strip()
         ctx = CommandContext(msg=msg, session=session, key=key, raw=raw, loop=self)
         if result := await self.commands.dispatch(ctx):
+            self._clear_interrupt_state(key)
             return DirectProcessResult(
                 outbound=result,
                 final_content=result.content,
@@ -801,6 +938,7 @@ class AgentLoop:
                 create_tool = self.tools.get("create_task")
                 if create_tool is not None:
                     create_result = await create_tool.execute(**proposal)
+                    self._clear_interrupt_state(key)
                     return DirectProcessResult(
                         outbound=OutboundMessage(
                             channel=msg.channel,
@@ -871,8 +1009,15 @@ class AgentLoop:
 
         if msg.metadata.get("scheduled_trigger"):
             task_id = msg.metadata.get("task_id")
-            status = "ok" if stop_reason != "error" else "error"
-            error_text = final_content if stop_reason == "error" else None
+            if stop_reason == "error":
+                status = "error"
+                error_text = final_content
+            elif stop_reason == "interrupted":
+                status = "interrupted"
+                error_text = None
+            else:
+                status = "ok"
+                error_text = None
             self.task_service.mark_finished(task_id, status=status, error=error_text)
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
@@ -881,6 +1026,7 @@ class AgentLoop:
         meta = dict(msg.metadata or {})
         if on_stream is not None and stop_reason != "error":
             meta["_streamed"] = True
+        self._clear_interrupt_state(key)
         outbound = OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,
@@ -1036,8 +1182,86 @@ class AgentLoop:
             session.messages.append(entry)
         session.updated_at = datetime.now()
 
+    @staticmethod
+    def _interrupted_tool_content() -> str:
+        """返回未完成工具调用的统一中断占位文案。
+
+        参数:
+            无。
+
+        返回:
+            当前实现统一使用的工具中断文本。
+        """
+        return "Interrupted: tool execution stopped before completion."
+
+    def _mark_runtime_checkpoint_interrupted(
+        self,
+        session: Session,
+        reason: InterruptReason,
+    ) -> None:
+        """把当前运行中检查点标记为已中断。
+
+        参数:
+            session: 目标会话对象。
+            reason: 本次中断的原因。
+
+        返回:
+            无返回值。
+        """
+        checkpoint = session.metadata.get(self._RUNTIME_CHECKPOINT_KEY)
+        if not isinstance(checkpoint, dict):
+            return
+        checkpoint["interrupted"] = True
+        checkpoint["interrupt_reason"] = reason
+        session.metadata[self._RUNTIME_CHECKPOINT_KEY] = checkpoint
+
+    def _finalize_interrupted_turn(
+        self,
+        session: Session,
+        reason: InterruptReason,
+    ) -> bool:
+        """把当前会话上的运行中检查点收口为 interrupted 历史。
+
+        参数:
+            session: 当前会话对象。
+            reason: 本次中断的原因。
+
+        返回:
+            是否真正恢复出了可持久化的中断事实。
+        """
+        self._mark_runtime_checkpoint_interrupted(session, reason)
+        restored = self._restore_runtime_checkpoint(session)
+        self.sessions.save(session)
+        return restored
+
+    def _build_interrupted_outbound(
+        self,
+        msg: InboundMessage,
+        reason: InterruptReason,
+    ) -> OutboundMessage:
+        """构造用户可见的 interrupted 终态消息。
+
+        参数:
+            msg: 当前被中断的入站消息。
+            reason: 本次中断原因。
+
+        返回:
+            标准出站消息。
+        """
+        metadata = dict(msg.metadata or {})
+        metadata["_interrupted"] = True
+        metadata["_interrupt_reason"] = reason
+        return OutboundMessage(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content="已中断当前回复。",
+            metadata=metadata,
+        )
+
     def _set_runtime_checkpoint(self, session: Session, payload: dict[str, Any]) -> None:
         """Persist the latest in-flight turn state into session metadata."""
+        payload.setdefault("interrupted", False)
+        payload.setdefault("interrupt_reason", None)
         session.metadata[self._RUNTIME_CHECKPOINT_KEY] = payload
         self.sessions.save(session)
 
@@ -1084,7 +1308,6 @@ class AgentLoop:
         assistant_message = checkpoint.get("assistant_message")
         completed_tool_results = checkpoint.get("completed_tool_results") or []
         pending_tool_calls = checkpoint.get("pending_tool_calls") or []
-
         restored_messages: list[dict[str, Any]] = []
         if isinstance(assistant_message, dict):
             restored = dict(assistant_message)
@@ -1105,7 +1328,7 @@ class AgentLoop:
                     "role": "tool",
                     "tool_call_id": tool_id,
                     "name": name,
-                    "content": "Error: Task interrupted before this tool finished.",
+                    "content": self._interrupted_tool_content(),
                     "timestamp": datetime.now().isoformat(),
                 }
             )

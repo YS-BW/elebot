@@ -14,7 +14,13 @@ from elebot.config.schema import Config
 from elebot.providers.base import LLMProvider
 from elebot.providers.factory import build_provider
 from elebot.runtime.lifecycle import RuntimeLifecycle
-from elebot.runtime.models import DreamLogResult, DreamRestoreResult, RuntimeStatusSnapshot
+from elebot.runtime.models import (
+    DreamLogResult,
+    DreamRestoreResult,
+    InterruptReason,
+    InterruptResult,
+    RuntimeStatusSnapshot,
+)
 from elebot.runtime.state import RuntimeState
 from elebot.tasks.models import ScheduledTask
 
@@ -115,16 +121,21 @@ class ElebotRuntime:
         """
         return self.state.agent_loop
 
-    async def cancel_session_tasks(self, session_id: str) -> int:
-        """取消指定会话下的活跃任务。
+    def interrupt_session(
+        self,
+        session_id: str,
+        reason: InterruptReason = "user_interrupt",
+    ) -> InterruptResult:
+        """向指定会话发出中断请求。
 
         参数:
             session_id: 目标会话键。
+            reason: 本次中断的触发原因。
 
         返回:
-            本次成功发出取消请求的任务数量。
+            当前中断请求的处理结果。
         """
-        return await self.agent_loop.cancel_session_tasks(session_id)
+        return self.agent_loop.interrupt_session(session_id, reason)
 
     def reset_session(self, session_id: str) -> None:
         """重置指定会话。
@@ -290,6 +301,7 @@ class ElebotRuntime:
                 markdown=markdown,
                 renderer_factory=renderer_factory,
                 manage_agent_loop=False,
+                interrupt_session=self.interrupt_session,
             )
         finally:
             if manage_runtime_lifecycle:
