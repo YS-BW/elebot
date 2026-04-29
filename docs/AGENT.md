@@ -4,12 +4,11 @@
 
 相关源码：
 
-- [elebot/agent/loop.py](../elebot/agent/loop.py#L169-L1392)
-- [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L25-L126)
-- [elebot/agent/context.py](../elebot/agent/context.py#L16-L239)
-- [elebot/command/builtin.py](../elebot/command/builtin.py#L12-L64)
-- [elebot/command/handlers/session.py](../elebot/command/handlers/session.py#L9-L24)
-- [elebot/tasks/service.py](../elebot/tasks/service.py#L16-L208)
+- [elebot/agent/loop.py](../elebot/agent/loop.py#L169-L1455)
+- [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L19-L89)
+- [elebot/agent/context.py](../elebot/agent/context.py#L16-L140)
+- [elebot/command/builtin.py](../elebot/command/builtin.py#L11-L58)
+- [elebot/cron/service.py](../elebot/cron/service.py#L25-L320)
 
 ## 1. `AgentLoop` 现在是什么 owner
 
@@ -21,7 +20,7 @@
 - `SessionManager`
 - `ContextBuilder`
 - `MemoryStore / Consolidator / Dream`
-- `TaskService`
+- `CronService`
 - `CommandRouter`
 - `ToolRegistry`
 - `AgentRunner`
@@ -38,15 +37,15 @@ AgentLoop = 会话内控制中心
 
 初始化时会完成四件事：
 
-1. 绑定外部依赖，例如 `Bus`、provider、workspace。
-2. 创建执行 owner，例如 `MemoryStore`、`TaskService`、`CommandRouter`。
-3. 通过 [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L25-L126) 注册默认工具。
-4. 注册当前保留的 slash 命令。
+1. 绑定外部依赖，例如 `Bus`、provider、workspace
+2. 创建执行 owner，例如 `MemoryStore`、`CronService`、`CommandRouter`
+3. 通过 [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L19-L89) 注册默认工具
+4. 注册当前保留的 slash 命令
 
 这里要注意两条已经固定下来的边界：
 
 - 工具集合的定义在 `default_tools.py`，不再塞回 `loop.py`
-- 命令系统只是协议层，真正的业务 owner 还是 `AgentLoop`、`TaskService`、`MemoryStore`
+- 命令系统只是协议层，真正的业务 owner 还是 `AgentLoop`、`CronService`、`MemoryStore`
 
 ## 3. 一条消息怎么进入主循环
 
@@ -75,25 +74,22 @@ AgentLoop._process_message_result()
 
 当前顺序固定是：
 
-1. 读取或创建 session。
-2. 恢复上一次未完整收尾的 runtime checkpoint。
-3. 优先检查 slash 命令。
-4. 检查任务确认语义。
-5. 必要时触发 token 压缩。
-6. 记录显式提到的 skill。
-7. 通过 `ContextBuilder` 组装系统提示词、历史、运行时元数据和多模态内容。
-8. 调 `AgentRunner` 跑模型与工具闭环。
-9. 把新形成的合法消息写回 session。
+1. 读取或创建 session
+2. 恢复上一次未完整收尾的 runtime checkpoint
+3. 优先检查 slash 命令
+4. 必要时触发 token 压缩
+5. 记录显式提到的 skill
+6. 通过 `ContextBuilder` 组装系统提示词、历史、运行时元数据和多模态内容
+7. 调 `AgentRunner` 跑模型与工具闭环
+8. 把新形成的合法消息写回 session
 
 这里最重要的事实是：
 
 - slash 命令是在进模型之前处理的
-- session、memory、tasks 都在主链路里，不是外围插件
+- session、memory、cron 都在主链路里，不是外围插件
 - `ContextBuilder` 只负责组装上下文，不再自己创建 owner
 
 ## 5. interrupt 现在怎么收口
-
-模块五完成后，中断已经不再是 slash 命令。
 
 当前真实链路是：
 
@@ -115,61 +111,23 @@ _dispatch() 把 CancelledError 收口成 interrupted
   - 退出当前交互进程
 - `Esc`
   - 只在本轮执行中生效
-  - 等待输入时不会抢普通键盘行为
 - `/stop`
   - 已删除
 
-`AgentLoop.interrupt_session()` 当前会做两件事：
-
-- 先登记 session 级 interrupt 状态
-- 再对该 session 的活跃任务发取消
-
-重复按 `Esc` 不会叠加多份请求，而是返回“已经在中断中”。
-
-## 6. 中断后的 session 为什么还能继续
-
-原因是中断最终不是按 error 收尾，而是按 interrupted 收尾。
-
-`_dispatch()` 捕获到 `CancelledError` 后，如果确认这是显式 interrupt，就会：
-
-1. 读取并消费本会话的 interrupt 状态。
-2. 调 `_finalize_interrupted_turn()` 把 runtime checkpoint 收口成合法历史。
-3. 发布一条用户可见的终态消息：`已中断当前回复。`
-
-这一步不会保留半截自然语言正文，只保留结构化事实：
-
-- 已形成的 assistant tool-call
-- 已完成的 tool result
-- 未完成 tool 的 interrupted 标记
-
-对应的未完成工具补位文本固定是：
-
-```text
-Interrupted: tool execution stopped before completion.
-```
-
-它不再伪装成 `Error: ...`。
-
-## 7. 任务和记忆为什么仍然挂在 agent 主链路里
+## 6. cron 为什么仍然挂在 agent 主链路里
 
 这不是职责混乱，而是执行一致性的要求。
 
-### 7.1 tasks
+cron 到点后最终还是通过 `AgentLoop.process_direct(...)` 跑一轮完整 agent 链路，所以调度必须挂在主循环 owner 上。
 
-任务触发后最终还是一条 `InboundMessage`，所以必须交回 `AgentLoop` 按普通对话链路处理。
+当前 cron 触发链路在 [elebot/agent/loop.py](../elebot/agent/loop.py#L542-L589)：
 
-### 7.2 memory
+- `CronService` 到点
+- `AgentLoop._run_cron_job()`
+- `session_key = cron:<job_id>`
+- 最终结果再通过 `Bus` 发回当前通道
 
-记忆会参与：
-
-- system prompt 组装
-- session checkpoint 恢复
-- token 压缩
-- Dream 后台整理
-
-所以记忆天然要和 agent 主循环绑定，而不是放到 CLI 或 command 去直接操作。
-
-## 8. 命令和 agent 现在怎么协作
+## 7. 命令和 agent 现在怎么协作
 
 当前 `AgentLoop` 初始化时会注册内置命令，但命令层只负责协议，不再直接碰私有状态。
 
@@ -187,19 +145,12 @@ Interrupted: tool execution stopped before completion.
 - 没有 `/stop`
 - 也没有 `/interrupt` 或 `/cancel`
 
-## 9. 当前固定边界
+## 8. 当前固定边界
 
 现在这些说法都应该视为代码事实：
 
 - `AgentLoop` 是会话执行 owner
 - interrupt 是 runtime 控制动作，不是 slash 命令
-- `TaskService` 是任务领域 owner
+- `CronService` 是调度领域 owner
 - `MemoryStore` 是记忆与 Dream 历史 owner
 - `ContextBuilder` 是纯上下文装配器
-
-现在这些做法都不应该再出现：
-
-- 命令层直接访问 `loop._active_tasks`
-- 命令层自己实现中断协议
-- CLI 直接拼 `Bus + AgentLoop + provider`
-- session 恢复把 interrupted 写成 error

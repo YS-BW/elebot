@@ -6,7 +6,6 @@ from elebot.command.handlers.dream import cmd_dream, cmd_dream_log, cmd_dream_re
 from elebot.command.handlers.runtime import cmd_help, cmd_restart, cmd_status
 from elebot.command.handlers.session import cmd_new
 from elebot.command.handlers.skills import cmd_skill_manage
-from elebot.command.handlers.tasks import cmd_task_manage
 from elebot.command.router import CommandRouter
 
 SLASH_COMMAND_SPECS: list[tuple[str, str]] = [
@@ -19,9 +18,6 @@ SLASH_COMMAND_SPECS: list[tuple[str, str]] = [
     ("/skill list", "查看当前已安装 skills"),
     ("/skill install <source>", "安装一个 skill"),
     ("/skill uninstall <name>", "卸载一个 skill"),
-    ("/task", "查看当前会话定时任务"),
-    ("/task list", "列出全部定时任务"),
-    ("/task remove <task_id>", "删除一个定时任务"),
     ("/help", "查看可用命令"),
 ]
 
@@ -59,6 +55,4 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/dream-restore", cmd_dream_restore)
     router.prefix("/dream-restore ", cmd_dream_restore)
     router.prefix("/skill ", cmd_skill_manage)
-    router.exact("/task", cmd_task_manage)
-    router.prefix("/task ", cmd_task_manage)
     router.exact("/help", cmd_help)

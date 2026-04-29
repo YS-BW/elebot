@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 import inspect
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from elebot.agent.hook import AgentHook, AgentHookContext
 from elebot.agent.messages import build_assistant_message, find_legal_message_start
 from elebot.agent.tokens import estimate_message_tokens, estimate_prompt_tokens_chain
 from elebot.agent.tool_results import maybe_persist_tool_result
-from elebot.agent.hook import AgentHook, AgentHookContext
-from elebot.utils.prompt_templates import render_template
 from elebot.agent.tools.registry import ToolRegistry
 from elebot.providers.base import LLMProvider, ToolCallRequest
+from elebot.utils.prompt_templates import render_template
 from elebot.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
     build_finalization_retry_message,
@@ -41,6 +41,7 @@ _COMPACTABLE_TOOLS = frozenset({
     "web_search", "web_fetch", "list_dir",
 })
 _BACKFILL_CONTENT = "[Tool result unavailable — call was interrupted or lost]"
+_EMPTY_FINAL_FALLBACK_TOOLS = frozenset({"cron"})
 
 
 
@@ -201,6 +202,8 @@ class AgentRunner:
         length_recovery_count = 0
         had_injections = False
         injection_cycles = 0
+        latest_tool_calls: list[ToolCallRequest] = []
+        latest_tool_results: list[Any] = []
 
         for iteration in range(spec.max_iterations):
             try:
@@ -266,6 +269,8 @@ class AgentRunner:
                     response.tool_calls,
                     external_lookup_counts,
                 )
+                latest_tool_calls = list(response.tool_calls)
+                latest_tool_results = list(results)
                 tool_events.extend(new_events)
                 context.tool_results = list(results)
                 context.tool_events = list(new_events)
@@ -351,6 +356,93 @@ class AgentRunner:
                 context.response = response
                 context.usage = dict(raw_usage)
                 context.tool_calls = list(response.tool_calls)
+                if response.has_tool_calls:
+                    if hook.wants_streaming():
+                        await hook.on_stream_end(context, resuming=True)
+
+                    assistant_message = build_assistant_message(
+                        response.content or "",
+                        tool_calls=[tc.to_openai_tool_call() for tc in response.tool_calls],
+                        reasoning_content=response.reasoning_content,
+                        reasoning_items=response.reasoning_items,
+                        thinking_blocks=response.thinking_blocks,
+                    )
+                    messages.append(assistant_message)
+                    tools_used.extend(tc.name for tc in response.tool_calls)
+                    await self._emit_checkpoint(
+                        spec,
+                        {
+                            "phase": "awaiting_tools",
+                            "iteration": iteration,
+                            "model": spec.model,
+                            "assistant_message": assistant_message,
+                            "completed_tool_results": [],
+                            "pending_tool_calls": [tc.to_openai_tool_call() for tc in response.tool_calls],
+                        },
+                    )
+
+                    await hook.before_execute_tools(context)
+
+                    results, new_events, fatal_error = await self._execute_tools(
+                        spec,
+                        response.tool_calls,
+                        external_lookup_counts,
+                    )
+                    latest_tool_calls = list(response.tool_calls)
+                    latest_tool_results = list(results)
+                    tool_events.extend(new_events)
+                    context.tool_results = list(results)
+                    context.tool_events = list(new_events)
+                    completed_tool_results: list[dict[str, Any]] = []
+                    for tool_call, result in zip(response.tool_calls, results):
+                        tool_message = {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "name": tool_call.name,
+                            "content": self._normalize_tool_result(
+                                spec,
+                                tool_call.id,
+                                tool_call.name,
+                                result,
+                            ),
+                        }
+                        messages.append(tool_message)
+                        completed_tool_results.append(tool_message)
+                    if fatal_error is not None:
+                        error = f"Error: {type(fatal_error).__name__}: {fatal_error}"
+                        final_content = error
+                        stop_reason = "tool_error"
+                        self._append_final_message(messages, final_content)
+                        context.final_content = final_content
+                        context.error = error
+                        context.stop_reason = stop_reason
+                        await hook.after_iteration(context)
+                        break
+                    await self._emit_checkpoint(
+                        spec,
+                        {
+                            "phase": "tools_completed",
+                            "iteration": iteration,
+                            "model": spec.model,
+                            "assistant_message": assistant_message,
+                            "completed_tool_results": completed_tool_results,
+                            "pending_tool_calls": [],
+                        },
+                    )
+                    empty_content_retries = 0
+                    length_recovery_count = 0
+                    if injection_cycles < _MAX_INJECTION_CYCLES:
+                        injections = await self._drain_injections(spec)
+                        if injections:
+                            had_injections = True
+                            injection_cycles += 1
+                            self._append_injected_messages(messages, injections)
+                            logger.info(
+                                "Injected {} follow-up message(s) after tool execution ({}/{})",
+                                len(injections), injection_cycles, _MAX_INJECTION_CYCLES,
+                            )
+                    await hook.after_iteration(context)
+                    continue
                 clean = hook.finalize_content(context, response.content)
 
             if response.finish_reason == "length" and not is_blank_text(clean):
@@ -430,9 +522,13 @@ class AgentRunner:
                 await hook.after_iteration(context)
                 break
             if is_blank_text(clean):
-                final_content = EMPTY_FINAL_RESPONSE_MESSAGE
-                stop_reason = "empty_final_response"
-                error = final_content
+                fallback_content = self._fallback_empty_final_content(
+                    latest_tool_calls,
+                    latest_tool_results,
+                )
+                final_content = fallback_content or EMPTY_FINAL_RESPONSE_MESSAGE
+                stop_reason = "completed" if fallback_content else "empty_final_response"
+                error = None if fallback_content else final_content
                 self._append_final_message(messages, final_content)
                 context.final_content = final_content
                 context.error = error
@@ -599,7 +695,7 @@ class AgentRunner:
         tool_call: ToolCallRequest,
         external_lookup_counts: dict[str, int],
     ) -> tuple[Any, dict[str, str], BaseException | None]:
-        _HINT = "\n\n[Analyze the error above and try a different approach.]"
+        hint = "\n\n[Analyze the error above and try a different approach.]"
         lookup_error = repeated_external_lookup_error(
             tool_call.name,
             tool_call.arguments,
@@ -612,8 +708,8 @@ class AgentRunner:
                 "detail": "repeated external lookup blocked",
             }
             if spec.fail_on_tool_error:
-                return lookup_error + _HINT, event, RuntimeError(lookup_error)
-            return lookup_error + _HINT, event, None
+                return lookup_error + hint, event, RuntimeError(lookup_error)
+            return lookup_error + hint, event, None
         prepare_call = getattr(spec.tools, "prepare_call", None)
         tool, params, prep_error = None, tool_call.arguments, None
         if callable(prepare_call):
@@ -629,7 +725,7 @@ class AgentRunner:
                 "status": "error",
                 "detail": prep_error.split(": ", 1)[-1][:120],
             }
-            return prep_error + _HINT, event, RuntimeError(prep_error) if spec.fail_on_tool_error else None
+            return prep_error + hint, event, RuntimeError(prep_error) if spec.fail_on_tool_error else None
         try:
             if tool is not None:
                 result = await tool.execute(**params)
@@ -654,8 +750,8 @@ class AgentRunner:
                 "detail": result.replace("\n", " ").strip()[:120],
             }
             if spec.fail_on_tool_error:
-                return result + _HINT, event, RuntimeError(result)
-            return result + _HINT, event, None
+                return result + hint, event, RuntimeError(result)
+            return result + hint, event, None
 
         detail = "" if result is None else str(result)
         detail = detail.replace("\n", " ").strip()
@@ -694,6 +790,25 @@ class AgentRunner:
         if messages and messages[-1].get("role") == "assistant" and not messages[-1].get("tool_calls"):
             return
         messages.append(build_assistant_message(_PERSISTED_MODEL_ERROR_PLACEHOLDER))
+
+    @staticmethod
+    def _fallback_empty_final_content(
+        tool_calls: list[ToolCallRequest],
+        tool_results: list[Any],
+    ) -> str | None:
+        """在模型最终答复为空时，回退到可直接展示的控制类工具结果。"""
+        if len(tool_calls) != 1 or len(tool_results) != 1:
+            return None
+        tool_call = tool_calls[0]
+        result = tool_results[0]
+        if tool_call.name not in _EMPTY_FINAL_FALLBACK_TOOLS:
+            return None
+        if not isinstance(result, str):
+            return None
+        text = result.strip()
+        if not text:
+            return None
+        return text
 
     def _normalize_tool_result(
         self,

@@ -46,7 +46,7 @@
 <line x1="710" y1="270" x2="710" y2="330" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-green)" />
 <rect x="620" y="330" width="180" height="50" rx="6" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5" filter="url(#shadow)"/>
 <text x="710" y="360" text-anchor="middle" class="node-text">执行斜杠命令</text>
-<text x="710" y="375" text-anchor="middle" class="sub-text">/task /dream /status /new</text>
+<text x="710" y="375" text-anchor="middle" class="sub-text">/dream /status /new /skill</text>
 <text x="710" y="365" text-anchor="middle" class="small-text" fill="#6b7280">4</text>
 <line x1="710" y1="380" x2="710" y2="430" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-green)" />
 <rect x="620" y="430" width="180" height="42" rx="6" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" filter="url(#shadow)"/>

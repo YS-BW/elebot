@@ -126,10 +126,8 @@ async def test_runtime_control_apis_delegate_to_owner_objects() -> None:
         )
     )
     agent_loop.trigger_dream_background = MagicMock()
-    agent_loop.task_service = MagicMock()
-    agent_loop.task_service.list_all.return_value = ["all-task"]
-    agent_loop.task_service.list_by_session.return_value = ["session-task"]
-    agent_loop.task_service.remove.return_value = True
+    agent_loop.list_cron_jobs = MagicMock(return_value=["cron-job"])
+    agent_loop.remove_cron_job = MagicMock(return_value=True)
     agent_loop.memory_store = MagicMock()
     agent_loop.memory_store.show_dream_version.return_value = MagicMock(
         status="ok",
@@ -157,9 +155,9 @@ async def test_runtime_control_apis_delegate_to_owner_objects() -> None:
     runtime.reset_session("cli:test")
     snapshot = await runtime.get_status_snapshot("cli:test")
     runtime.trigger_dream("cli", "direct")
-    assert runtime.list_tasks() == ["all-task"]
-    assert runtime.list_tasks("cli:test") == ["session-task"]
-    assert runtime.remove_task("task_1") is True
+    assert runtime.list_cron_jobs() == ["cron-job"]
+    assert runtime.list_cron_jobs(include_disabled=True) == ["cron-job"]
+    assert runtime.remove_cron_job("cron_1") is True
     dream_log = runtime.get_dream_log()
     dream_restore = runtime.restore_dream_version("abcd1234")
 
@@ -167,9 +165,9 @@ async def test_runtime_control_apis_delegate_to_owner_objects() -> None:
     agent_loop.reset_session.assert_called_once_with("cli:test")
     agent_loop.build_status_snapshot.assert_awaited_once_with("cli:test")
     agent_loop.trigger_dream_background.assert_called_once_with("cli", "direct")
-    agent_loop.task_service.list_all.assert_called_once_with()
-    agent_loop.task_service.list_by_session.assert_called_once_with("cli:test")
-    agent_loop.task_service.remove.assert_called_once_with("task_1")
+    agent_loop.list_cron_jobs.assert_any_call(include_disabled=False)
+    agent_loop.list_cron_jobs.assert_any_call(include_disabled=True)
+    agent_loop.remove_cron_job.assert_called_once_with("cron_1")
     agent_loop.memory_store.show_dream_version.assert_called_once_with(None)
     agent_loop.memory_store.restore_dream_version.assert_called_once_with("abcd1234")
     assert snapshot.model == "test-model"

@@ -7,7 +7,6 @@ from pathlib import Path
 from elebot.config.loader import get_config_path
 from elebot.utils.fs import ensure_dir
 
-
 ELEBOT_HOME_DIR = Path.home() / ".elebot"
 DEFAULT_WORKSPACE_DIR = ELEBOT_HOME_DIR / "workspace"
 DEFAULT_HISTORY_PATH = ELEBOT_HOME_DIR / "history" / "cli_history"
@@ -35,14 +34,14 @@ def get_logs_dir() -> Path:
     return get_runtime_subdir("logs")
 
 
-def get_tasks_dir() -> Path:
-    """返回任务目录。"""
-    return get_runtime_subdir("tasks")
+def get_cron_dir(workspace: str | Path | None = None) -> Path:
+    """返回 cron 数据目录。"""
+    return ensure_dir(get_workspace_path(workspace) / "cron")
 
 
-def get_tasks_store_path() -> Path:
-    """返回任务存储文件路径。"""
-    return get_tasks_dir() / "tasks.json"
+def get_cron_store_path(workspace: str | Path | None = None) -> Path:
+    """返回 cron 存储文件路径。"""
+    return get_cron_dir(workspace) / "jobs.json"
 
 
 def get_skill_usage_log_path() -> Path:

@@ -4,16 +4,11 @@
 
 相关源码：
 
-- [elebot/cli/app.py](../elebot/cli/app.py#L1-L67)
-- [elebot/cli/commands/__init__.py](../elebot/cli/commands/__init__.py#L1-L23)
-- [elebot/cli/commands/onboard.py](../elebot/cli/commands/onboard.py#L16-L164)
 - [elebot/cli/commands/agent.py](../elebot/cli/commands/agent.py#L21-L105)
-- [elebot/cli/commands/status.py](../elebot/cli/commands/status.py#L11-L60)
-- [elebot/cli/history.py](../elebot/cli/history.py#L120-L149)
 - [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L109)
 - [elebot/cli/interactive.py](../elebot/cli/interactive.py#L52-L254)
-- [elebot/cli/keys.py](../elebot/cli/keys.py#L17-L416)
-- [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L352)
+- [elebot/cli/keys.py](../elebot/cli/keys.py#L14-L260)
+- [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L323)
 
 ## 1. CLI 现在保留哪些命令
 
@@ -23,28 +18,13 @@
 - `elebot agent`
 - `elebot status`
 
-`provider login` 已经随 OAuth provider 一起移除，CLI 不再保留那套登录入口。
-
 根入口本身很薄，只做三件事：
 
-1. 创建 `Typer` app。
-2. 注册当前保留的命令。
-3. 处理 `--version`。
+1. 创建 `Typer` app
+2. 注册当前保留的命令
+3. 处理 `--version`
 
-## 2. `onboard` 当前会做什么
-
-当前 `elebot onboard` 的默认初始化行为已经固定为：
-
-- 创建或刷新 `config.json`
-- 默认把 provider 设为 `deepseek`
-- 默认把模型设为 `deepseek-v4-flash`
-- 补齐 workspace 启动模板和 `memory/history.jsonl`
-- 尝试安装两份默认本地 skill
-- 输出中文下一步提示，并把 API Key 获取地址指向 DeepSeek 平台
-
-这部分逻辑都在 [elebot/cli/commands/onboard.py](../elebot/cli/commands/onboard.py#L22-L164)。
-
-## 3. `elebot agent` 的真实启动链路
+## 2. `elebot agent` 的真实启动链路
 
 `agent` 命令现在不再自己拼 `Bus + provider + AgentLoop`。
 
@@ -70,11 +50,9 @@ CLI 自己的职责固定为：
 - 控制终端渲染
 - 调 `runtime`
 
-真正的运行时装配在 [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L40-L86)。
+## 3. 单次模式和交互模式怎么分
 
-## 4. 单次模式和交互模式怎么分
-
-### 4.1 单次模式
+### 3.1 单次模式
 
 执行：
 
@@ -82,11 +60,9 @@ CLI 自己的职责固定为：
 elebot agent -m "你好"
 ```
 
-CLI 会调用 `runtime.run_once(...)`，对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L258-L319)。
+CLI 会调用 `runtime.run_once(...)`。
 
-这条链路直接复用 `AgentLoop.process_direct(...)`，不会进入长期后台循环。
-
-### 4.2 交互模式
+### 3.2 交互模式
 
 执行：
 
@@ -94,7 +70,7 @@ CLI 会调用 `runtime.run_once(...)`，对应 [elebot/runtime/app.py](../elebot
 elebot agent
 ```
 
-CLI 会调用 `runtime.run_interactive(...)`，对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L287-L319)。
+CLI 会调用 `runtime.run_interactive(...)`。
 
 这时候 runtime 会：
 
@@ -102,11 +78,9 @@ CLI 会调用 `runtime.run_interactive(...)`，对应 [elebot/runtime/app.py](..
 2. 调 `interactive.py` 处理终端输入输出
 3. 在退出时统一收尾
 
-关键点是 `manage_agent_loop=False`，说明交互层只负责终端体验，不再托管主循环生命周期。
+## 4. 交互模式里的 `Ctrl+C` 和 `Esc`
 
-## 5. 交互模式里的 `Ctrl+C` 和 `Esc`
-
-模块五完成后，交互层的按键语义已经固定：
+当前按键语义已经固定：
 
 - `Ctrl+C`
   - 退出当前交互进程
@@ -118,9 +92,6 @@ CLI 会调用 `runtime.run_interactive(...)`，对应 [elebot/runtime/app.py](..
 - 等待输入时按 `Esc`
   - 不会触发中断
   - 仍然交给 `prompt_toolkit` 的普通输入行为
-
-另外，当前 CLI prompt 已经显式禁用 `prompt_toolkit` 的 CPR（cursor position report）查询。
-这样终端不会再把 `ESC[6n` 的回复漏成 `[23;1R` 这类伪输入。
 
 现在的 interrupt 链路是：
 
@@ -134,33 +105,12 @@ runtime.interrupt_session()
 AgentLoop.interrupt_session()
 ```
 
-交互层收到 `Esc` 后只会做两件事：
+另外，交互渲染现在还有两条已经固定的事实：
 
-1. 调统一 interrupt API
-2. 打印一条本地提示：`正在中断当前回复...`
+- 如果模型在 tool-call 前先说一句很短的前缀，这段文本会按轻量进度行显示，而不是单独展开成一块 assistant 回复
+- 如果 cron 或其他后台消息在你正在输入时到达，CLI 会先暂存它们，等你提交当前输入后再按顺序显示
 
-它不会直接退出进程，也不会自己解释中断后的 session 语义。
-
-## 6. `runtime_support.py` 现在负责什么
-
-CLI 侧只保留了一个很薄的辅助层：[elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L109)。
-
-它只做三件事：
-
-1. `_load_runtime_config()`
-   - 读取配置
-   - 处理显式配置路径
-   - 应用工作区覆盖
-   - 提示废弃配置键
-2. `_make_provider()`
-   - 调 `providers.factory.build_provider()`
-   - 把 provider 配置错误翻译成 CLI 友好提示
-3. `_make_runtime()`
-   - 调 `ElebotRuntime.from_config()`
-
-所以它不是第二套 runtime，也不是第二套 provider owner，只是 CLI 适配层。
-
-## 7. slash 命令和 CLI 的关系
+## 5. slash 命令和 CLI 的关系
 
 slash 命令不属于 CLI 根命令系统。
 
@@ -174,22 +124,20 @@ AgentLoop 命中 CommandRouter
 command handler 调 owner API
 ```
 
-也就是说：
-
-- `/task`
-- `/dream`
-- `/status`
-- `/new`
-
-这些都不是 `Typer` 子命令，而是 agent 主链路里的文本协议。
-
 当前中断已经完全退出 slash 命令协议：
 
 - `/stop` 已移除
 - 不新增 `/interrupt`
 - 不新增 `/cancel`
 
-## 8. 以后接 Web 或 desktop 时该复用哪里
+当前也不再提供：
+
+- `/task`
+- `/cron`
+
+调度需求现在通过模型调用 `cron` 工具完成，而不是通过 CLI slash 命令管理。
+
+## 6. 以后接 Web 或 desktop 时该复用哪里
 
 当前固定原则没有变：
 
@@ -198,4 +146,4 @@ CLI 是一个入口
 runtime 是统一底座
 ```
 
-以后如果接 Web UI、desktop 或其他前端，应该复用 [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L363) 的 `ElebotRuntime`，而不是重新在入口层复制一套装配逻辑。
+以后如果接 Web UI、desktop 或其他前端，应该复用 `ElebotRuntime`，而不是重新在入口层复制一套装配逻辑。

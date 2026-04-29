@@ -191,21 +191,9 @@ Skill 没有独立 runtime。
 
 当前已经支持：
 
-- `onboard` 首次初始化时尝试预装默认 skill
 - 按轮重扫全局 skill 目录
 - 安装、列出、卸载 skill
 - 记录最小 skill 使用日志到 `~/.elebot/logs/skill_usage.jsonl`
-
-当前 `onboard` 会尝试安装两份本地默认 skill 源：
-
-- `skill-creator`
-- `skills-vercel-labs.find-skills-master-e60e5845d52b0b8e69d1faaff7dbb2cc1b62bd59`
-
-如果这些本地来源存在，`onboard` 会直接调用 `SkillManager.install()`：
-
-- 类 Unix 平台安装为符号链接
-- Windows 平台安装为复制目录
-- 如果目标目录已经存在，则跳过，不覆盖
 
 仍然不支持：
 

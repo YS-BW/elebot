@@ -577,6 +577,90 @@ async def test_runner_uses_specific_message_after_empty_finalization_retry():
 
 
 @pytest.mark.asyncio
+async def test_runner_falls_back_to_cron_tool_result_after_empty_finalization() -> None:
+    """cron 调用后如果模型最终答复为空，应直接把工具结果回给用户。"""
+    from elebot.agent.runner import AgentRunSpec, AgentRunner
+
+    provider = MagicMock()
+    call_count = {"n": 0}
+
+    async def chat_with_retry(*, messages, tools=None, **kwargs):
+        del messages, tools, kwargs
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return LLMResponse(
+                content="",
+                tool_calls=[ToolCallRequest(id="call_1", name="cron", arguments={"action": "add"})],
+                usage={"prompt_tokens": 3, "completion_tokens": 2},
+            )
+        return LLMResponse(content=None, tool_calls=[], usage={})
+
+    provider.chat_with_retry = chat_with_retry
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value="已创建 cron 任务：`cron_1`（打开微信）")
+
+    runner = AgentRunner(provider)
+    result = await runner.run(AgentRunSpec(
+        initial_messages=[{"role": "user", "content": "1分钟后打开微信"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=3,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    assert result.final_content == "已创建 cron 任务：`cron_1`（打开微信）"
+    assert result.stop_reason == "completed"
+
+
+@pytest.mark.asyncio
+async def test_runner_executes_tool_calls_returned_by_finalization_retry() -> None:
+    """最终补救提示返回 tool_calls 时，也必须真正执行工具。"""
+    from elebot.agent.runner import AgentRunSpec, AgentRunner
+
+    provider = MagicMock()
+    call_count = {"n": 0}
+
+    async def chat_with_retry(*, messages, tools=None, **kwargs):
+        del messages, tools, kwargs
+        call_count["n"] += 1
+        if call_count["n"] in {1, 2}:
+            return LLMResponse(content=None, tool_calls=[], usage={})
+        if call_count["n"] == 3:
+            return LLMResponse(
+                content="好的，我来设置。",
+                tool_calls=[ToolCallRequest(
+                    id="call_1",
+                    name="cron",
+                    arguments={"action": "add", "message": "打开微信", "every_seconds": 60},
+                )],
+                usage={"prompt_tokens": 4, "completion_tokens": 2},
+            )
+        return LLMResponse(content="已为你设置好。", tool_calls=[], usage={})
+
+    provider.chat_with_retry = chat_with_retry
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value="已创建 cron 任务：`cron_1`（打开微信）")
+
+    runner = AgentRunner(provider)
+    result = await runner.run(AgentRunSpec(
+        initial_messages=[{"role": "user", "content": "1分钟后打开微信"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=4,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    tools.execute.assert_awaited_once_with(
+        "cron",
+        {"action": "add", "message": "打开微信", "every_seconds": 60},
+    )
+    assert result.final_content == "已为你设置好。"
+    assert result.tools_used == ["cron"]
+
+
+@pytest.mark.asyncio
 async def test_runner_empty_response_does_not_break_tool_chain():
     """An empty intermediate response must not kill an ongoing tool chain.
 
@@ -1688,18 +1772,6 @@ def test_governance_repairs_orphans_after_snip():
     """After _snip_history clips an assistant+tool_calls, the second
     _drop_orphan_tool_results pass must clean up the resulting orphans."""
     from elebot.agent.runner import AgentRunner
-
-    messages = [
-        {"role": "system", "content": "system"},
-        {"role": "user", "content": "old msg"},
-        {"role": "assistant", "content": None,
-         "tool_calls": [{"id": "tc_old", "type": "function",
-                         "function": {"name": "search", "arguments": "{}"}}]},
-        {"role": "tool", "tool_call_id": "tc_old", "name": "search",
-         "content": "old result"},
-        {"role": "assistant", "content": "old answer"},
-        {"role": "user", "content": "new msg"},
-    ]
 
     # Simulate snipping that keeps only the tail: drop the assistant with
     # tool_calls but keep its tool result (orphan).

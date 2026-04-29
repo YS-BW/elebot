@@ -4,23 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from elebot.agent.tools.cron import CronTool
 from elebot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from elebot.agent.tools.notebook import NotebookEditTool
 from elebot.agent.tools.registry import ToolRegistry
 from elebot.agent.tools.search import GlobTool, GrepTool
 from elebot.agent.tools.shell import ExecTool
 from elebot.agent.tools.skill_tools import InstallSkillTool, ListSkillsTool, UninstallSkillTool
-from elebot.agent.tools.task_tools import (
-    CreateTaskTool,
-    ListTasksTool,
-    ProposeTaskTool,
-    RemoveTaskTool,
-    UpdateTaskTool,
-)
 from elebot.agent.tools.web import WebFetchTool, WebSearchTool
 from elebot.config.schema import ExecToolConfig, WebToolsConfig
-from elebot.session.manager import SessionManager
-from elebot.tasks.service import TaskService
+from elebot.cron import CronService
 
 
 def register_default_tools(
@@ -29,8 +22,7 @@ def register_default_tools(
     exec_config: ExecToolConfig,
     web_config: WebToolsConfig,
     restrict_to_workspace: bool,
-    session_manager: SessionManager,
-    task_service: TaskService,
+    cron_service: CronService,
     default_timezone: str,
     extra_allowed_dirs: list[Path],
 ) -> None:
@@ -42,8 +34,7 @@ def register_default_tools(
         exec_config: Shell 工具配置。
         web_config: Web 工具配置。
         restrict_to_workspace: 是否限制工具访问范围到工作区。
-        session_manager: 会话管理器。
-        task_service: 任务领域服务。
+        cron_service: Cron 调度 owner。
         default_timezone: 默认时区。
         extra_allowed_dirs: 额外允许访问的目录。
 
@@ -75,6 +66,7 @@ def register_default_tools(
             extra_allowed_dirs=extra_allowed_dirs,
         )
     )
+    registry.register(CronTool(cron_service=cron_service, default_timezone=default_timezone))
     if exec_config.enable:
         registry.register(
             ExecTool(
@@ -95,36 +87,3 @@ def register_default_tools(
     registry.register(ListSkillsTool())
     registry.register(InstallSkillTool())
     registry.register(UninstallSkillTool())
-    registry.register(
-        ProposeTaskTool(
-            task_service=task_service,
-            default_timezone=default_timezone,
-            session_manager=session_manager,
-        )
-    )
-    registry.register(
-        CreateTaskTool(
-            task_service=task_service,
-            default_timezone=default_timezone,
-            session_manager=session_manager,
-        )
-    )
-    registry.register(
-        ListTasksTool(
-            task_service=task_service,
-            default_timezone=default_timezone,
-        )
-    )
-    registry.register(
-        RemoveTaskTool(
-            task_service=task_service,
-            default_timezone=default_timezone,
-            session_manager=session_manager,
-        )
-    )
-    registry.register(
-        UpdateTaskTool(
-            task_service=task_service,
-            default_timezone=default_timezone,
-        )
-    )

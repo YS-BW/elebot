@@ -14,12 +14,13 @@ class _FakeBus:
 
     async def publish_inbound(self, message) -> None:
         self.inbound_messages.append(message)
+        base_meta = dict(message.metadata or {})
         await self._outbound.put(
             OutboundMessage(
                 channel=message.channel,
                 chat_id=message.chat_id,
                 content="hello",
-                metadata={"_stream_delta": True},
+                metadata={**base_meta, "_stream_delta": True},
             )
         )
         await self._outbound.put(
@@ -27,7 +28,7 @@ class _FakeBus:
                 channel=message.channel,
                 chat_id=message.chat_id,
                 content="",
-                metadata={"_stream_end": True},
+                metadata={**base_meta, "_stream_end": True},
             )
         )
         await self._outbound.put(
@@ -35,7 +36,7 @@ class _FakeBus:
                 channel=message.channel,
                 chat_id=message.chat_id,
                 content="",
-                metadata={"_streamed": True},
+                metadata={**base_meta, "_streamed": True},
             )
         )
 
@@ -102,6 +103,14 @@ class _FakeRenderer:
         self.stop_for_input_calls += 1
 
 
+class _FakePreambleRenderer(_FakeRenderer):
+    async def on_end(self, *, resuming: bool = False):
+        self.ended.append(resuming)
+        if resuming:
+            return ["好的，我来设置 2 分钟后打开微信。"]
+        return None
+
+
 @pytest.mark.asyncio
 async def test_run_interactive_loop_routes_streamed_turn_and_exits(monkeypatch):
     bus = _FakeBus()
@@ -136,7 +145,8 @@ async def test_run_interactive_loop_routes_streamed_turn_and_exits(monkeypatch):
     assert inbound.channel == "cli"
     assert inbound.chat_id == "test"
     assert inbound.content == "hello"
-    assert inbound.metadata == {"_wants_stream": True}
+    assert inbound.metadata["_wants_stream"] is True
+    assert isinstance(inbound.metadata.get("_interactive_turn_id"), str)
 
     renderer = _FakeRenderer.instances[0]
     assert renderer.deltas == ["hello"]
@@ -260,6 +270,334 @@ async def test_run_interactive_loop_ignores_interrupt_without_watcher(monkeypatc
 
     assert interrupt_calls == []
     restore_terminal.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_interactive_loop_renders_tool_preamble_as_progress_lines(monkeypatch):
+    class _PreambleBus(_FakeBus):
+        async def publish_inbound(self, message) -> None:
+            self.inbound_messages.append(message)
+            base_meta = dict(message.metadata or {})
+            await self._outbound.put(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content="好的，我来设置 2 分钟后打开微信。",
+                    metadata={**base_meta, "_stream_delta": True},
+                )
+            )
+            await self._outbound.put(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content="",
+                    metadata={**base_meta, "_stream_end": True, "_resuming": True},
+                )
+            )
+            await self._outbound.put(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content='cron("add")',
+                    metadata={**base_meta, "_progress": True},
+                )
+            )
+            await self._outbound.put(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content="已设置！",
+                    metadata={**base_meta, "_stream_delta": True},
+                )
+            )
+            await self._outbound.put(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content="",
+                    metadata={**base_meta, "_stream_end": True},
+                )
+            )
+            await self._outbound.put(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content="",
+                    metadata={**base_meta, "_streamed": True},
+                )
+            )
+
+    bus = _PreambleBus()
+    agent_loop = _FakeAgentLoop()
+    print_progress = AsyncMock()
+
+    monkeypatch.setattr("elebot.cli.interactive.init_prompt_session", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive._install_signal_handlers", lambda: None)
+    monkeypatch.setattr(
+        "elebot.cli.interactive.read_interactive_input_async",
+        AsyncMock(side_effect=["2 分钟后打开微信", "exit"]),
+    )
+    monkeypatch.setattr("elebot.cli.interactive.flush_pending_tty_input", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive.restore_terminal", MagicMock())
+    monkeypatch.setattr("elebot.cli.interactive.print_agent_response", MagicMock())
+    monkeypatch.setattr("elebot.cli.interactive.print_interactive_response", AsyncMock())
+    monkeypatch.setattr("elebot.cli.interactive.print_interactive_progress_line", print_progress)
+    monkeypatch.setattr("elebot.cli.interactive.console.print", lambda *_args, **_kwargs: None)
+
+    await interactive.run_interactive_loop(
+        agent_loop=agent_loop,
+        bus=bus,
+        session_id="cli:test",
+        markdown=True,
+        renderer_factory=_FakePreambleRenderer,
+    )
+
+    texts = [call.args[0] for call in print_progress.await_args_list]
+    assert texts[:2] == ["好的，我来设置 2 分钟后打开微信。", 'cron("add")']
+
+
+@pytest.mark.asyncio
+async def test_run_interactive_loop_buffers_background_notifications_until_active_turn_finishes(monkeypatch):
+    class _SlowTurnBus(_FakeBus):
+        async def publish_inbound(self, message) -> None:
+            self.inbound_messages.append(message)
+            base_meta = dict(message.metadata or {})
+            await self._outbound.put(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content="正在处理",
+                    metadata={**base_meta, "_stream_delta": True},
+                )
+            )
+            await asyncio.sleep(0.05)
+            await self._outbound.put(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content="",
+                    metadata={**base_meta, "_stream_end": True},
+                )
+            )
+            await self._outbound.put(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content="",
+                    metadata={**base_meta, "_streamed": True},
+                )
+            )
+
+    bus = _SlowTurnBus()
+    agent_loop = _FakeAgentLoop()
+    printed: list[str] = []
+    order: list[tuple[str, str]] = []
+    inbound_published = asyncio.Event()
+
+    async def fake_read_input() -> str:
+        return "hello" if not inbound_published.is_set() else "exit"
+
+    original_publish_inbound = bus.publish_inbound
+
+    async def publish_inbound_and_record(message) -> None:
+        order.append(("inbound", message.content))
+        inbound_published.set()
+        await original_publish_inbound(message)
+
+    bus.publish_inbound = publish_inbound_and_record  # type: ignore[method-assign]
+
+    async def emit_background_notification() -> None:
+        await inbound_published.wait()
+        await bus._outbound.put(
+            OutboundMessage(
+                channel="cli",
+                chat_id="test",
+                content="微信已打开 ✅",
+                metadata={},
+            )
+        )
+
+    monkeypatch.setattr("elebot.cli.interactive.init_prompt_session", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive._install_signal_handlers", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive.read_interactive_input_async", fake_read_input)
+    monkeypatch.setattr("elebot.cli.interactive.flush_pending_tty_input", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive.restore_terminal", MagicMock())
+    monkeypatch.setattr("elebot.cli.interactive.print_agent_response", MagicMock())
+    monkeypatch.setattr(
+        "elebot.cli.interactive.print_interactive_response",
+        AsyncMock(side_effect=lambda content, **_kwargs: printed.append(content) or order.append(("notify", content))),
+    )
+    monkeypatch.setattr("elebot.cli.interactive.print_interactive_progress_line", AsyncMock())
+    monkeypatch.setattr("elebot.cli.interactive.console.print", lambda *_args, **_kwargs: None)
+
+    background_task = asyncio.create_task(emit_background_notification())
+    try:
+        await interactive.run_interactive_loop(
+            agent_loop=agent_loop,
+            bus=bus,
+            session_id="cli:test",
+            markdown=True,
+            renderer_factory=_FakeRenderer,
+        )
+    finally:
+        await asyncio.gather(background_task, return_exceptions=True)
+
+    assert printed == ["微信已打开 ✅"]
+    assert order[0] == ("inbound", "hello")
+    assert order[1] == ("notify", "微信已打开 ✅")
+
+
+@pytest.mark.asyncio
+async def test_run_interactive_loop_preserves_background_notification_order(monkeypatch):
+    class _SlowTurnBus(_FakeBus):
+        async def publish_inbound(self, message) -> None:
+            self.inbound_messages.append(message)
+            base_meta = dict(message.metadata or {})
+            await self._outbound.put(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content="准备中",
+                    metadata={**base_meta, "_stream_delta": True},
+                )
+            )
+            await asyncio.sleep(0.05)
+            await self._outbound.put(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content="",
+                    metadata={**base_meta, "_stream_end": True},
+                )
+            )
+            await self._outbound.put(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content="",
+                    metadata={**base_meta, "_streamed": True},
+                )
+            )
+
+    bus = _SlowTurnBus()
+    agent_loop = _FakeAgentLoop()
+    printed: list[str] = []
+    inbound_published = asyncio.Event()
+
+    async def fake_read_input() -> str:
+        return "hello" if not inbound_published.is_set() else "exit"
+
+    original_publish_inbound = bus.publish_inbound
+
+    async def publish_inbound_and_mark(message) -> None:
+        inbound_published.set()
+        await original_publish_inbound(message)
+
+    bus.publish_inbound = publish_inbound_and_mark  # type: ignore[method-assign]
+
+    async def emit_background_notifications() -> None:
+        await inbound_published.wait()
+        for content in ("任务 A 已完成", "任务 B 已完成"):
+            await bus._outbound.put(
+                OutboundMessage(
+                    channel="cli",
+                    chat_id="test",
+                    content=content,
+                    metadata={},
+                )
+            )
+    monkeypatch.setattr("elebot.cli.interactive.init_prompt_session", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive._install_signal_handlers", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive.read_interactive_input_async", fake_read_input)
+    monkeypatch.setattr("elebot.cli.interactive.flush_pending_tty_input", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive.restore_terminal", MagicMock())
+    monkeypatch.setattr("elebot.cli.interactive.print_agent_response", MagicMock())
+    monkeypatch.setattr(
+        "elebot.cli.interactive.print_interactive_response",
+        AsyncMock(side_effect=lambda content, **_kwargs: printed.append(content)),
+    )
+    monkeypatch.setattr("elebot.cli.interactive.print_interactive_progress_line", AsyncMock())
+    monkeypatch.setattr("elebot.cli.interactive.console.print", lambda *_args, **_kwargs: None)
+
+    background_task = asyncio.create_task(emit_background_notifications())
+    try:
+        await interactive.run_interactive_loop(
+            agent_loop=agent_loop,
+            bus=bus,
+            session_id="cli:test",
+            markdown=True,
+            renderer_factory=_FakeRenderer,
+        )
+    finally:
+        await asyncio.gather(background_task, return_exceptions=True)
+
+    assert printed == ["任务 A 已完成", "任务 B 已完成"]
+
+
+@pytest.mark.asyncio
+async def test_run_interactive_loop_shows_background_notifications_immediately_when_agent_idle(monkeypatch):
+    bus = _FakeBus()
+    agent_loop = _FakeAgentLoop()
+    printed: list[str] = []
+    first_read_started = asyncio.Event()
+    allow_first_read_return = asyncio.Event()
+    notification_printed = asyncio.Event()
+    order: list[tuple[str, str]] = []
+
+    async def fake_read_input() -> str:
+        if not first_read_started.is_set():
+            first_read_started.set()
+            await allow_first_read_return.wait()
+            return "exit"
+        return "exit"
+
+    async def emit_background_notification() -> None:
+        await first_read_started.wait()
+        await bus._outbound.put(
+            OutboundMessage(
+                channel="cli",
+                chat_id="test",
+                content="提醒已经到了",
+                metadata={},
+            )
+        )
+
+    async def fake_print_interactive_response(content, **_kwargs):
+        printed.append(content)
+        order.append(("notify", content))
+        notification_printed.set()
+
+    monkeypatch.setattr("elebot.cli.interactive.init_prompt_session", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive._install_signal_handlers", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive.read_interactive_input_async", fake_read_input)
+    monkeypatch.setattr("elebot.cli.interactive.flush_pending_tty_input", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive.restore_terminal", MagicMock())
+    monkeypatch.setattr("elebot.cli.interactive.print_agent_response", MagicMock())
+    monkeypatch.setattr(
+        "elebot.cli.interactive.print_interactive_response",
+        AsyncMock(side_effect=fake_print_interactive_response),
+    )
+    monkeypatch.setattr("elebot.cli.interactive.print_interactive_progress_line", AsyncMock())
+    monkeypatch.setattr("elebot.cli.interactive.console.print", lambda *_args, **_kwargs: None)
+
+    background_task = asyncio.create_task(emit_background_notification())
+    loop_task = asyncio.create_task(
+        interactive.run_interactive_loop(
+            agent_loop=agent_loop,
+            bus=bus,
+            session_id="cli:test",
+            markdown=True,
+            renderer_factory=_FakeRenderer,
+        )
+    )
+    try:
+        await asyncio.wait_for(notification_printed.wait(), timeout=2)
+        assert printed == ["提醒已经到了"]
+        allow_first_read_return.set()
+        await loop_task
+    finally:
+        allow_first_read_return.set()
+        await asyncio.gather(background_task, loop_task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

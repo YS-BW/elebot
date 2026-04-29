@@ -83,8 +83,7 @@ def test_register_default_tools_includes_skill_management_tools(tmp_path) -> Non
         exec_config=ExecToolConfig(enable=False),
         web_config=WebToolsConfig(enable=False),
         restrict_to_workspace=False,
-        session_manager=MagicMock(),
-        task_service=MagicMock(),
+        cron_service=MagicMock(),
         default_timezone="Asia/Shanghai",
         extra_allowed_dirs=[],
     )
@@ -92,3 +91,4 @@ def test_register_default_tools_includes_skill_management_tools(tmp_path) -> Non
     assert "install_skill" in registry.tool_names
     assert "list_skills" in registry.tool_names
     assert "uninstall_skill" in registry.tool_names
+    assert "cron" in registry.tool_names

@@ -14,7 +14,6 @@ from typer.testing import CliRunner
 
 from elebot.bus.events import OutboundMessage
 from elebot.cli.app import app
-from elebot.cli.commands.onboard import _install_default_skills
 from elebot.cli.onboard import _try_auto_fill_context_window
 from elebot.cli.runtime_support import _make_provider
 from elebot.config.schema import Config
@@ -37,10 +36,6 @@ def mock_paths():
         patch("elebot.config.loader.save_config") as mock_sc,
         patch("elebot.config.loader.load_config") as mock_lc,
         patch("elebot.cli.commands.onboard.get_workspace_path") as mock_ws,
-        patch(
-            "elebot.cli.commands.onboard._install_default_skills",
-            return_value=["skill-creator", "skills-vercel-labs.find-skills-master-e60e5845d52b0b8e69d1faaff7dbb2cc1b62bd59"],
-        ) as mock_install_skills,
     ):
         base_dir = Path("./test_onboard_data")
         if base_dir.exists():
@@ -64,7 +59,7 @@ def mock_paths():
 
         mock_sc.side_effect = _save_config
 
-        yield config_file, workspace_dir, mock_ws, mock_install_skills
+        yield config_file, workspace_dir, mock_ws
 
         if base_dir.exists():
             shutil.rmtree(base_dir)
@@ -72,7 +67,7 @@ def mock_paths():
 
 def test_onboard_fresh_install(mock_paths) -> None:
     """首次初始化会创建配置和工作区模板。"""
-    config_file, workspace_dir, mock_ws, mock_install_skills = mock_paths
+    config_file, workspace_dir, mock_ws = mock_paths
 
     result = runner.invoke(app, ["onboard"])
 
@@ -81,17 +76,15 @@ def test_onboard_fresh_install(mock_paths) -> None:
     assert "已创建工作区" in result.stdout
     assert "elebot 已就绪" in result.stdout
     assert "获取地址：https://platform.deepseek.com/" in result.stdout
-    assert "已安装默认 skill：skill-creator" in result.stdout
     assert config_file.exists()
     assert (workspace_dir / "AGENTS.md").exists()
     assert (workspace_dir / "memory" / "MEMORY.md").exists()
     assert mock_ws.call_args.args == (Config().workspace_path,)
-    mock_install_skills.assert_called_once_with()
 
 
 def test_onboard_existing_config_refresh(mock_paths) -> None:
     """拒绝覆盖时应保留原值并刷新缺省字段。"""
-    config_file, workspace_dir, _, _ = mock_paths
+    config_file, workspace_dir, _ = mock_paths
     config_file.write_text('{"existing": true}', encoding="utf-8")
 
     result = runner.invoke(app, ["onboard"], input="n\n")
@@ -104,7 +97,7 @@ def test_onboard_existing_config_refresh(mock_paths) -> None:
 
 def test_onboard_existing_config_overwrite(mock_paths) -> None:
     """确认覆盖时应重置为默认配置。"""
-    config_file, workspace_dir, _, _ = mock_paths
+    config_file, workspace_dir, _ = mock_paths
     config_file.write_text('{"existing": true}', encoding="utf-8")
 
     result = runner.invoke(app, ["onboard"], input="y\n")
@@ -116,7 +109,7 @@ def test_onboard_existing_config_overwrite(mock_paths) -> None:
 
 def test_onboard_existing_workspace_safe_create(mock_paths) -> None:
     """工作区已存在时不重复创建，但仍会补齐模板。"""
-    config_file, workspace_dir, _, _ = mock_paths
+    config_file, workspace_dir, _ = mock_paths
     workspace_dir.mkdir(parents=True)
     config_file.write_text("{}", encoding="utf-8")
 
@@ -157,7 +150,7 @@ def test_onboard_interactive_discard_does_not_save_or_create_workspace(
     mock_paths, monkeypatch
 ) -> None:
     """向导放弃保存时不应落盘任何文件。"""
-    config_file, workspace_dir, _, _ = mock_paths
+    config_file, workspace_dir, _ = mock_paths
 
     from elebot.cli.onboard import OnboardResult
 
@@ -214,36 +207,6 @@ def test_onboard_wizard_preserves_explicit_config_in_next_steps(tmp_path, monkey
     compact_output = _strip_ansi(result.stdout).replace("\n", "")
     resolved_config = str(config_path.resolve())
     assert f'elebot agent -m "你好！" --config {resolved_config}' in compact_output
-
-
-def test_onboard_installs_default_skills_from_local_sources(tmp_path, monkeypatch) -> None:
-    """默认 skill 源存在时，应安装到全局 skills 根目录。"""
-    skills_root = tmp_path / "installed-skills"
-    source_root = tmp_path / "sources"
-    skill_creator = source_root / "skill-creator"
-    skill_creator.mkdir(parents=True)
-    (skill_creator / "SKILL.md").write_text("---\nname: Skill Creator\n---\n", encoding="utf-8")
-    vercel_skill = source_root / "skills-vercel-labs.find-skills-master"
-    vercel_skill.mkdir(parents=True)
-    (vercel_skill / "SKILL.md").write_text("---\nname: Find Skills\n---\n", encoding="utf-8")
-
-    monkeypatch.setattr(
-        "elebot.cli.commands.onboard.DEFAULT_ONBOARD_SKILL_SOURCES",
-        (skill_creator, vercel_skill),
-    )
-
-    from elebot.agent.skills import SkillManager
-
-    monkeypatch.setattr(
-        "elebot.cli.commands.onboard.SkillManager",
-        lambda: SkillManager(skills_root),
-    )
-
-    installed = _install_default_skills()
-
-    assert installed == ["skill-creator", "skills-vercel-labs.find-skills-master"]
-    assert (skills_root / "skill-creator" / "SKILL.md").exists()
-    assert (skills_root / "skills-vercel-labs.find-skills-master" / "SKILL.md").exists()
 
 
 def test_config_dump_excludes_oauth_provider_blocks() -> None:

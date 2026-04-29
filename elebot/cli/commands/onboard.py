@@ -7,46 +7,10 @@ from pathlib import Path
 import typer
 
 from elebot import __logo__
-from elebot.agent.skills import SkillManager
 from elebot.cli.render import console
 from elebot.config.paths import get_workspace_path
 from elebot.config.schema import Config
 from elebot.utils.workspace import sync_workspace_templates
-
-DEFAULT_ONBOARD_SKILL_SOURCES: tuple[Path, ...] = (
-    Path("/Users/lixinlv/Documents/SKill/skill-creator"),
-    Path("/Users/lixinlv/Documents/SKill/skills-vercel-labs.find-skills-master-e60e5845d52b0b8e69d1faaff7dbb2cc1b62bd59"),
-)
-
-
-def _install_default_skills() -> list[str]:
-    """安装首次初始化时默认附带的 skills。
-
-    参数:
-        无。
-
-    返回:
-        本次成功安装的 skill 键名列表。
-    """
-    manager = SkillManager()
-    installed_skills: list[str] = []
-
-    for source_path in DEFAULT_ONBOARD_SKILL_SOURCES:
-        expanded_source = source_path.expanduser()
-        if not expanded_source.exists():
-            continue
-
-        skill_key = expanded_source.name
-        if (manager.root / skill_key).exists():
-            continue
-
-        ok, message = manager.install(str(expanded_source))
-        if ok:
-            installed_skills.append(skill_key)
-        else:
-            console.print(f"  [yellow]{message}[/yellow]")
-
-    return installed_skills
 
 
 def register_onboard_command(app: typer.Typer) -> None:
@@ -146,9 +110,6 @@ def register_onboard_command(app: typer.Typer) -> None:
             console.print(f"[green]✓[/green] 已创建工作区：{workspace_path}")
 
         sync_workspace_templates(workspace_path)
-        installed_skills = _install_default_skills()
-        for skill_key in installed_skills:
-            console.print(f"  [dim]已安装默认 skill：{skill_key}[/dim]")
 
         agent_cmd = 'elebot agent -m "你好！"'
         if config:

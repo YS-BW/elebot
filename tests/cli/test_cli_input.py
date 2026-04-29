@@ -1,3 +1,4 @@
+import os
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -45,28 +46,23 @@ async def test_read_interactive_input_async_handles_eof(mock_prompt_session):
 def test_init_prompt_session_creates_session(monkeypatch, tmp_path):
     """init_prompt_session should initialize the global session."""
     history._PROMPT_SESSION = None
+    monkeypatch.delenv("PROMPT_TOOLKIT_NO_CPR", raising=False)
     monkeypatch.setattr(
         "elebot.config.paths.get_cli_history_path", lambda: tmp_path / "history"
     )
-    fake_output = MagicMock()
-    fake_output.enable_cpr = True
 
-    with patch("elebot.cli.history.PromptSession") as mock_session_cls, patch(
-        "elebot.cli.history.create_output", return_value=fake_output
-    ) as mock_create_output:
+    with patch("elebot.cli.history.PromptSession") as mock_session_cls:
         history.init_prompt_session()
 
     assert history._PROMPT_SESSION is not None
     mock_session_cls.assert_called_once()
-    mock_create_output.assert_called_once_with(always_prefer_tty=True)
     _, kwargs = mock_session_cls.call_args
     assert kwargs["multiline"] is False
     assert kwargs["enable_open_in_editor"] is False
     assert kwargs["complete_while_typing"] is True
     assert kwargs["complete_style"] is CompleteStyle.COLUMN
     assert isinstance(kwargs["completer"], history.SlashCommandCompleter)
-    assert kwargs["output"] is fake_output
-    assert fake_output.enable_cpr is False
+    assert os.environ["PROMPT_TOOLKIT_NO_CPR"] == "1"
 
 
 def test_slash_command_completer_returns_all_commands_on_slash() -> None:
@@ -218,6 +214,59 @@ def test_stream_renderer_exposes_spinner_property():
         renderer = stream_mod.StreamRenderer(show_spinner=True)
 
     assert renderer.spinner is not None
+
+
+@pytest.mark.asyncio
+async def test_stream_renderer_converts_short_tool_preamble_to_progress_lines():
+    spinner = MagicMock()
+    mock_console = MagicMock()
+    mock_console.status.return_value = spinner
+
+    with patch.object(stream_mod, "_make_console", return_value=mock_console), \
+         patch.object(stream_mod, "Live") as live_cls:
+        renderer = stream_mod.StreamRenderer(show_spinner=True)
+        await renderer.on_delta("好的，我来设置 2 分钟后打开微信。")
+        lines = await renderer.on_end(resuming=True)
+
+    assert lines == ["好的，我来设置 2 分钟后打开微信。"]
+    live_cls.assert_not_called()
+    mock_console.print.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stream_renderer_prints_short_final_response_without_live():
+    spinner = MagicMock()
+    mock_console = MagicMock()
+    mock_console.status.return_value = spinner
+
+    with patch.object(stream_mod, "_make_console", return_value=mock_console), \
+         patch.object(stream_mod, "Live") as live_cls:
+        renderer = stream_mod.StreamRenderer(show_spinner=True)
+        await renderer.on_delta("你好")
+        lines = await renderer.on_end(resuming=False)
+
+    assert lines is None
+    live_cls.assert_not_called()
+    assert mock_console.print.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_stream_renderer_promotes_long_response_to_live_before_tool_resume():
+    spinner = MagicMock()
+    mock_console = MagicMock()
+    mock_console.status.return_value = spinner
+    live = MagicMock()
+
+    with patch.object(stream_mod, "_make_console", return_value=mock_console), \
+         patch.object(stream_mod, "Live", return_value=live) as live_cls:
+        renderer = stream_mod.StreamRenderer(show_spinner=True)
+        await renderer.on_delta("a" * 121)
+        lines = await renderer.on_end(resuming=True)
+
+    assert lines is None
+    live_cls.assert_called_once()
+    live.start.assert_called_once()
+    live.stop.assert_called_once()
 
 
 def test_make_console_uses_force_terminal():

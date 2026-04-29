@@ -53,6 +53,114 @@ def test_parse_dict_reasoning_content_none_when_absent() -> None:
     assert result.reasoning_content is None
 
 
+def test_parse_dict_extracts_pseudo_tool_call_markup() -> None:
+    """兼容模型把工具调用写成伪 XML 文本时，应恢复成结构化 tool_calls。"""
+    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider()
+
+    response = {
+        "choices": [{
+            "message": {
+                "content": (
+                    "<tool_call>\n"
+                    "<function=cron>\n"
+                    "<parameter=action>add</parameter>\n"
+                    "<parameter=at>2026-04-29T13:56:00+08:00</parameter>\n"
+                    "<parameter=prompt>请立即执行命令打开微信：exec(\"open -a WeChat\")</parameter>\n"
+                    "</function>\n"
+                    "</tool_call>"
+                ),
+            },
+            "finish_reason": "stop",
+        }],
+    }
+
+    result = provider._parse(response)
+
+    assert result.content is None
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "cron"
+    assert result.tool_calls[0].arguments == {
+        "action": "add",
+        "at": "2026-04-29T13:56:00+08:00",
+        "instruction": "请立即执行命令打开微信：exec(\"open -a WeChat\")",
+    }
+
+
+def test_parse_dict_normalizes_cron_command_alias() -> None:
+    """结构化 tool_calls 里的 cron.command 也应归一化成 instruction。"""
+    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider()
+
+    response = {
+        "choices": [{
+            "message": {
+                "content": "好的，我来设置。",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "cron",
+                            "arguments": "{\"action\":\"add\",\"command\":\"打开微信\",\"every_seconds\":60}",
+                        },
+                    }
+                ],
+            },
+            "finish_reason": "tool_calls",
+        }],
+    }
+
+    result = provider._parse(response)
+
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].arguments == {
+        "action": "add",
+        "instruction": "打开微信",
+        "every_seconds": 60,
+    }
+
+
+def test_parse_dict_flattens_nested_cron_job_payload() -> None:
+    """兼容模型返回的 cron.job 嵌套结构也应收口成固定参数。"""
+    with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider()
+
+    response = {
+        "choices": [{
+            "message": {
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "cron",
+                            "arguments": (
+                                "{\"action\":\"add\",\"job\":{"
+                                "\"name\":\"打开微信\","
+                                "\"at\":\"2026-04-29T14:11:00+08:00\","
+                                "\"payload\":{\"kind\":\"agentTurn\",\"instruction\":\"请打开微信\"}"
+                                "}}"
+                            ),
+                        },
+                    }
+                ],
+            },
+            "finish_reason": "tool_calls",
+        }],
+    }
+
+    result = provider._parse(response)
+
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].arguments == {
+        "action": "add",
+        "name": "打开微信",
+        "at": "2026-04-29T14:11:00+08:00",
+        "instruction": "请打开微信",
+    }
+
+
 # ── _parse_chunks: streaming dict branch ─────────────────────────────────
 
 
@@ -95,6 +203,51 @@ def test_parse_chunks_dict_reasoning_content_none_when_absent() -> None:
 
     assert result.content == "hi"
     assert result.reasoning_content is None
+
+
+def test_parse_chunks_extracts_pseudo_tool_call_markup() -> None:
+    """流式兼容文本也应在收尾时恢复成真实工具调用。"""
+    chunks = [
+        {
+            "choices": [{
+                "finish_reason": None,
+                "delta": {"content": "<tool_call>\n<function=cron>\n"},
+            }],
+        },
+        {
+            "choices": [{
+                "finish_reason": None,
+                "delta": {
+                    "content": (
+                        "<parameter=action>add</parameter>\n"
+                        "<parameter=every_seconds>60</parameter>\n"
+                    )
+                },
+            }],
+        },
+        {
+            "choices": [{
+                "finish_reason": "stop",
+                "delta": {
+                    "content": (
+                        "<parameter=prompt>打开微信</parameter>\n"
+                        "</function>\n</tool_call>"
+                    )
+                },
+            }],
+        },
+    ]
+
+    result = OpenAICompatProvider._parse_chunks(chunks)
+
+    assert result.content is None
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "cron"
+    assert result.tool_calls[0].arguments == {
+        "action": "add",
+        "every_seconds": 60,
+        "instruction": "打开微信",
+    }
 
 
 # ── _parse_chunks: streaming SDK-object branch ────────────────────────────

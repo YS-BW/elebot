@@ -114,6 +114,7 @@ class ExecTool(Tool):
             "Execute a shell command and return its output. "
             "Prefer read_file/write_file/edit_file over cat/echo/sed, "
             "and grep/glob over shell find/grep. "
+            "Do not use this tool for delayed or recurring actions; use cron instead of sleep/at/crontab-style scheduling. "
             "Use -y or --yes flags to avoid interactive prompts. "
             "Output is truncated at 10 000 chars; timeout defaults to 60s."
         )
@@ -306,6 +307,13 @@ class ExecTool(Tool):
         cmd = command.strip()
         lower = cmd.lower()
 
+        if re.search(r"\bsleep\s+\d+(?:\.\d+)?\s*&&", lower):
+            return "Error: delayed shell execution is not allowed; use the cron tool instead"
+        if re.search(r"\b(?:at|crontab|schtasks|launchctl)\b", lower):
+            return "Error: shell scheduling commands are not allowed; use the cron tool instead"
+        if re.search(r"\bnohup\b", lower):
+            return "Error: background job scheduling is not allowed; use the cron tool instead"
+
         for pattern in self.deny_patterns:
             if re.search(pattern, lower):
                 return "Error: Command blocked by safety guard (dangerous pattern detected)"
@@ -329,8 +337,8 @@ class ExecTool(Tool):
 
                 media_path = get_media_dir().resolve()
                 allowed_paths = [media_path, GLOBAL_SKILLS_DIR.resolve(), *self.extra_allowed_dirs]
-                if (p.is_absolute() 
-                    and cwd_path not in p.parents 
+                if (p.is_absolute()
+                    and cwd_path not in p.parents
                     and p != cwd_path
                     and not any(p == allowed or allowed in p.parents for allowed in allowed_paths)
                 ):

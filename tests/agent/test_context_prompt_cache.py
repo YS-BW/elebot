@@ -229,14 +229,16 @@ def test_system_prompt_omits_skills_section_when_empty(tmp_path, monkeypatch) ->
     assert "# 可用 Skills" not in prompt
 
 
-def test_system_prompt_contains_task_confirmation_rules(tmp_path) -> None:
+def test_system_prompt_contains_cron_rules(tmp_path) -> None:
     workspace = _make_workspace(tmp_path)
     builder = _make_builder(workspace)
 
     prompt = builder.build_system_prompt()
-    assert "# 定时任务规则" in prompt
-    assert "用户未确认前，不得调用 `create_task`" in prompt
-    assert "你可以主动询问是否需要创建提醒" in prompt
+    assert "# Cron 规则" in prompt
+    assert "cron(action=\"add\")" in prompt
+    assert "不需要再走额外的确认流" in prompt
+    assert "不要用 `exec` 模拟定时" in prompt
+    assert "不要再使用旧任务工具名" in prompt
 
 
 def test_context_builder_does_not_log_explicit_skill_mentions(tmp_path, monkeypatch) -> None:

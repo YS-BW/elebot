@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,8 +30,7 @@ def _make_loop(*, exec_config=None):
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    workspace = MagicMock()
-    workspace.__truediv__ = MagicMock(return_value=MagicMock())
+    workspace = Path(tempfile.mkdtemp())
 
     with patch("elebot.agent.loop.ContextBuilder"), patch("elebot.agent.loop.SessionManager"):
         loop = AgentLoop(bus=bus, provider=provider, workspace=workspace, exec_config=exec_config)

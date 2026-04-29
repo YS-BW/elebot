@@ -64,6 +64,8 @@ class ThinkingSpinner:
 class StreamRenderer:
     """以 Rich Live 渲染流式回复，并在首个可见 token 前展示 spinner。"""
 
+    _PROMOTION_THRESHOLD = 120
+
     def __init__(self, render_markdown: bool = True, show_spinner: bool = True):
         """初始化流式渲染器。
 
@@ -88,8 +90,41 @@ class StreamRenderer:
         """暴露当前 spinner，供进度输出在打印前安全暂停。"""
         return self._spinner
 
-    def _render(self):
-        return Markdown(self._buffer) if self._render_markdown and self._buffer else Text(self._buffer or "")
+    def _render(self, content: str | None = None):
+        text = self._buffer if content is None else content
+        return Markdown(text) if self._render_markdown and text else Text(text or "")
+
+    def _has_visible_buffer(self) -> bool:
+        """判断当前缓冲里是否已有可见正文。"""
+        return bool(self._buffer.strip())
+
+    def _should_promote_to_live(self) -> bool:
+        """判断当前缓冲是否应该升级成正式流式正文。"""
+        visible = self._buffer.strip()
+        if not visible:
+            return False
+        return len(visible) > self._PROMOTION_THRESHOLD or "\n\n" in self._buffer
+
+    def _start_live(self) -> None:
+        """把当前缓冲升级为正式 assistant 流式输出。"""
+        if self._live is not None:
+            return
+        self._stop_spinner()
+        terminal_console = _make_console()
+        terminal_console.print(f"[cyan]{__logo__} elebot[/cyan]")
+        self._live = Live(self._render(), console=terminal_console, auto_refresh=False)
+        self._live.start()
+
+    def _consume_preamble_lines(self) -> list[str]:
+        """把缓冲中的短前缀拆成进度行文本。"""
+        return [line.strip() for line in self._buffer.splitlines() if line.strip()]
+
+    def _print_buffered_response(self) -> None:
+        """把尚未升级成 Live 的短回复直接作为完整 assistant 回复打印。"""
+        terminal_console = _make_console()
+        terminal_console.print(f"[cyan]{__logo__} elebot[/cyan]")
+        terminal_console.print(self._render(self._buffer))
+        terminal_console.print()
 
     def _start_spinner(self) -> None:
         if self._show_spinner:
@@ -106,33 +141,48 @@ class StreamRenderer:
         self.streamed = True
         self._buffer += delta
         if self._live is None:
-            if not self._buffer.strip():
+            if not self._should_promote_to_live():
                 return
-            self._stop_spinner()
-            terminal_console = _make_console()
-            terminal_console.print()
-            terminal_console.print(f"[cyan]{__logo__} elebot[/cyan]")
-            self._live = Live(self._render(), console=terminal_console, auto_refresh=False)
-            self._live.start()
+            self._start_live()
         now = time.monotonic()
         if "\n" in delta or (now - self._last_refresh_at) > 0.05:
             self._live.update(self._render())
             self._live.refresh()
             self._last_refresh_at = now
 
-    async def on_end(self, *, resuming: bool = False) -> None:
+    async def on_end(self, *, resuming: bool = False) -> list[str] | None:
         """结束当前流式渲染；恢复续写时重新拉起 spinner。"""
         if self._live:
             self._live.update(self._render())
             self._live.refresh()
             self._live.stop()
             self._live = None
-        self._stop_spinner()
-        if resuming:
+            self._stop_spinner()
+            self._last_refresh_at = 0.0
             self._buffer = ""
+            if resuming:
+                self._start_spinner()
+            else:
+                _make_console().print()
+            return None
+
+        preamble_lines: list[str] | None = None
+        if self._has_visible_buffer():
+            if resuming:
+                preamble_lines = self._consume_preamble_lines()
+            else:
+                self._stop_spinner()
+                self._print_buffered_response()
+                self._last_refresh_at = 0.0
+                self._buffer = ""
+                return None
+
+        self._stop_spinner()
+        self._last_refresh_at = 0.0
+        self._buffer = ""
+        if resuming:
             self._start_spinner()
-        else:
-            _make_console().print()
+        return preamble_lines
 
     def stop_for_input(self) -> None:
         """在读取下一次用户输入前停掉 spinner，避免 prompt_toolkit 冲突。"""

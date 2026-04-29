@@ -1,18 +1,16 @@
 # RUNTIME
 
-这篇文档只讲 EleBot 当前已经落地的进程内 runtime，不讨论还没做的系统级后台服务、桌面壳或 Web 入口。
+这篇文档只讲 EleBot 当前已经落地的进程内 runtime，不讨论系统级后台服务、桌面壳或 Web 入口。
 
 相关源码：
 
-- [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L109)
-- [elebot/cli/commands/agent.py](../elebot/cli/commands/agent.py#L21-L105)
-- [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L352)
+- [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L86)
+- [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L323)
 - [elebot/runtime/lifecycle.py](../elebot/runtime/lifecycle.py#L10-L106)
 - [elebot/runtime/models.py](../elebot/runtime/models.py#L8-L57)
-- [elebot/runtime/state.py](../elebot/runtime/state.py#L14-L35)
-- [tests/cli/test_runtime.py](../tests/cli/test_runtime.py#L13-L175)
+- [tests/cli/test_runtime.py](../tests/cli/test_runtime.py#L13-L176)
 
-## 1. runtime 解决的是什么问题
+## 1. runtime 解决什么问题
 
 当前 runtime 解决的不是“系统后台常驻”这个最终产品问题，而是先把这件事收口：
 
@@ -37,15 +35,6 @@ runtime = 进程内统一装配入口 + 生命周期管理层
 - `AgentLoop`
 - `RuntimeState`
 
-简化后的结构就是：
-
-```python
-bus = resolved_bus_factory()
-provider = resolved_provider_builder(config)
-agent_loop = resolved_agent_loop_factory(...)
-return ElebotRuntime(RuntimeState(...))
-```
-
 这里最重要的事实是：
 
 - provider 默认来自 `providers.factory.build_provider()`
@@ -53,28 +42,19 @@ return ElebotRuntime(RuntimeState(...))
 
 ## 3. CLI 怎么复用 runtime
 
-CLI 侧现在通过 [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L109) 做很薄的一层适配：
+CLI 侧现在通过 [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L40-L86) 做很薄的一层适配：
 
 1. `_load_runtime_config()`
 2. `_make_provider()`
 3. `_make_runtime()`
 
-`agent` 命令只负责：
+`agent` 命令只负责读取配置、同步 workspace 模板、再把执行交给 runtime。
 
-```python
-loaded_config = _load_runtime_config(config, workspace)
-runtime = _make_runtime(loaded_config)
-```
-
-然后把后续执行交给 runtime，见 [elebot/cli/commands/agent.py](../elebot/cli/commands/agent.py#L31-L105)。
-
-## 4. runtime 对外提供哪些入口
-
-当前 `ElebotRuntime` 已经固定提供三类能力。
+## 4. runtime 对外提供哪些能力
 
 ### 4.1 生命周期
 
-对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L310-L352) 和 [elebot/runtime/lifecycle.py](../elebot/runtime/lifecycle.py#L24-L106)：
+对应 [elebot/runtime/lifecycle.py](../elebot/runtime/lifecycle.py#L24-L106)：
 
 - `start()`
 - `wait()`
@@ -83,21 +63,21 @@ runtime = _make_runtime(loaded_config)
 
 ### 4.2 对话入口
 
-对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L247-L308)：
+对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L245-L323)：
 
 - `run_once()`
 - `run_interactive()`
 
 ### 4.3 薄控制 API
 
-对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L124-L245)：
+对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L124-L243)：
 
 - `interrupt_session()`
 - `reset_session()`
 - `get_status_snapshot()`
 - `trigger_dream()`
-- `list_tasks()`
-- `remove_task()`
+- `list_cron_jobs()`
+- `remove_cron_job()`
 - `get_dream_log()`
 - `restore_dream_version()`
 
@@ -114,14 +94,6 @@ runtime = _make_runtime(loaded_config)
   - `reason`
 - 输出
   - `InterruptResult`
-
-`InterruptResult` 当前最小字段在 [elebot/runtime/models.py](../elebot/runtime/models.py#L25-L34)：
-
-- `session_id`
-- `reason`
-- `accepted`
-- `cancelled_tasks`
-- `already_interrupting`
 
 当前还有三条固定事实：
 
@@ -151,9 +123,9 @@ AgentLoop 装配
 - desktop
 - 其他前端
 
-都应该复用 `ElebotRuntime`，而不是再造一个 `facade` 或平行装配链。
+都应该复用 `ElebotRuntime`，而不是再造一个平行装配链。
 
-## 7. 当前还不应该把 runtime 误解成什么
+## 7. runtime 现在还不是什么
 
 当前 runtime 还不是：
 
@@ -161,4 +133,7 @@ AgentLoop 装配
 - 调度后端
 - 独立 SDK 产品层
 
-它现在是已经落地的进程内复用底座，并且已经具备单 runtime、单会话下的 interrupt 控制面。
+它现在是已经落地的进程内复用底座，并且已经具备：
+
+- 单 runtime、单会话下的 interrupt 控制面
+- 对 `CronService` 的薄委托 API

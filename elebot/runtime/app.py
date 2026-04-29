@@ -11,6 +11,7 @@ from elebot.bus.queue import MessageBus
 from elebot.cli.interactive import run_interactive_loop
 from elebot.cli.stream import StreamRenderer
 from elebot.config.schema import Config
+from elebot.cron import CronJob
 from elebot.providers.base import LLMProvider
 from elebot.providers.factory import build_provider
 from elebot.runtime.lifecycle import RuntimeLifecycle
@@ -22,7 +23,6 @@ from elebot.runtime.models import (
     RuntimeStatusSnapshot,
 )
 from elebot.runtime.state import RuntimeState
-from elebot.tasks.models import ScheduledTask
 
 if TYPE_CHECKING:
     from elebot.providers.base import LLMProvider
@@ -181,29 +181,27 @@ class ElebotRuntime:
         """
         self.agent_loop.trigger_dream_background(channel, chat_id)
 
-    def list_tasks(self, session_id: str | None = None) -> list[ScheduledTask]:
-        """列出任务。
+    def list_cron_jobs(self, include_disabled: bool = False) -> list[CronJob]:
+        """列出当前 cron jobs。
 
         参数:
-            session_id: 可选的会话键过滤条件。
+            include_disabled: 是否包含已禁用 job。
 
         返回:
-            任务列表。
+            当前 cron job 列表。
         """
-        if session_id is None:
-            return self.agent_loop.task_service.list_all()
-        return self.agent_loop.task_service.list_by_session(session_id)
+        return self.agent_loop.list_cron_jobs(include_disabled=include_disabled)
 
-    def remove_task(self, task_id: str) -> bool:
-        """删除指定任务。
+    def remove_cron_job(self, job_id: str) -> bool:
+        """删除指定 cron job。
 
         参数:
-            task_id: 任务标识。
+            job_id: 目标 job 标识。
 
         返回:
             删除成功时返回 ``True``。
         """
-        return self.agent_loop.task_service.remove(task_id)
+        return self.agent_loop.remove_cron_job(job_id)
 
     def get_dream_log(self, sha: str | None = None) -> DreamLogResult:
         """查看最近一次或指定 Dream 版本差异。

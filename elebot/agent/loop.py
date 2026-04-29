@@ -22,16 +22,15 @@ from elebot.agent.memory import Consolidator, Dream, MemoryStore
 from elebot.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunner, AgentRunSpec
 from elebot.agent.skills import SkillRegistry
 from elebot.agent.tools.registry import ToolRegistry
-from elebot.agent.tools.task_tools import TASK_CONFIRM_YES
 from elebot.bus.events import InboundMessage, OutboundMessage
 from elebot.bus.queue import MessageBus
 from elebot.command import CommandContext, CommandRouter, register_builtin_commands
-from elebot.config.paths import GLOBAL_SKILLS_DIR
+from elebot.config.paths import GLOBAL_SKILLS_DIR, get_cron_store_path
 from elebot.config.schema import AgentDefaults
+from elebot.cron import CronJob, CronService
 from elebot.providers.base import LLMProvider
 from elebot.runtime.models import InterruptReason, InterruptResult
 from elebot.session.manager import Session, SessionManager
-from elebot.tasks.service import TaskService
 from elebot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
 from elebot.utils.text import image_placeholder_text, strip_think
 from elebot.utils.text import truncate_text as truncate_text_fn
@@ -184,6 +183,7 @@ class AgentLoop:
         provider_retry_mode: str = "standard",
         web_config: WebToolsConfig | None = None,
         exec_config: ExecToolConfig | None = None,
+        cron_service: CronService | None = None,
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
@@ -253,10 +253,10 @@ class AgentLoop:
         self._session_locks: dict[str, asyncio.Lock] = {}
         # 每个会话维护独立待注入队列，避免处理中途追问时再并发拉起新任务。
         self._pending_queues: dict[str, asyncio.Queue] = {}
-        self.task_service = TaskService(
-            self.bus,
-            poll_interval_seconds=10,
-            default_timezone=timezone or "Asia/Shanghai",
+        default_timezone = self.context.timezone or "Asia/Shanghai"
+        self.cron_service = cron_service or CronService(
+            get_cron_store_path(self.workspace),
+            default_timezone=default_timezone,
         )
         # 并发阈值允许通过环境变量覆盖，便于在低资源环境主动降载。
         _max = int(os.environ.get("NANOBOT_MAX_CONCURRENT_REQUESTS", "3"))
@@ -283,20 +283,19 @@ class AgentLoop:
             provider=provider,
             model=self.model,
         )
-        default_timezone = self.context.timezone or "Asia/Shanghai"
         register_default_tools(
             registry=self.tools,
             workspace=self.workspace,
             exec_config=self.exec_config,
             web_config=self.web_config,
             restrict_to_workspace=self.restrict_to_workspace,
-            session_manager=self.sessions,
-            task_service=self.task_service,
+            cron_service=self.cron_service,
             default_timezone=default_timezone,
             extra_allowed_dirs=[GLOBAL_SKILLS_DIR],
         )
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
+        self.cron_service.on_job = self._run_cron_job
 
     async def cancel_session_tasks(self, session_key: str) -> int:
         """取消指定会话下的活跃任务。
@@ -518,6 +517,77 @@ class AgentLoop:
 
         self._schedule_background(_run_dream())
 
+    def list_cron_jobs(self, include_disabled: bool = False) -> list[CronJob]:
+        """列出当前 cron jobs。
+
+        参数:
+            include_disabled: 是否包含已禁用 job。
+
+        返回:
+            当前 cron job 列表。
+        """
+        return self.cron_service.list_jobs(include_disabled=include_disabled)
+
+    def remove_cron_job(self, job_id: str) -> bool:
+        """删除指定 cron job。
+
+        参数:
+            job_id: 目标 job 标识。
+
+        返回:
+            删除成功时返回 ``True``。
+        """
+        return self.cron_service.remove_job(job_id)
+
+    async def _run_cron_job(self, job: CronJob) -> None:
+        """通过 agent 主链路执行一次已到点的 cron job。
+
+        参数:
+            job: 当前到点的 cron job。
+
+        返回:
+            无返回值。
+        """
+        from elebot.agent.tools.cron import CronTool
+
+        reminder_note = (
+            "[Scheduled Instruction]\n\n"
+            "这是一条已经到点的定时指令，不是用户刚刚发送的实时消息。\n"
+            f"任务名称：{job.name}\n"
+            f"定时指令：{job.payload.message}"
+        )
+
+        cron_tool = self.tools.get("cron")
+        cron_token = None
+        if isinstance(cron_tool, CronTool):
+            cron_token = cron_tool.set_cron_context(True)
+        try:
+            response = await self.process_direct(
+                reminder_note,
+                session_key=f"cron:{job.id}",
+                channel=job.payload.channel,
+                chat_id=job.payload.chat_id,
+            )
+        finally:
+            if isinstance(cron_tool, CronTool) and cron_token is not None:
+                cron_tool.reset_cron_context(cron_token)
+
+        if response is None or not response.content.strip():
+            return
+
+        metadata = dict(response.metadata or {})
+        metadata["_cron_job_id"] = job.id
+        await self.bus.publish_outbound(
+            OutboundMessage(
+                channel=job.payload.channel,
+                chat_id=job.payload.chat_id,
+                content=response.content,
+                reply_to=response.reply_to,
+                media=list(response.media),
+                metadata=metadata,
+            )
+        )
+
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
@@ -551,7 +621,15 @@ class AgentLoop:
         返回:
             无返回值。
         """
-        return None
+        for name in self.tools.tool_names:
+            tool = self.tools.get(name)
+            setter = getattr(tool, "set_context", None)
+            if not callable(setter):
+                continue
+            try:
+                setter(channel, chat_id, message_id)
+            except TypeError:
+                setter(channel, chat_id)
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -675,7 +753,7 @@ class AgentLoop:
         """
         self._running = True
         await self._connect_mcp()
-        self.task_service.start()
+        self.cron_service.start()
         logger.info("Agent loop started")
 
         while self._running:
@@ -701,17 +779,6 @@ class AgentLoop:
                     await self.bus.publish_outbound(result)
                 continue
             effective_key = self._effective_session_key(msg)
-            if msg.metadata.get("scheduled_trigger") and effective_key in self._pending_queues:
-                logger.info(
-                    "Delayed scheduled task {} for busy session {}",
-                    msg.metadata.get("task_id"),
-                    effective_key,
-                )
-                try:
-                    self.task_service.defer(msg.metadata.get("task_id"), reason="session_busy")
-                except Exception:
-                    logger.exception("Failed to defer scheduled task")
-                continue
             # 同会话已有活跃任务时，把新消息放入待注入队列，避免形成竞争执行。
             if effective_key in self._pending_queues:
                 pending_msg = msg
@@ -829,12 +896,6 @@ class AgentLoop:
                     )
                     session = self.sessions.get_or_create(session_key)
                     self._finalize_interrupted_turn(session, interrupt_state.reason)
-                    if msg.metadata.get("scheduled_trigger"):
-                        self.task_service.mark_finished(
-                            msg.metadata.get("task_id"),
-                            status="interrupted",
-                            error=None,
-                        )
                     await self.bus.publish_outbound(
                         self._build_interrupted_outbound(msg, interrupt_state.reason)
                     )
@@ -843,6 +904,7 @@ class AgentLoop:
                     await self.bus.publish_outbound(OutboundMessage(
                         channel=msg.channel, chat_id=msg.chat_id,
                         content="Sorry, I encountered an error.",
+                        metadata=dict(msg.metadata or {}),
                     ))
         finally:
             # 收尾时把残留待注入消息重新投回总线，避免消息在异常路径里丢失。
@@ -874,7 +936,7 @@ class AgentLoop:
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
             self._background_tasks.clear()
-        await self.task_service.stop()
+        await self.cron_service.stop()
         for name, stack in self._mcp_stacks.items():
             try:
                 await stack.aclose()
@@ -932,29 +994,7 @@ class AgentLoop:
                 session_key=key,
             )
 
-        if raw in TASK_CONFIRM_YES:
-            proposal = session.metadata.get("pending_task_proposal")
-            if isinstance(proposal, dict):
-                create_tool = self.tools.get("create_task")
-                if create_tool is not None:
-                    create_result = await create_tool.execute(**proposal)
-                    self._clear_interrupt_state(key)
-                    return DirectProcessResult(
-                        outbound=OutboundMessage(
-                            channel=msg.channel,
-                            chat_id=msg.chat_id,
-                            content=create_result,
-                            metadata=dict(msg.metadata or {}),
-                        ),
-                        final_content=create_result,
-                        stop_reason="task_confirmed",
-                        session_key=key,
-                    )
-
         await self.consolidator.maybe_consolidate_by_tokens(session)
-
-        if msg.metadata.get("scheduled_trigger"):
-            self.task_service.mark_running(msg.metadata.get("task_id"))
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
         self._record_explicit_skill_mentions(
@@ -1006,19 +1046,6 @@ class AgentLoop:
         self._clear_runtime_checkpoint(session)
         self.sessions.save(session)
         self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
-
-        if msg.metadata.get("scheduled_trigger"):
-            task_id = msg.metadata.get("task_id")
-            if stop_reason == "error":
-                status = "error"
-                error_text = final_content
-            elif stop_reason == "interrupted":
-                status = "interrupted"
-                error_text = None
-            else:
-                status = "ok"
-                error_text = None
-            self.task_service.mark_finished(task_id, status=status, error=error_text)
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)

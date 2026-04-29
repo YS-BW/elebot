@@ -10,7 +10,6 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
-from prompt_toolkit.output import create_output
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts.prompt import CompleteStyle
 
@@ -121,6 +120,8 @@ def init_prompt_session() -> None:
     """初始化带持久化历史的 prompt_toolkit 会话。"""
     global _PROMPT_SESSION, _SAVED_TERM_ATTRS
 
+    os.environ["PROMPT_TOOLKIT_NO_CPR"] = "1"
+
     try:
         import termios
 
@@ -132,11 +133,6 @@ def init_prompt_session() -> None:
 
     history_file = get_cli_history_path()
     history_file.parent.mkdir(parents=True, exist_ok=True)
-    prompt_output = create_output(always_prefer_tty=True)
-    if hasattr(prompt_output, "enable_cpr"):
-        # CPR 回包会落到 stdin；当前终端链路里它偶发会泄漏成 `[23;1R` 之类脏字符，
-        # 所以这里直接禁用 prompt_toolkit 的 cursor position report。
-        prompt_output.enable_cpr = False
 
     _PROMPT_SESSION = PromptSession(
         history=SafeFileHistory(str(history_file)),
@@ -145,7 +141,6 @@ def init_prompt_session() -> None:
         complete_style=CompleteStyle.COLUMN,
         enable_open_in_editor=False,
         multiline=False,
-        output=prompt_output,
     )
 
 
@@ -155,6 +150,7 @@ async def read_interactive_input_async() -> str:
         raise RuntimeError("Call init_prompt_session() first")
 
     try:
+        flush_pending_tty_input()
         with patch_stdout():
             return await _PROMPT_SESSION.prompt_async(
                 HTML("<b fg='ansiblue'>You:</b> "),

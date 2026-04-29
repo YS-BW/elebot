@@ -232,7 +232,7 @@ class TestCmdNewUnifiedSession:
         shared.add_message("assistant", "hi there")
         shared.metadata = {
             "runtime_checkpoint": {"phase": "tool"},
-            "pending_task_proposal": {"when": "tomorrow"},
+            "transient_state": {"when": "tomorrow"},
             "_last_summary": "old-summary",
         }
         sessions.save(shared)

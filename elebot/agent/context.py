@@ -76,7 +76,7 @@ class ContextBuilder:
                 f"- [{e['timestamp']}] {e['content']}" for e in capped
             ))
 
-        parts.append(render_template("agent/task_rules.md"))
+        parts.append(render_template("agent/cron_rules.md"))
 
         return "\n\n---\n\n".join(parts)
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
+import uuid
+from collections import deque
 from typing import Any, Callable
 
 from elebot import __logo__
@@ -94,7 +96,25 @@ async def run_interactive_loop(
     turn_done = asyncio.Event()
     turn_done.set()
     turn_response: list[tuple[str, dict[str, Any]]] = []
+    pending_notifications: deque[tuple[str, dict[str, Any]]] = deque()
     renderer: StreamRenderer | None = None
+    active_turn_id: str | None = None
+
+    async def _drain_pending_notifications() -> None:
+        """按顺序输出输入期间暂存的后台消息。"""
+        while pending_notifications:
+            content, metadata = pending_notifications.popleft()
+            await print_interactive_response(
+                content,
+                render_markdown=markdown,
+                metadata=metadata,
+            )
+
+    def _belongs_to_active_turn(metadata: dict[str, Any] | None) -> bool:
+        """判断一条 outbound 是否属于当前正在处理的交互轮次。"""
+        if active_turn_id is None:
+            return False
+        return (metadata or {}).get("_interactive_turn_id") == active_turn_id
 
     async def _consume_outbound() -> None:
         nonlocal renderer, thinking
@@ -102,34 +122,47 @@ async def run_interactive_loop(
         while True:
             try:
                 message = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+                metadata = dict(message.metadata or {})
+                belongs_to_active_turn = _belongs_to_active_turn(metadata)
 
-                if message.metadata.get("_stream_delta"):
-                    if renderer:
+                if metadata.get("_stream_delta"):
+                    if renderer and belongs_to_active_turn:
                         await renderer.on_delta(message.content)
                     continue
-                if message.metadata.get("_stream_end"):
-                    if renderer:
-                        await renderer.on_end(
-                            resuming=message.metadata.get("_resuming", False),
+                if metadata.get("_stream_end"):
+                    if renderer and belongs_to_active_turn:
+                        preamble_lines = await renderer.on_end(
+                            resuming=metadata.get("_resuming", False),
                         )
+                        if preamble_lines:
+                            for line in preamble_lines:
+                                await print_interactive_progress_line(line, thinking)
                     continue
-                if message.metadata.get("_streamed"):
-                    turn_done.set()
+                if metadata.get("_streamed"):
+                    if belongs_to_active_turn:
+                        turn_done.set()
                     continue
 
-                if message.metadata.get("_progress"):
-                    await print_interactive_progress_line(message.content, thinking)
+                if metadata.get("_progress"):
+                    if belongs_to_active_turn:
+                        await print_interactive_progress_line(message.content, thinking)
+                    elif active_turn_id is not None:
+                        pending_notifications.append((message.content, metadata))
+                    elif message.content:
+                        await print_interactive_progress_line(message.content, thinking)
                     continue
 
-                if not turn_done.is_set():
+                if belongs_to_active_turn and not turn_done.is_set():
                     if message.content:
-                        turn_response.append((message.content, dict(message.metadata or {})))
+                        turn_response.append((message.content, metadata))
                     turn_done.set()
+                elif active_turn_id is not None and message.content:
+                    pending_notifications.append((message.content, metadata))
                 elif message.content:
                     await print_interactive_response(
                         message.content,
                         render_markdown=markdown,
-                        metadata=message.metadata,
+                        metadata=metadata,
                     )
 
             except asyncio.TimeoutError:
@@ -147,16 +180,19 @@ async def run_interactive_loop(
                     renderer.stop_for_input()
                 user_input = await read_interactive_input_async()
                 command = user_input.strip()
-                if not command:
-                    continue
 
                 if is_exit_command(command):
                     restore_terminal()
                     console.print("\nGoodbye!")
                     break
 
+                await _drain_pending_notifications()
+                if not command:
+                    continue
+
                 turn_done.clear()
                 turn_response.clear()
+                active_turn_id = uuid.uuid4().hex
                 renderer = renderer_factory(render_markdown=markdown)
                 thinking = renderer.spinner
 
@@ -166,7 +202,10 @@ async def run_interactive_loop(
                         sender_id="user",
                         chat_id=cli_chat_id,
                         content=user_input,
-                        metadata={"_wants_stream": True},
+                        metadata={
+                            "_wants_stream": True,
+                            "_interactive_turn_id": active_turn_id,
+                        },
                     )
                 )
 
@@ -233,6 +272,8 @@ async def run_interactive_loop(
                         )
                 elif renderer and not renderer.streamed:
                     await renderer.close()
+                active_turn_id = None
+                await _drain_pending_notifications()
                 thinking = renderer.spinner if renderer else None
             except KeyboardInterrupt:
                 restore_terminal()

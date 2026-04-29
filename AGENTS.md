@@ -18,7 +18,7 @@ EleBot 当前是一个 nanobot 风格的终端 AI 助手项目。
 - `providers` 负责 LLM 抽象
 - `tools` 负责工具调用闭环
 - `skills` 负责 prompt 驱动的全局技能
-- `tasks` 负责应用内定时任务
+- `cron` 负责应用内调度
 
 当前阶段的核心目标不是扩新功能，而是把已有主链路做清楚、做扎实、做成可维护的基座。
 
@@ -54,7 +54,7 @@ EleBot 当前是一个 nanobot 风格的终端 AI 助手项目。
 - `bus`
 - `utils`
 - `templates`
-- `tasks`
+- `cron`
 - `agent/skills`
 - 最小工具调用闭环
 
@@ -64,7 +64,6 @@ EleBot 当前是一个 nanobot 风格的终端 AI 助手项目。
 
 - `channels`
 - `api`
-- `cron`
 - `heartbeat`
 - `security`
 - `bridge`
@@ -83,7 +82,7 @@ EleBot 当前是一个 nanobot 风格的终端 AI 助手项目。
 - 会话持久化
 - 工作区启动模板加载
 - 全局 `skills` 扫描与 prompt 注入
-- `tasks` 的自然语言创建、确认后落盘、后台轮询、系统消息触发
+- `cron` 工具驱动的应用内调度、后台轮询、到点执行
 - 文档化的模块教程
 
 按当前代码事实，项目还没有：
@@ -114,8 +113,8 @@ EleBot 当前是一个 nanobot 风格的终端 AI 助手项目。
   - slash 命令路由与内置命令
 - `elebot/config/`
   - 配置模型、路径和加载逻辑
-- `elebot/tasks/`
-  - 应用内任务模型、存储、调度、触发
+- `elebot/cron/`
+  - 应用内调度模型、存储、调度、触发
 - `elebot/utils/`
   - 通用工具函数、消息辅助、模板辅助
 - `elebot/templates/`
@@ -135,7 +134,7 @@ EleBot 当前是一个 nanobot 风格的终端 AI 助手项目。
 ### Tests
 
 - `tests/`
-  - 当前主链路、provider、tools、tasks、session 等测试
+  - 当前主链路、provider、tools、cron、session 等测试
 
 ## Reading Order
 
@@ -177,7 +176,6 @@ EleBot 默认运行目录：
 ~/.elebot/config.json
 ~/.elebot/workspace
 ~/.elebot/sessions
-~/.elebot/tasks/tasks.json
 ~/.elebot/skills
 ```
 
@@ -189,10 +187,30 @@ EleBot 默认运行目录：
   - agent 运行工作区
 - `sessions`
   - 会话历史
-- `tasks/tasks.json`
-  - 定时任务
+- `workspace/cron/jobs.json`
+  - cron 调度状态
 - `skills`
   - 全局 skills
+
+### Branch Switch Cleanup Rule
+
+每次切换 Git 分支后，都要先清理运行态目录，再继续测试或开发。
+
+固定清理范围：
+
+- `~/.elebot/workspace`
+- `~/.elebot/skills`
+
+固定保留范围：
+
+- `~/.elebot/config.json`
+- `~/.elebot/site-auth`
+- 其它未明确要求删除的认证或配置文件
+
+目的：
+
+- 避免不同分支复用旧工作区、旧 cron 状态、旧 skills 状态
+- 避免把上一个分支的运行结果误判成当前代码事实
 
 ## Build
 
@@ -261,7 +279,7 @@ uv run python -m pytest -q
 ```bash
 uv run python -m pytest tests/agent -q
 uv run python -m pytest tests/providers -q
-uv run python -m pytest tests/tasks -q
+uv run python -m pytest tests/cron -q
 uv run python -m pytest tests/tools -q
 uv run python -m pytest tests/command -q
 ```
@@ -311,16 +329,16 @@ OutboundMessage
 CLI 渲染
 ```
 
-如果是任务触发，则链路是：
+如果是 cron 触发，则链路是：
 
 ```text
-tasks.json
+workspace/cron/jobs.json
   ↓
-TaskService
+CronService
   ↓
-Bus.publish_inbound()
+AgentLoop._run_cron_job()
   ↓
-AgentLoop
+agent.process_direct(...)
 ```
 
 如果是 skill，则当前实现是：
@@ -356,22 +374,22 @@ ContextBuilder 注入 metadata
 - 热重载
 - skill 自动沉淀机制
 
-## Tasks
+## Cron
 
-当前 task 机制已经接入主链路，但仍然是应用内调度，不是系统级调度。
+当前 `cron` 机制已经接入主链路，但仍然是应用内调度，不是系统级调度。
 
 当前事实：
 
-- 任务文件在 `~/.elebot/tasks/tasks.json`
-- `TaskService` 每 10 秒轮询一次
-- 只有 `elebot agent` 运行时，任务才会触发
-- 任务触发后转成一条 `InboundMessage`
-- 再由 `AgentLoop` 按普通消息链路处理
+- 调度文件在 `~/.elebot/workspace/cron/jobs.json`
+- `CronService` 负责后台轮询和到点执行
+- 只有 `elebot agent` 运行时，cron job 才会触发
+- 模型侧只暴露一个调度工具：`cron`
+- cron 到点后会回到 `AgentLoop.process_direct(...)` 跑一次独立执行
 
 当前没有：
 
+- `heartbeat`
 - `launchd`
-- `cron`
 - Windows Task Scheduler
 - 系统通知中心
 - 后台 daemon
@@ -439,7 +457,7 @@ ContextBuilder 注入 metadata
 
 - 改 provider，先跑 `tests/providers`
 - 改 agent，先跑 `tests/agent`
-- 改 tasks，先跑 `tests/tasks`、`tests/tools/test_task_tools.py`、`tests/command/test_builtin_tasks.py`
+- 改 cron，先跑 `tests/cron`、`tests/tools/test_cron_tool.py`、`tests/cli/test_runtime.py`
 - 改命令，先跑 `tests/command`
 
 ## Working Rules

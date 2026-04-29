@@ -58,7 +58,6 @@ def print_agent_response(
     terminal_console = make_console()
     content = response or ""
     body = response_renderable(content, render_markdown, metadata)
-    terminal_console.print()
     terminal_console.print(f"[cyan]{__logo__} elebot[/cyan]")
     terminal_console.print(body)
     terminal_console.print()
@@ -85,7 +84,6 @@ async def print_interactive_response(
         content = response or ""
         ansi = render_interactive_ansi(
             lambda ansi_console: (
-                ansi_console.print(),
                 ansi_console.print(f"[cyan]{__logo__} elebot[/cyan]"),
                 ansi_console.print(response_renderable(content, render_markdown, metadata)),
                 ansi_console.print(),

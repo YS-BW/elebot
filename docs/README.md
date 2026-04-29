@@ -12,7 +12,7 @@
 6. [CONTEXT](./CONTEXT.md)
 7. [SESSION](./SESSION.md)
 8. [MEMORY](./MEMORY.md)
-9. [TASKS](./TASKS.md)
+9. [CRON](./CRON.md)
 10. [PROVIDERS](./PROVIDERS.md)
 11. [TOOLS](./TOOLS.md)
 12. [BUS](./BUS.md)
@@ -45,11 +45,12 @@ CLI 渲染
 
 - `runtime` 是多入口复用底座，不再经过 `facade`
 - CLI 只保留 `onboard`、`agent`、`status` 三个根命令
-- slash 命令由 `command` 模块负责协议和 handler 组织，但底层业务 owner 仍在 `AgentLoop`、`TaskService`、`MemoryStore`
+- slash 命令由 `command` 模块负责协议和 handler 组织，但底层业务 owner 仍在 `AgentLoop`、`CronService`、`MemoryStore`
 - provider 解析入口在 `providers/resolution.py`
 - provider 实例化入口在 `providers/factory.py`
 - 模型建议与推荐上下文窗口入口在 `providers/model_catalog.py`
 - `history.jsonl` 是当前唯一历史文件，`HISTORY.md` 已不属于当前实现
+- 旧 `tasks` 模块已经移除，当前唯一调度 owner 是 `CronService`
 
 源码总入口：
 

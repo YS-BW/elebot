@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import importlib.util
 import os
+import re
 import secrets
 import string
 import uuid
@@ -49,6 +51,20 @@ _DEFAULT_OPENROUTER_HEADERS = {
     "X-OpenRouter-Title": "elebot",
     "X-OpenRouter-Categories": "cli-agent,personal-agent",
 }
+_PSEUDO_TOOL_CALL_BLOCK_RE = re.compile(
+    r"<tool_call>\s*(.*?)\s*</tool_call>",
+    re.IGNORECASE | re.DOTALL,
+)
+_PSEUDO_FUNCTION_RE = re.compile(
+    r"<function=([A-Za-z0-9_.:-]+)>\s*(.*?)\s*</function>",
+    re.IGNORECASE | re.DOTALL,
+)
+_PSEUDO_PARAMETER_RE = re.compile(
+    r"<parameter=([A-Za-z0-9_.:-]+)>(.*?)</parameter>",
+    re.IGNORECASE | re.DOTALL,
+)
+_INT_RE = re.compile(r"^[+-]?\d+$")
+_FLOAT_RE = re.compile(r"^[+-]?(?:\d+\.\d*|\d*\.\d+)$")
 
 
 def _short_tool_id() -> str:
@@ -579,6 +595,114 @@ class OpenAICompatProvider(LLMProvider):
                 current = getattr(current, segment, None)
         return int(current or 0) if current is not None else 0
 
+    @staticmethod
+    def _coerce_pseudo_parameter_value(raw_value: str) -> Any:
+        """把伪工具调用里的参数文本转成更贴近真实工具入参的值。"""
+        text = html.unescape(raw_value.strip())
+        if text.startswith("<![CDATA[") and text.endswith("]]>"):
+            text = text[9:-3]
+        lowered = text.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        if lowered == "null":
+            return None
+        if _INT_RE.fullmatch(text):
+            try:
+                return int(text)
+            except ValueError:
+                return text
+        if _FLOAT_RE.fullmatch(text):
+            try:
+                return float(text)
+            except ValueError:
+                return text
+        if text[:1] in {'{', '[', '"'}:
+            try:
+                return json_repair.loads(text)
+            except Exception:
+                return text
+        return text
+
+    @staticmethod
+    def _normalize_tool_arguments(
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """收口已知兼容模型的参数别名，避免 tool owner 看到漂移字段。"""
+        normalized = dict(arguments)
+        if tool_name == "cron":
+            job_payload = normalized.pop("job", None)
+            if isinstance(job_payload, dict):
+                for key in ("name", "at", "every_seconds", "cron_expr", "tz", "job_id"):
+                    value = job_payload.get(key)
+                    if key not in normalized and value not in (None, ""):
+                        normalized[key] = value
+                nested_payload = job_payload.get("payload")
+                if isinstance(nested_payload, dict) and "instruction" not in normalized:
+                    for alias in ("instruction", "message", "prompt", "command"):
+                        value = nested_payload.get(alias)
+                        if isinstance(value, str) and value.strip():
+                            normalized["instruction"] = value.strip()
+                            break
+            legacy_instruction = None
+            for alias in ("message", "prompt", "command"):
+                value = normalized.pop(alias, None)
+                if legacy_instruction is None and isinstance(value, str) and value.strip():
+                    legacy_instruction = value.strip()
+            if "instruction" not in normalized and legacy_instruction:
+                normalized["instruction"] = legacy_instruction
+        return normalized
+
+    @classmethod
+    def _extract_pseudo_tool_calls(
+        cls,
+        content: str | None,
+    ) -> tuple[str | None, list[ToolCallRequest]]:
+        """把某些兼容模型输出的伪 XML 工具调用文本恢复成结构化 tool_calls。"""
+        if not isinstance(content, str) or "<tool_call>" not in content.lower():
+            return content, []
+
+        tool_calls: list[ToolCallRequest] = []
+        spans: list[tuple[int, int]] = []
+        for block in _PSEUDO_TOOL_CALL_BLOCK_RE.finditer(content):
+            function_match = _PSEUDO_FUNCTION_RE.search(block.group(1))
+            if function_match is None:
+                continue
+
+            tool_name = function_match.group(1).strip()
+            if not tool_name:
+                continue
+
+            arguments: dict[str, Any] = {}
+            for param in _PSEUDO_PARAMETER_RE.finditer(function_match.group(2)):
+                key = param.group(1).strip()
+                if not key:
+                    continue
+                arguments[key] = cls._coerce_pseudo_parameter_value(param.group(2))
+
+            tool_calls.append(
+                ToolCallRequest(
+                    id=_short_tool_id(),
+                    name=tool_name,
+                    arguments=cls._normalize_tool_arguments(tool_name, arguments),
+                )
+            )
+            spans.append(block.span())
+
+        if not tool_calls:
+            return content, []
+
+        visible_parts: list[str] = []
+        last_end = 0
+        for start, end in spans:
+            visible_parts.append(content[last_end:start])
+            last_end = end
+        visible_parts.append(content[last_end:])
+        visible_content = "".join(visible_parts).strip() or None
+        return visible_content, tool_calls
+
     def _parse(self, response: Any) -> LLMResponse:
         if isinstance(response, str):
             return LLMResponse(content=response, finish_reason="stop")
@@ -638,11 +762,17 @@ class OpenAICompatProvider(LLMProvider):
                 parsed_tool_calls.append(ToolCallRequest(
                     id=_short_tool_id(),
                     name=str(fn.get("name") or ""),
-                    arguments=args if isinstance(args, dict) else {},
+                    arguments=self._normalize_tool_arguments(
+                        str(fn.get("name") or ""),
+                        args if isinstance(args, dict) else {},
+                    ),
                     extra_content=ec,
                     provider_specific_fields=prov,
                     function_provider_specific_fields=fn_prov,
                 ))
+
+            if not parsed_tool_calls:
+                content, parsed_tool_calls = self._extract_pseudo_tool_calls(content)
 
             return LLMResponse(
                 content=content,
@@ -681,7 +811,10 @@ class OpenAICompatProvider(LLMProvider):
             tool_calls.append(ToolCallRequest(
                 id=_short_tool_id(),
                 name=tc.function.name,
-                arguments=args,
+                arguments=self._normalize_tool_arguments(
+                    tc.function.name,
+                    args if isinstance(args, dict) else {},
+                ),
                 extra_content=ec,
                 provider_specific_fields=prov,
                 function_provider_specific_fields=fn_prov,
@@ -690,6 +823,9 @@ class OpenAICompatProvider(LLMProvider):
         reasoning_content = getattr(msg, "reasoning_content", None) or None
         if not reasoning_content and getattr(msg, "reasoning", None):
             reasoning_content = msg.reasoning
+
+        if not tool_calls:
+            content, tool_calls = self._extract_pseudo_tool_calls(content)
 
         return LLMResponse(
             content=content,
@@ -784,19 +920,27 @@ class OpenAICompatProvider(LLMProvider):
             for tc in (delta.tool_calls or []) if delta else []:
                 _accum_tc(tc, getattr(tc, "index", 0))
 
-        return LLMResponse(
-            content="".join(content_parts) or None,
-            tool_calls=[
+        parsed_tool_calls = [
                 ToolCallRequest(
                     id=b["id"] or _short_tool_id(),
                     name=b["name"],
-                    arguments=json_repair.loads(b["arguments"]) if b["arguments"] else {},
+                    arguments=cls._normalize_tool_arguments(
+                        b["name"],
+                        json_repair.loads(b["arguments"]) if b["arguments"] else {},
+                    ),
                     extra_content=b.get("extra_content"),
                     provider_specific_fields=b.get("prov"),
                     function_provider_specific_fields=b.get("fn_prov"),
                 )
                 for b in tc_bufs.values()
-            ],
+            ]
+        content = "".join(content_parts) or None
+        if not parsed_tool_calls:
+            content, parsed_tool_calls = cls._extract_pseudo_tool_calls(content)
+
+        return LLMResponse(
+            content=content,
+            tool_calls=parsed_tool_calls,
             finish_reason=finish_reason,
             usage=usage,
             reasoning_content="".join(reasoning_parts) or None,
