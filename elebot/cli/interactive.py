@@ -187,7 +187,12 @@ async def run_interactive_loop(
                             if turn_done_task in done:
                                 break
                             if interrupt_task is not None and interrupt_task in done:
-                                interrupt_task.result()
+                                interrupted = interrupt_task.result()
+                                if not interrupted:
+                                    interrupt_task = None
+                                    watcher.close()
+                                    await turn_done.wait()
+                                    break
                                 interrupt_result = interrupt_session(
                                     session_id,
                                     "user_interrupt",

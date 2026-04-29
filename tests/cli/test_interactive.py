@@ -43,6 +43,11 @@ class _FakeBus:
         return await self._outbound.get()
 
 
+class _ManualBus(_FakeBus):
+    async def publish_inbound(self, message) -> None:
+        self.inbound_messages.append(message)
+
+
 class _FakeAgentLoop:
     def __init__(self) -> None:
         self.channels_config = None
@@ -69,14 +74,24 @@ class _FakeInterruptWatcher:
         self._trigger = trigger
         self.closed = False
 
-    async def wait(self) -> None:
+    async def wait(self) -> bool:
         if self._trigger:
-            await asyncio.sleep(0)
-            return
+            await asyncio.sleep(0.01)
+            return True
         await asyncio.sleep(60)
+        return False
 
     def close(self) -> None:
         self.closed = True
+
+
+class _UnsupportedInterruptWatcher:
+    async def wait(self) -> bool:
+        await asyncio.sleep(0)
+        return False
+
+    def close(self) -> None:
+        pass
 
 
 class _FakeRenderer:
@@ -185,7 +200,7 @@ async def test_run_interactive_loop_can_skip_agent_lifecycle_management(monkeypa
 
 @pytest.mark.asyncio
 async def test_run_interactive_loop_esc_interrupts_active_turn(monkeypatch):
-    bus = _FakeBus()
+    bus = _ManualBus()
     agent_loop = _FakeAgentLoop()
     restore_terminal = MagicMock()
     print_agent_response = MagicMock()
@@ -207,6 +222,14 @@ async def test_run_interactive_loop_esc_interrupts_active_turn(monkeypatch):
 
     def _interrupt(session_id: str, reason: str):
         interrupt_calls.append((session_id, reason))
+        bus._outbound.put_nowait(
+            OutboundMessage(
+                channel="cli",
+                chat_id="test",
+                content="已中断当前回复。",
+                metadata={"_interrupted": True},
+            )
+        )
         return _FakeInterruptResult(accepted=True)
 
     await interactive.run_interactive_loop(
@@ -256,6 +279,52 @@ async def test_run_interactive_loop_ignores_interrupt_without_watcher(monkeypatc
         renderer_factory=_FakeRenderer,
         interrupt_session=_interrupt,
         interrupt_watcher_factory=lambda: None,
+    )
+
+    assert interrupt_calls == []
+    restore_terminal.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_interactive_loop_ignores_watcher_without_confirmed_escape(monkeypatch):
+    bus = _FakeBus()
+    agent_loop = _FakeAgentLoop()
+    restore_terminal = MagicMock()
+    interrupt_calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr("elebot.cli.interactive.init_prompt_session", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive._install_signal_handlers", lambda: None)
+    monkeypatch.setattr(
+        "elebot.cli.interactive.read_interactive_input_async",
+        AsyncMock(side_effect=["hello", "exit"]),
+    )
+    monkeypatch.setattr("elebot.cli.interactive.flush_pending_tty_input", lambda: None)
+    monkeypatch.setattr("elebot.cli.interactive.restore_terminal", restore_terminal)
+    monkeypatch.setattr("elebot.cli.interactive.print_agent_response", MagicMock())
+    monkeypatch.setattr("elebot.cli.interactive.print_interactive_response", AsyncMock())
+    monkeypatch.setattr("elebot.cli.interactive.print_interactive_progress_line", AsyncMock())
+    monkeypatch.setattr("elebot.cli.interactive.console.print", lambda *_args, **_kwargs: None)
+
+    def _interrupt(session_id: str, reason: str):
+        interrupt_calls.append((session_id, reason))
+        bus._outbound.put_nowait(
+            OutboundMessage(
+                channel="cli",
+                chat_id="test",
+                content="已中断当前回复。",
+                metadata={"_interrupted": True},
+            )
+        )
+        return _FakeInterruptResult(accepted=True)
+
+    await interactive.run_interactive_loop(
+        agent_loop=agent_loop,
+        bus=bus,
+        session_id="cli:test",
+        markdown=True,
+        renderer_factory=_FakeRenderer,
+        interrupt_session=_interrupt,
+        interrupt_watcher_factory=_UnsupportedInterruptWatcher,
     )
 
     assert interrupt_calls == []

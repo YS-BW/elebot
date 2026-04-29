@@ -255,16 +255,16 @@ class EscInterruptWatcher:
         self._sequence_timeout = sequence_timeout
         self._closed = threading.Event()
 
-    async def wait(self) -> None:
+    async def wait(self) -> bool:
         """等待用户按下真实的 `Esc` 中断键。
 
         参数:
             无。
 
         返回:
-            在探测到真实的 `Esc` 中断后返回。
+            探测到真实 `Esc` 时返回 ``True``；监听不可用或被关闭时返回 ``False``。
         """
-        await asyncio.to_thread(self._wait_blocking)
+        return await asyncio.to_thread(self._wait_blocking)
 
     def close(self) -> None:
         """请求停止监听器。
@@ -368,11 +368,11 @@ class EscInterruptWatcher:
         """
         return os.read(stdin_fd, 1)
 
-    def _wait_blocking(self) -> None:
+    def _wait_blocking(self) -> bool:
         """在阻塞终端读取循环里等待真实的 `Esc` 中断。"""
         stdin_fd = self._get_stdin_fd()
         if stdin_fd is None or not self._is_tty(stdin_fd):
-            return
+            return False
 
         original_attrs: Any | None = None
         try:
@@ -382,7 +382,7 @@ class EscInterruptWatcher:
                     continue
                 chunk = self._read_byte(stdin_fd)
                 if not chunk:
-                    return
+                    return False
                 if chunk != b"\x1b":
                     continue
                 if _is_standalone_escape(
@@ -391,9 +391,10 @@ class EscInterruptWatcher:
                     is_closed=self._closed.is_set,
                     sequence_timeout=self._sequence_timeout,
                 ):
-                    return
+                    return True
+            return False
         except Exception:
-            return
+            return False
         finally:
             self._restore_terminal_mode(stdin_fd, original_attrs)
 

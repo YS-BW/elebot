@@ -268,6 +268,7 @@ utils         = 低层通用小工具
 
 - `EscInterruptWatcher` 不再把首个 `ESC` 字节直接当成中断
 - 当前实现会先区分“孤立 Esc”与终端控制序列
+- `EscInterruptWatcher.wait()` 只有确认真实 `Esc` 时才返回中断成功，终端监听不可用或异常退出时不会误触发 interrupt
 - `ESC [ 38 ; 1 R` 这类 CPR/ANSI 回复会被完整消费，不再把 `[38;1R` 残留到下一次输入
 - 方向键、功能键等常见 escape sequence 不再误判成中断
 - `PromptSession` 的 output 已显式禁用 CPR，避免普通对话轮次把 `[23;1R` 这类终端回包漏成伪输入

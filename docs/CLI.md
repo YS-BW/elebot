@@ -11,8 +11,8 @@
 - [elebot/cli/commands/status.py](../elebot/cli/commands/status.py#L11-L60)
 - [elebot/cli/history.py](../elebot/cli/history.py#L120-L149)
 - [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L109)
-- [elebot/cli/interactive.py](../elebot/cli/interactive.py#L52-L254)
-- [elebot/cli/keys.py](../elebot/cli/keys.py#L17-L416)
+- [elebot/cli/interactive.py](../elebot/cli/interactive.py#L52-L259)
+- [elebot/cli/keys.py](../elebot/cli/keys.py#L17-L417)
 - [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L352)
 
 ## 1. CLI 现在保留哪些命令
@@ -114,6 +114,7 @@ CLI 会调用 `runtime.run_interactive(...)`，对应 [elebot/runtime/app.py](..
   - 只在活跃回复期间生效
   - 会中断当前这一轮回复或工具执行
   - 只有“孤立的 Esc”才会触发中断
+  - 只有监听器确认读到了真实 `Esc` 才会调用 interrupt；终端能力不可用时会跳过中断
   - 终端回复的控制序列会被完整消费，不会把 `[38;1R`、`??` 这类残留带进下一次输入
 - 等待输入时按 `Esc`
   - 不会触发中断

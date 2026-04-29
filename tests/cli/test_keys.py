@@ -38,7 +38,8 @@ class _TestWatcher(EscInterruptWatcher):
         return object()
 
     def _restore_terminal_mode(self, stdin_fd: int, original_attrs: object | None) -> None:
-        self.restored = True
+        if original_attrs is not None:
+            self.restored = True
 
     def _wait_for_input(self, stdin_fd: int, timeout: float) -> bool:
         if self._closed.is_set():
@@ -48,6 +49,11 @@ class _TestWatcher(EscInterruptWatcher):
 
     def _read_byte(self, stdin_fd: int) -> bytes:
         return b""
+
+
+class _BrokenTerminalWatcher(_TestWatcher):
+    def _enter_cbreak_mode(self, stdin_fd: int) -> object:
+        raise RuntimeError("unsupported terminal")
 
 
 def test_isolated_escape_triggers_interrupt() -> None:
@@ -112,6 +118,17 @@ async def test_watcher_wait_exits_cleanly_after_close() -> None:
 
     await asyncio.sleep(0.01)
     watcher.close()
-    await asyncio.wait_for(wait_task, timeout=0.2)
+    interrupted = await asyncio.wait_for(wait_task, timeout=0.2)
 
+    assert interrupted is False
     assert watcher.restored is True
+
+
+@pytest.mark.asyncio
+async def test_watcher_wait_reports_false_when_terminal_mode_is_unsupported() -> None:
+    watcher = _BrokenTerminalWatcher()
+
+    interrupted = await watcher.wait()
+
+    assert interrupted is False
+    assert watcher.restored is False
