@@ -15,7 +15,7 @@ from elebot.providers.factory import build_provider
 from elebot.runtime import ElebotRuntime
 
 
-def _make_provider(config: Config):
+def _make_provider(config: Config, *, silent: bool = False):
     """根据当前配置实例化对应的 LLM 提供方。
 
     参数:
@@ -27,17 +27,25 @@ def _make_provider(config: Config):
     try:
         return build_provider(config)
     except ValueError as exc:
-        console.print(f"[red]Error: {exc}[/red]")
+        if not silent:
+            console.print(f"[red]Error: {exc}[/red]")
         text = str(exc)
         if "No API key configured" in text:
-            console.print("Set one in ~/.elebot/config.json under providers section")
+            if not silent:
+                console.print("Set one in ~/.elebot/config.json under providers section")
         if "Azure OpenAI requires" in text:
-            console.print("Set them in ~/.elebot/config.json under providers.azure_openai section")
-            console.print("Use the model field to specify the deployment name.")
+            if not silent:
+                console.print("Set them in ~/.elebot/config.json under providers.azure_openai section")
+                console.print("Use the model field to specify the deployment name.")
         raise typer.Exit(1) from exc
 
 
-def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
+def _load_runtime_config(
+    config: str | None = None,
+    workspace: str | None = None,
+    *,
+    silent: bool = False,
+) -> Config:
     """加载运行时配置，并按需覆盖当前工作区。
 
     参数:
@@ -53,23 +61,26 @@ def _load_runtime_config(config: str | None = None, workspace: str | None = None
     if config:
         config_path = Path(config).expanduser().resolve()
         if not config_path.exists():
-            console.print(f"[red]Error: Config file not found: {config_path}[/red]")
+            if not silent:
+                console.print(f"[red]Error: Config file not found: {config_path}[/red]")
             raise typer.Exit(1)
         set_config_path(config_path)
-        console.print(f"[dim]Using config: {config_path}[/dim]")
+        if not silent:
+            console.print(f"[dim]Using config: {config_path}[/dim]")
 
     try:
         loaded = resolve_config_env_vars(load_config(config_path))
     except ValueError as exc:
-        console.print(f"[red]Error: {exc}[/red]")
+        if not silent:
+            console.print(f"[red]Error: {exc}[/red]")
         raise typer.Exit(1)
-    _warn_deprecated_config_keys(config_path)
+    _warn_deprecated_config_keys(config_path, silent=silent)
     if workspace:
         loaded.agents.defaults.workspace = workspace
     return loaded
 
 
-def _make_runtime(config: Config) -> ElebotRuntime:
+def _make_runtime(config: Config, *, silent: bool = False):
     """根据当前配置装配一份 CLI 复用的 runtime。
 
     参数:
@@ -78,15 +89,17 @@ def _make_runtime(config: Config) -> ElebotRuntime:
     返回:
         供 CLI 启动或单次调用的 runtime 实例。
     """
+    provider_builder = _make_provider if not silent else lambda cfg: _make_provider(cfg, silent=True)
+
     return ElebotRuntime.from_config(
         config,
-        provider_builder=_make_provider,
+        provider_builder=provider_builder,
         bus_factory=MessageBus,
         agent_loop_factory=AgentLoop,
     )
 
 
-def _warn_deprecated_config_keys(config_path: Path | None) -> None:
+def _warn_deprecated_config_keys(config_path: Path | None, *, silent: bool = False) -> None:
     """提示用户移除已经废弃的配置键。
 
     参数:
@@ -103,7 +116,8 @@ def _warn_deprecated_config_keys(config_path: Path | None) -> None:
     except Exception:
         return
     if "memoryWindow" in raw.get("agents", {}).get("defaults", {}):
-        console.print(
-            "[dim]Hint: `memoryWindow` in your config is no longer used "
-            "and can be safely removed.[/dim]"
-        )
+        if not silent:
+            console.print(
+                "[dim]Hint: `memoryWindow` in your config is no longer used "
+                "and can be safely removed.[/dim]"
+            )

@@ -205,15 +205,21 @@ def test_stream_renderer_stop_for_input_stops_spinner():
         spinner.stop.assert_called_once()
 
 
-def test_stream_renderer_exposes_spinner_property():
+@pytest.mark.asyncio
+async def test_stream_renderer_tool_transition_reuses_same_spinner_instance():
     spinner = MagicMock()
     mock_console = MagicMock()
     mock_console.status.return_value = spinner
 
     with patch.object(stream_mod, "_make_console", return_value=mock_console):
         renderer = stream_mod.StreamRenderer(show_spinner=True)
+        await renderer.on_tool_transition('cron_create("提醒我看书")')
 
-    assert renderer.spinner is not None
+    assert spinner.method_calls == [
+        call.start(),
+        call.stop(),
+        call.start(),
+    ]
 
 
 @pytest.mark.asyncio

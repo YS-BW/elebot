@@ -1016,8 +1016,10 @@ class AgentLoop:
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
             meta = dict(msg.metadata or {})
-            meta["_progress"] = True
-            meta["_tool_hint"] = tool_hint
+            if tool_hint:
+                meta["_tool_transition"] = True
+            else:
+                meta["_progress"] = True
             await self.bus.publish_outbound(
                 OutboundMessage(
                     channel=msg.channel,
@@ -1410,11 +1412,47 @@ class AgentLoop:
     ) -> DirectProcessResult:
         """直接处理一条消息，并返回完整执行结果。"""
         await self._connect_mcp()
-        msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content)
-        return await self._process_message_result(
-            msg,
-            session_key=session_key,
-            on_progress=on_progress,
-            on_stream=on_stream,
-            on_stream_end=on_stream_end,
+        normalized_key = self._normalize_control_session_key(session_key)
+        msg = InboundMessage(
+            channel=channel,
+            sender_id="user",
+            chat_id=chat_id,
+            content=content,
+            session_key_override=normalized_key,
         )
+        lock = self._session_locks.setdefault(normalized_key, asyncio.Lock())
+        gate = self._concurrency_gate or nullcontext()
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._active_tasks.setdefault(normalized_key, []).append(current_task)
+        try:
+            async with lock, gate:
+                try:
+                    return await self._process_message_result(
+                        msg,
+                        session_key=normalized_key,
+                        on_progress=on_progress,
+                        on_stream=on_stream,
+                        on_stream_end=on_stream_end,
+                    )
+                except asyncio.CancelledError:
+                    interrupt_state = self._consume_interrupt_state(normalized_key)
+                    if interrupt_state is None:
+                        raise
+                    session = self.sessions.get_or_create(normalized_key)
+                    self._finalize_interrupted_turn(session, interrupt_state.reason)
+                    outbound = self._build_interrupted_outbound(msg, interrupt_state.reason)
+                    return DirectProcessResult(
+                        outbound=outbound,
+                        final_content=outbound.content,
+                        stop_reason="interrupted",
+                        session_key=normalized_key,
+                        interrupt_reason=interrupt_state.reason,
+                    )
+        finally:
+            if current_task is not None:
+                tasks = self._active_tasks.get(normalized_key, [])
+                if current_task in tasks:
+                    tasks.remove(current_task)
+                if not tasks:
+                    self._active_tasks.pop(normalized_key, None)

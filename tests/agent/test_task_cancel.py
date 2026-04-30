@@ -227,3 +227,58 @@ class TestDispatch:
         t2 = asyncio.create_task(loop._dispatch(msg2))
         await asyncio.gather(t1, t2)
         assert order == ["start-a", "end-a", "start-b", "end-b"]
+
+    @pytest.mark.asyncio
+    async def test_process_direct_result_can_be_interrupted(self):
+        from elebot.bus.events import OutboundMessage
+        from elebot.session.manager import Session
+
+        loop, _bus = _make_loop()
+        session = Session(
+            key="cli:direct",
+            metadata={
+                loop._RUNTIME_CHECKPOINT_KEY: {
+                    "phase": "awaiting_tools",
+                    "assistant_message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_pending",
+                                "type": "function",
+                                "function": {"name": "exec", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    "completed_tool_results": [],
+                    "pending_tool_calls": [
+                        {
+                            "id": "call_pending",
+                            "type": "function",
+                            "function": {"name": "exec", "arguments": "{}"},
+                        }
+                    ],
+                }
+            },
+        )
+        loop.sessions.get_or_create.return_value = session
+        started = asyncio.Event()
+
+        async def fake_process(*_args, **_kwargs):
+            started.set()
+            await asyncio.sleep(60)
+
+        loop._process_message_result = fake_process
+
+        task = asyncio.create_task(
+            loop.process_direct_result("hello", session_key="cli:direct")
+        )
+        await started.wait()
+        result = loop.interrupt_session("cli:direct")
+        assert result.accepted is True
+
+        direct = await task
+        assert isinstance(direct.outbound, OutboundMessage)
+        assert direct.outbound.content == "已中断当前回复。"
+        assert direct.stop_reason == "interrupted"
+        assert session.messages[-1]["content"] == "Interrupted: tool execution stopped before completion."

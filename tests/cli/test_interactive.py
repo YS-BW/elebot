@@ -85,9 +85,10 @@ class _FakeRenderer:
 
     def __init__(self, **_kwargs) -> None:
         self.streamed = False
-        self.spinner = None
         self.deltas = []
         self.ended = []
+        self.progresses = []
+        self.tool_transitions = []
         self.close = AsyncMock()
         self.stop_for_input_calls = 0
         self.__class__.instances.append(self)
@@ -98,6 +99,12 @@ class _FakeRenderer:
 
     async def on_end(self, *, resuming: bool = False) -> None:
         self.ended.append(resuming)
+
+    async def on_progress(self, text: str) -> None:
+        self.progresses.append(text)
+
+    async def on_tool_transition(self, text: str) -> None:
+        self.tool_transitions.append(text)
 
     def stop_for_input(self) -> None:
         self.stop_for_input_calls += 1
@@ -191,8 +198,8 @@ async def test_run_interactive_loop_esc_interrupts_active_turn(monkeypatch):
     agent_loop = _FakeAgentLoop()
     restore_terminal = MagicMock()
     print_agent_response = MagicMock()
-    print_progress = AsyncMock()
     interrupt_calls: list[tuple[str, str]] = []
+    _FakeRenderer.instances = []
 
     monkeypatch.setattr("elebot.cli.interactive.init_prompt_session", lambda: None)
     monkeypatch.setattr("elebot.cli.interactive._install_signal_handlers", lambda: None)
@@ -204,7 +211,7 @@ async def test_run_interactive_loop_esc_interrupts_active_turn(monkeypatch):
     monkeypatch.setattr("elebot.cli.interactive.restore_terminal", restore_terminal)
     monkeypatch.setattr("elebot.cli.interactive.print_agent_response", print_agent_response)
     monkeypatch.setattr("elebot.cli.interactive.print_interactive_response", AsyncMock())
-    monkeypatch.setattr("elebot.cli.interactive.print_interactive_progress_line", print_progress)
+    monkeypatch.setattr("elebot.cli.interactive.print_interactive_progress_line", AsyncMock())
     monkeypatch.setattr("elebot.cli.interactive.console.print", lambda *_args, **_kwargs: None)
 
     def _interrupt(session_id: str, reason: str):
@@ -222,7 +229,8 @@ async def test_run_interactive_loop_esc_interrupts_active_turn(monkeypatch):
     )
 
     assert interrupt_calls == [("cli:test", "user_interrupt")]
-    print_progress.assert_any_await("正在中断当前回复...", None)
+    renderer = _FakeRenderer.instances[0]
+    assert renderer.progresses == ["正在中断当前回复..."]
     restore_terminal.assert_called_once()
 
 
@@ -291,7 +299,7 @@ async def test_run_interactive_loop_keeps_model_text_in_body_channel(monkeypatch
                     channel=message.channel,
                     chat_id=message.chat_id,
                     content='cron_create("打开微信")',
-                    metadata={**base_meta, "_progress": True},
+                    metadata={**base_meta, "_tool_transition": True},
                 )
             )
             await self._outbound.put(
@@ -321,7 +329,6 @@ async def test_run_interactive_loop_keeps_model_text_in_body_channel(monkeypatch
 
     bus = _PreambleBus()
     agent_loop = _FakeAgentLoop()
-    print_progress = AsyncMock()
     print_response = AsyncMock()
     _FakeRenderer.instances = []
 
@@ -335,7 +342,7 @@ async def test_run_interactive_loop_keeps_model_text_in_body_channel(monkeypatch
     monkeypatch.setattr("elebot.cli.interactive.restore_terminal", MagicMock())
     monkeypatch.setattr("elebot.cli.interactive.print_agent_response", MagicMock())
     monkeypatch.setattr("elebot.cli.interactive.print_interactive_response", print_response)
-    monkeypatch.setattr("elebot.cli.interactive.print_interactive_progress_line", print_progress)
+    monkeypatch.setattr("elebot.cli.interactive.print_interactive_progress_line", AsyncMock())
     monkeypatch.setattr("elebot.cli.interactive.console.print", lambda *_args, **_kwargs: None)
 
     await interactive.run_interactive_loop(
@@ -346,11 +353,10 @@ async def test_run_interactive_loop_keeps_model_text_in_body_channel(monkeypatch
         renderer_factory=_FakeRenderer,
     )
 
-    texts = [call.args[0] for call in print_progress.await_args_list]
-    assert texts == ['cron_create("打开微信")']
     renderer = _FakeRenderer.instances[0]
     assert renderer.deltas == ["好的，我来设置 2 分钟后打开微信。", "已设置！"]
     assert renderer.ended == [True, False]
+    assert renderer.tool_transitions == ['cron_create("打开微信")']
     print_response.assert_not_awaited()
 
 

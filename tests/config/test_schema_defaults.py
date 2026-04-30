@@ -28,3 +28,23 @@ def test_ignores_legacy_nanobot_env_prefix(monkeypatch) -> None:
     monkeypatch.setenv("NANOBOT_AGENTS__DEFAULTS__MODEL", "legacy/model")
     cfg = Config()
     assert cfg.agents.defaults.model == "deepseek-v4-flash"
+
+
+def test_websocket_channel_defaults() -> None:
+    """WebSocket channel 默认配置固定为本机最小入口。"""
+    cfg = Config()
+    assert cfg.channels.websocket.enabled is False
+    assert cfg.channels.websocket.port == 8765
+    assert cfg.channels.websocket.path == "/"
+    assert cfg.channels.websocket.streaming is True
+
+
+def test_weixin_channel_defaults() -> None:
+    """个人微信 channel 默认配置应固定为文本版最小入口。"""
+    cfg = Config()
+    assert cfg.channels.weixin.enabled is False
+    assert cfg.channels.weixin.allow_from == ["*"]
+    assert cfg.channels.weixin.base_url == "https://ilinkai.weixin.qq.com"
+    assert cfg.channels.weixin.token == ""
+    assert cfg.channels.weixin.state_dir == ""
+    assert cfg.channels.weixin.poll_timeout == 35

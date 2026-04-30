@@ -35,13 +35,16 @@ EleBot 当前阶段的目标不变：
 - 最小工具调用闭环
 - DeepSeek tool-call transcript 的 `reasoning_content` 协议修复
 - 单 runtime、单会话下的真实 interrupt
+- `serve stdio` 第二入口
+- `channels/` 适配层与 `websocket / weixin` 两种内置 channel
 
 ### 2.2 当前还没有
 
 - 系统级调度后端
 - `heartbeat`
 - 正式的 Web / desktop 多端入口
-- 多通道能力
+- 面向公网的 channel 安全方案
+- 多平台 channel 生态
 - 重新设计后的子代理体系
 
 ### 2.3 当前主链路
@@ -56,6 +59,50 @@ runtime
 Bus
   ↓
 AgentLoop
+```
+
+如果是 `serve stdio`，则链路是：
+
+```text
+stdin JSONL
+  ↓
+runtime.run_once()
+  ↓
+AgentLoop.process_direct()
+```
+
+如果是 websocket channel，则链路是：
+
+```text
+WebSocketChannel
+  ↓
+Bus
+  ↓
+AgentLoop.run()
+  ↓
+Bus
+  ↓
+ChannelManager
+  ↓
+WebSocketChannel
+```
+
+如果是个人微信 channel，则链路是：
+
+```text
+Weixin HTTP long-poll
+  ↓
+WeixinChannel
+  ↓
+Bus
+  ↓
+AgentLoop
+  ↓
+Bus
+  ↓
+ChannelManager
+  ↓
+WeixinChannel
 ```
 
 如果是 cron 触发，则链路是：
@@ -91,7 +138,12 @@ utils         = 低层通用小工具
 - provider 实例化入口在 `elebot/providers/factory.py`
 - 模型目录 owner 在 `elebot/providers/model_catalog.py`
 - `runtime` 是未来多入口唯一可复用底座
+- 当前第二入口验证固定为 `serve stdio`
 - `runtime` 对外不再暴露 `cancel_session_tasks()`，用户级中断入口固定为 `interrupt_session()`
+- 当前 `serve websocket` 也直接复用同一份 `ElebotRuntime`
+- 当前 `serve channels` 也直接复用同一份 `ElebotRuntime`
+- channel owner 固定在 `elebot/channels`
+- 当前内置 channel 固定为 `websocket` 和 `weixin`
 - 当前唯一调度 owner 是 `CronService`
 - 调度存储路径固定为 `workspace/cron/jobs.json`
 - 模型侧调度工具固定为 `cron_create / cron_list / cron_delete / cron_update`
@@ -112,6 +164,11 @@ utils         = 低层通用小工具
 - `/stop` 已彻底移除，不再属于命令协议
 - interrupted 历史只保留结构化事实，不保留半截自然语言
 - `/new` 现在会清空短期消息和运行态 `metadata`
+- active turn 的 CLI 渲染现在已收口为单写入器；tool hint 不再走 prompt 重绘通道
+- `serve stdio` 和 `websocket` 共用一套外部事件名：`ready / progress / delta / stream_end / message / error`
+- CLI 根命令当前固定为：`onboard / agent / channels / serve / status`
+- 当前已经有 `elebot channels login weixin`
+- 微信 channel 第一版固定为个人微信私聊文本入口，不做流式、不做群聊、不做媒体
 
 ## 3. 模块完成定义
 
@@ -126,14 +183,14 @@ utils         = 低层通用小工具
 
 从现在开始，后续优先级固定为：
 
-- `P0`：模块七，多端入口
-- `P1`：模块八，多通道能力
-- `P2`：模块九，子代理
+- `P0`：模块九，子代理
+- `P1`：模块七/八后的缺陷修复和文档同步
+- `P2`：系统级调度与 `heartbeat`
 
 另外还有两条边界必须固定下来：
 
-- 模块一到模块六已经完成，后续默认只接受缺陷修复、文档同步和必要的小范围事实回写
-- 不应把 status 面板增强、model catalog 动态化、skill marketplace、WebUI 包装之类事项插到模块七之前
+- 模块一到模块八已经完成，后续默认只接受缺陷修复、文档同步和必要的小范围事实回写
+- 不应把 status 面板增强、model catalog 动态化、skill marketplace、WebUI 包装之类事项插到模块九之前
 
 ## 5. 已完成模块回顾
 
@@ -252,6 +309,19 @@ utils         = 低层通用小工具
 - 所有模型可见文本现在都走 assistant 正文通道；`↳` 只保留 tool hint、工具过程提示和本地控制提示
 - cron 等后台消息在用户正在输入时会先暂存，等当前输入提交后再顺序显示
 
+### 5.8 模块六后的缺陷修复：CLI 渲染状态机收口
+
+当前状态：`已完成`
+
+已经落地的事实：
+
+- active turn 期间的 spinner、正文流、tool hint 现在统一交给同一个 `StreamRenderer` 输出
+- 当前轮次的 `↳` 提示不再走 `prompt_toolkit.run_in_terminal()`，只在等待输入时保留 prompt-safe 打印
+- `tool hint` 在 bus 中已经改成独立的 `_tool_transition` 事件，不再和普通 `_progress` 混在一起
+- `StreamRenderer` 的 spinner 生命周期已改成“单实例、按 phase 切换”，不再在一次工具轮里反复创建新 spinner 对象
+- 工具轮现在会先结束当前正文流，再输出 `↳ tool(...)`，然后连续进入下一段 thinking，不再出现第一段 spinner 收尾后的可见空窗
+- 当前轮次里的中断提示 `正在中断当前回复...` 也已经走 renderer 通道，避免 active turn 内再触发 prompt 重绘
+
 ## 6. 当前风险
 
 当前最明确的风险只有这些：
@@ -264,7 +334,7 @@ utils         = 低层通用小工具
 
 ## 7. 模块七：多端入口
 
-当前状态：`P0 / 未开始`
+当前状态：`已完成`
 
 ### 7.1 目标
 
@@ -272,21 +342,20 @@ utils         = 低层通用小工具
 
 ### 7.2 固定原则
 
-未来如果接：
+这一轮已经落地的事实：
 
-- Web
-- desktop
-- 其它本地入口
-
-都应该复用 `ElebotRuntime` 暴露的统一入口，而不是：
-
-- 直接拼 `MessageBus`
-- 直接拼 `AgentLoop`
-- 再造一层新的 facade
+- 新增 `elebot serve stdio`
+- `stdio` 入口只做 transport 包装
+- `stdio` 入口直接复用：
+  - `ElebotRuntime.run_once()`
+  - `interrupt_session()`
+  - `reset_session()`
+  - `get_status_snapshot()`
+- 这条入口没有重新装配 `MessageBus + AgentLoop + provider`
 
 ## 8. 模块八：多通道能力
 
-当前状态：`P1 / 未开始`
+当前状态：`已完成（第一版）`
 
 ### 8.1 目标
 
@@ -304,9 +373,24 @@ Bus
 AgentLoop
 ```
 
+这一轮已经落地的事实：
+
+- 新增 `elebot/channels/base.py`
+- 新增 `elebot/channels/manager.py`
+- 新增 `elebot/channels/websocket.py`
+- 新增 `elebot/channels/weixin.py`
+- 新增 `elebot channels login weixin`
+- 新增 `elebot serve channels`
+- `serve websocket` 通过 `runtime.start() + ChannelManager` 闭环
+- 第一版 `websocket` 没有照搬 nanobot 的随机 `chat_id`
+- 第一版 `websocket` 使用稳定 `chat_id`，默认等于 `client_id`
+- 第一版 `weixin` 使用稳定会话键 `weixin:{from_user_id}`
+- 第一版 `weixin` 只做个人微信私聊文本收发
+- 当前不做 TLS、token issuance、离线消息队列
+
 ## 9. 模块九：子代理
 
-当前状态：`P2 / 未开始`
+当前状态：`P0 / 未开始`
 
 ### 9.1 目标
 
@@ -316,10 +400,10 @@ AgentLoop
 
 后续实际开工顺序固定为：
 
-1. 先做模块七，多端入口的最小 runtime 复用验证
-2. 再做模块八，多通道协议适配
-3. 最后才考虑模块九，子代理
-4. 模块一到模块六只做缺陷修复、测试补齐、文档同步
+1. 先做模块九，子代理
+2. 模块七和模块八只做缺陷修复、测试补齐、文档同步
+3. 系统级调度与 `heartbeat` 另开模块，不回退到旧 task 体系
+4. 模块一到模块八默认不再做结构性返工
 
 ## 11. 一句话原则
 

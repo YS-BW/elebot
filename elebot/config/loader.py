@@ -12,7 +12,7 @@ from elebot.config.schema import Config
 # 运行时允许切换配置文件路径，以便同一进程支持多实例。
 _current_config_path: Path | None = None
 
-_REMOVED_TOP_LEVEL_KEYS = ("channels", "api", "gateway")
+_REMOVED_TOP_LEVEL_KEYS = ("api", "gateway")
 
 
 def set_config_path(path: Path) -> None:

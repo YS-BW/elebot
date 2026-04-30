@@ -4,18 +4,18 @@
 
 - EleBot 为什么需要 `bus`
 - `InboundMessage` 和 `OutboundMessage` 里到底是什么
-- CLI 和 agent 是怎么通过 bus 接起来的
+- CLI、channel 和 agent 是怎么通过 bus 接起来的
 
 相关源码：
 
 - [elebot/bus/events.py](../elebot/bus/events.py#L8-L36)
 - [elebot/bus/queue.py](../elebot/bus/queue.py#L8-L40)
-- [elebot/cli/interactive.py](../elebot/cli/interactive.py#L51-L180)
+- [elebot/cli/interactive.py](../elebot/cli/interactive.py#L54-L313)
 - [elebot/agent/loop.py](../elebot/agent/loop.py#L430-L753)
 
 ## 1. bus 在项目里的位置
 
-当前主链路可以先画成这样：
+当前最基础的主链路可以先画成这样：
 
 ```text
 用户输入
@@ -29,6 +29,24 @@ AgentLoop.run()
 MessageBus.outbound
   ↓
 CLI 渲染
+```
+
+如果是 websocket channel，则会变成：
+
+```text
+WebSocket client
+  ↓
+WebSocketChannel
+  ↓
+MessageBus.inbound
+  ↓
+AgentLoop.run()
+  ↓
+MessageBus.outbound
+  ↓
+ChannelManager
+  ↓
+WebSocketChannel
 ```
 
 bus 的定位不是“复杂事件系统”，而是：
@@ -146,7 +164,7 @@ class OutboundMessage:
 
 ## 5. CLI 是怎么向 bus 发消息的
 
-交互模式入口在 [elebot/cli/interactive.py](../elebot/cli/interactive.py#L122-L153)：
+交互模式入口在 [elebot/cli/interactive.py](../elebot/cli/interactive.py#L197-L230)：
 
 ```python
 user_input = await read_interactive_input_async()
@@ -230,9 +248,28 @@ outbound = OutboundMessage(
 
 所以 bus 上传的不是单一“回复文本”，而是一组运行时事件。
 
-## 8. CLI 是怎么消费这些出站事件的
+## 8. outbound 现在会被谁消费
 
-看 [elebot/cli/interactive.py](../elebot/cli/interactive.py#L79-L120)：
+当前 `outbound` 有两种真实消费者：
+
+- CLI 交互层
+- `ChannelManager`
+
+二者共享同一份 `OutboundMessage`，只是呈现方式不同。
+
+`ChannelManager` 会识别当前已经固定下来的 metadata：
+
+- `_progress`
+- `_tool_transition`
+- `_stream_delta`
+- `_stream_end`
+- `_streamed`
+
+然后把它们翻译成各个 channel 协议自己的事件。
+
+## 9. CLI 是怎么消费这些出站事件的
+
+看 [elebot/cli/interactive.py](../elebot/cli/interactive.py#L132-L188)：
 
 ```python
 message = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)

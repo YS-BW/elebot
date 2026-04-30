@@ -24,7 +24,7 @@ from elebot.cli.render import (
     print_interactive_progress_line,
     print_interactive_response,
 )
-from elebot.cli.stream import StreamRenderer, ThinkingSpinner
+from elebot.cli.stream import StreamRenderer
 
 EXIT_COMMANDS = {"exit", "quit", "/exit", "/quit", ":q"}
 
@@ -89,7 +89,6 @@ async def run_interactive_loop(
 
     _install_signal_handlers()
 
-    thinking: ThinkingSpinner | None = None
     bus_task = (
         asyncio.create_task(agent_loop.run()) if manage_agent_loop else None
     )
@@ -116,8 +115,22 @@ async def run_interactive_loop(
             return False
         return (metadata or {}).get("_interactive_turn_id") == active_turn_id
 
+    async def _print_active_turn_progress(
+        text: str,
+        *,
+        tool_transition: bool = False,
+    ) -> None:
+        """把当前轮次的提示统一交给 renderer，避免 active turn 混用 prompt 重绘通道。"""
+        if renderer is None:
+            await print_interactive_progress_line(text, None)
+            return
+        if tool_transition:
+            await renderer.on_tool_transition(text)
+            return
+        await renderer.on_progress(text)
+
     async def _consume_outbound() -> None:
-        nonlocal renderer, thinking
+        nonlocal renderer
 
         while True:
             try:
@@ -139,14 +152,25 @@ async def run_interactive_loop(
                     if belongs_to_active_turn:
                         turn_done.set()
                     continue
-
-                if metadata.get("_progress"):
+                if metadata.get("_tool_transition"):
                     if belongs_to_active_turn:
-                        await print_interactive_progress_line(message.content, thinking)
+                        await _print_active_turn_progress(
+                            message.content,
+                            tool_transition=True,
+                        )
                     elif active_turn_id is not None:
                         pending_notifications.append((message.content, metadata))
                     elif message.content:
-                        await print_interactive_progress_line(message.content, thinking)
+                        await print_interactive_progress_line(message.content, None)
+                    continue
+
+                if metadata.get("_progress"):
+                    if belongs_to_active_turn:
+                        await _print_active_turn_progress(message.content)
+                    elif active_turn_id is not None:
+                        pending_notifications.append((message.content, metadata))
+                    elif message.content:
+                        await print_interactive_progress_line(message.content, None)
                     continue
 
                 if belongs_to_active_turn and not turn_done.is_set():
@@ -191,7 +215,6 @@ async def run_interactive_loop(
                 turn_response.clear()
                 active_turn_id = uuid.uuid4().hex
                 renderer = renderer_factory(render_markdown=markdown)
-                thinking = renderer.spinner
 
                 await bus.publish_inbound(
                     InboundMessage(
@@ -232,9 +255,8 @@ async def run_interactive_loop(
                                     getattr(interrupt_result, "accepted", False)
                                     or getattr(interrupt_result, "already_interrupting", False)
                                 ):
-                                    await print_interactive_progress_line(
+                                    await _print_active_turn_progress(
                                         "正在中断当前回复...",
-                                        thinking,
                                     )
                                 interrupt_task = None
                                 watcher.close()
@@ -271,7 +293,6 @@ async def run_interactive_loop(
                     await renderer.close()
                 active_turn_id = None
                 await _drain_pending_notifications()
-                thinking = renderer.spinner if renderer else None
             except KeyboardInterrupt:
                 restore_terminal()
                 console.print("\nGoodbye!")

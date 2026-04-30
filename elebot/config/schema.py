@@ -14,6 +14,16 @@ class Base(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
+class StrictBase(BaseModel):
+    """同时接受 camelCase 和 snake_case，并拒绝未知字段的基础模型。"""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
 class DreamConfig(Base):
     """Dream 记忆整理配置。"""
 
@@ -144,12 +154,41 @@ class ToolsConfig(Base):
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class WebSocketChannelConfig(StrictBase):
+    """WebSocket channel 的最小配置。"""
+
+    enabled: bool = False
+    port: int = Field(default=8765, ge=1, le=65535)
+    path: str = "/"
+    streaming: bool = True
+
+
+class WeixinChannelConfig(StrictBase):
+    """个人微信 channel 的最小配置。"""
+
+    enabled: bool = False
+    allow_from: list[str] = Field(default_factory=lambda: ["*"])
+    base_url: str = "https://ilinkai.weixin.qq.com"
+    route_tag: str | int | None = None
+    token: str = ""
+    state_dir: str = ""
+    poll_timeout: int = Field(default=35, ge=1)
+
+
+class ChannelsConfig(StrictBase):
+    """多通道入口配置。"""
+
+    websocket: WebSocketChannelConfig = Field(default_factory=WebSocketChannelConfig)
+    weixin: WeixinChannelConfig = Field(default_factory=WeixinChannelConfig)
+
+
 class Config(BaseSettings):
     """elebot 根配置。"""
 
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
 
     @property
     def workspace_path(self) -> Path:

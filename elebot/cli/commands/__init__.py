@@ -5,7 +5,9 @@ from __future__ import annotations
 import typer
 
 from elebot.cli.commands.agent import register_agent_command
+from elebot.cli.commands.channels import register_channels_command
 from elebot.cli.commands.onboard import register_onboard_command
+from elebot.cli.commands.serve import register_serve_command
 from elebot.cli.commands.status import register_status_command
 
 
@@ -20,4 +22,6 @@ def register_commands(app: typer.Typer) -> None:
     """
     register_onboard_command(app)
     register_agent_command(app)
+    register_channels_command(app)
+    register_serve_command(app)
     register_status_command(app)

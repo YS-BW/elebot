@@ -4,11 +4,12 @@
 
 相关源码：
 
-- [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L86)
+- [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L123)
 - [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L350)
 - [elebot/runtime/lifecycle.py](../elebot/runtime/lifecycle.py#L10-L106)
 - [elebot/runtime/models.py](../elebot/runtime/models.py#L8-L57)
-- [tests/cli/test_runtime.py](../tests/cli/test_runtime.py#L13-L176)
+- [elebot/runtime/protocol.py](../elebot/runtime/protocol.py#L1-L99)
+- [tests/cli/test_runtime.py](../tests/cli/test_runtime.py#L1-L196)
 
 ## 1. runtime 解决什么问题
 
@@ -42,7 +43,7 @@ runtime = 进程内统一装配入口 + 生命周期管理层
 
 ## 3. CLI 怎么复用 runtime
 
-CLI 侧现在通过 [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L40-L86) 做很薄的一层适配：
+CLI 侧现在通过 [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L43-L123) 做很薄的一层适配：
 
 1. `_load_runtime_config()`
 2. `_make_provider()`
@@ -68,7 +69,27 @@ CLI 侧现在通过 [elebot/cli/runtime_support.py](../elebot/cli/runtime_suppor
 - `run_once()`
 - `run_interactive()`
 
-### 4.3 薄控制 API
+### 4.3 第二入口怎么复用 runtime
+
+当前已经落地三条非 TTY 或非直接终端输入的复用路径：
+
+- `serve stdio`
+  - 不启动 `AgentLoop.run()`
+  - 直接循环调用 `runtime.run_once()`
+- `serve channels`
+  - 先 `runtime.start()`
+  - 再由 `ChannelManager.start_all()` 启动所有已启用的内置 channel
+- `serve websocket`
+  - 先 `runtime.start()`
+  - 再让 channel 把入站消息写进 `runtime.bus`
+  - 由 `AgentLoop.run()` 和 `ChannelManager` 一起闭环
+
+这说明 runtime 现在不只是“给 CLI 用的一层包装”，而是已经能承接：
+
+- 直连型入口
+- bus 驱动型入口
+
+### 4.4 薄控制 API
 
 对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L124-L243)：
 

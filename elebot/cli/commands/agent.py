@@ -67,11 +67,16 @@ def register_agent_command(app: typer.Typer) -> None:
                 render_markdown=False,
             )
 
-        thinking = None
+        renderer: StreamRenderer | None = None
 
         async def _cli_progress(content: str, *, tool_hint: bool = False) -> None:
-            del tool_hint
-            print_cli_progress_line(content, thinking)
+            if renderer is None:
+                print_cli_progress_line(content, None)
+                return
+            if tool_hint:
+                await renderer.on_tool_transition(content)
+                return
+            await renderer.on_progress(content)
 
         if message:
             async def run_once() -> None:
@@ -80,9 +85,8 @@ def register_agent_command(app: typer.Typer) -> None:
                 返回:
                     无返回值。
                 """
-                nonlocal thinking
+                nonlocal renderer
                 renderer = StreamRenderer(render_markdown=markdown)
-                thinking = renderer.spinner
                 response = await runtime.run_once(
                     message,
                     session_id=session_id,
@@ -98,7 +102,7 @@ def register_agent_command(app: typer.Typer) -> None:
                             render_markdown=markdown,
                             metadata=response.metadata,
                         )
-                thinking = None
+                renderer = None
                 await runtime.close()
 
             asyncio.run(run_once())
