@@ -41,7 +41,12 @@ _COMPACTABLE_TOOLS = frozenset({
     "web_search", "web_fetch", "list_dir",
 })
 _BACKFILL_CONTENT = "[Tool result unavailable — call was interrupted or lost]"
-_EMPTY_FINAL_FALLBACK_TOOLS = frozenset({"cron"})
+_EMPTY_FINAL_FALLBACK_TOOLS = frozenset({
+    "cron_create",
+    "cron_list",
+    "cron_delete",
+    "cron_update",
+})
 
 
 

@@ -31,7 +31,7 @@ EleBot 当前阶段的目标不变：
 - workspace 模板初始化
 - 全局 skills 扫描与 prompt 注入
 - skill 的安装、卸载、列表管理
-- `cron` 调度的 `add / list / remove`
+- `cron` 调度的 CRUD 四工具协议
 - 最小工具调用闭环
 - DeepSeek tool-call transcript 的 `reasoning_content` 协议修复
 - 单 runtime、单会话下的真实 interrupt
@@ -94,14 +94,14 @@ utils         = 低层通用小工具
 - `runtime` 对外不再暴露 `cancel_session_tasks()`，用户级中断入口固定为 `interrupt_session()`
 - 当前唯一调度 owner 是 `CronService`
 - 调度存储路径固定为 `workspace/cron/jobs.json`
-- 模型侧唯一调度工具固定为 `cron`
+- 模型侧调度工具固定为 `cron_create / cron_list / cron_delete / cron_update`
 - `/task` 已彻底移除，也不新增 `/cron` slash 命令
 - `MemoryStore` 是 Dream 历史 owner
 - 历史唯一来源固定为 `memory/history.jsonl`
 - `HISTORY.md` 已不是当前实现的一部分
 - skill 管理 owner 在 `agent/skills`
 - 裸 `/skill` 已移除，只保留 `/skill list|install|uninstall`
-- agent 默认工具现在已经包含 `list_skills` / `install_skill` / `uninstall_skill` / `cron`
+- agent 默认工具现在已经包含 `list_skills` / `install_skill` / `uninstall_skill` / `cron_create` / `cron_list` / `cron_delete` / `cron_update`
 - 首次 `onboard` 默认 provider 是 `deepseek`
 - 首次 `onboard` 默认模型是 `deepseek-v4-flash`
 - `main` 分支的 `onboard` 不再预装任何业务 skill
@@ -216,13 +216,24 @@ utils         = 低层通用小工具
 - 旧 `tasks` 模块已经从主链路删除
 - 新增 `elebot/cron/types.py`
 - 新增 `elebot/cron/service.py`
-- 新增统一调度工具 `elebot/agent/tools/cron.py`
+- 新增调度工具文件 `elebot/agent/tools/cron.py`
 - `AgentLoop` 改为持有 `CronService`
 - `ElebotRuntime` 删除 `list_tasks/remove_task`，改成 `list_cron_jobs/remove_cron_job`
 - `/task` 已彻底移除，也不新增 `/cron`
 - `templates/agent/task_rules.md` 已替换为 `templates/agent/cron_rules.md`
 - `workspace/cron/jobs.json` 成为唯一调度状态文件
 - 这轮只做 `cron`，不引入 `heartbeat`
+- 当前模型侧协议已经进一步收口为四个 CRUD 工具：
+  - `cron_create`
+  - `cron_list`
+  - `cron_delete`
+  - `cron_update`
+- 模型侧不再暴露：
+  - `action`
+  - `name`
+  - `cron_expr`
+  - `tz`
+  - `message / prompt / command`
 
 ### 5.7 模块六后的缺陷修复：CLI 输入污染与 `/new` 状态清理
 
@@ -238,7 +249,7 @@ utils         = 低层通用小工具
   - `last_consolidated`
   - `session.metadata`
 - `/new` 清理后仍然沿用原 session key 和会话文件，不额外创建新文件
-- tool-call 前的短前缀文本现在会按进度行显示，不再单独展开成短 assistant 回复块
+- 所有模型可见文本现在都走 assistant 正文通道；`↳` 只保留 tool hint、工具过程提示和本地控制提示
 - cron 等后台消息在用户正在输入时会先暂存，等当前输入提交后再顺序显示
 
 ## 6. 当前风险

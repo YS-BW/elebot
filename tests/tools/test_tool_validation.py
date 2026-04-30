@@ -598,14 +598,14 @@ def test_exec_rejects_sleep_based_scheduling_emulation() -> None:
     """Delayed shell scheduling should be rejected in favor of cron."""
     tool = ExecTool()
     error = tool._guard_command('sleep 60 && open -a "WeChat"', cwd=".")
-    assert error == "Error: delayed shell execution is not allowed; use the cron tool instead"
+    assert error == "Error: delayed shell execution is not allowed; use cron_create instead"
 
 
 def test_exec_rejects_shell_scheduler_commands() -> None:
     """Direct shell scheduler invocations should be rejected."""
     tool = ExecTool()
     error = tool._guard_command("crontab -l", cwd=".")
-    assert error == "Error: shell scheduling commands are not allowed; use the cron tool instead"
+    assert error == "Error: shell scheduling commands are not allowed; use cron_create instead"
 
 
 # --- _resolve_type and nullable param tests ---

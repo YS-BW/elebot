@@ -6,9 +6,9 @@
 
 - [elebot/cli/commands/agent.py](../elebot/cli/commands/agent.py#L21-L105)
 - [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L109)
-- [elebot/cli/interactive.py](../elebot/cli/interactive.py#L52-L254)
-- [elebot/cli/keys.py](../elebot/cli/keys.py#L14-L260)
-- [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L323)
+- [elebot/cli/interactive.py](../elebot/cli/interactive.py#L52-L295)
+- [elebot/cli/keys.py](../elebot/cli/keys.py#L14-L416)
+- [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L350)
 
 ## 1. CLI 现在保留哪些命令
 
@@ -107,7 +107,7 @@ AgentLoop.interrupt_session()
 
 另外，交互渲染现在还有两条已经固定的事实：
 
-- 如果模型在 tool-call 前先说一句很短的前缀，这段文本会按轻量进度行显示，而不是单独展开成一块 assistant 回复
+- 所有模型可见文本都会按 assistant 正文显示；`↳` 只保留 tool hint、工具过程提示和本地控制提示
 - 如果 cron 或其他后台消息在你正在输入时到达，CLI 会先暂存它们，等你提交当前输入后再按顺序显示
 
 ## 5. slash 命令和 CLI 的关系
@@ -135,7 +135,7 @@ command handler 调 owner API
 - `/task`
 - `/cron`
 
-调度需求现在通过模型调用 `cron` 工具完成，而不是通过 CLI slash 命令管理。
+调度需求现在通过模型调用 `cron_create / cron_list / cron_delete / cron_update` 完成，而不是通过 CLI slash 命令管理。
 
 ## 6. 以后接 Web 或 desktop 时该复用哪里
 

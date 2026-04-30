@@ -82,7 +82,7 @@ EleBot 当前是一个 nanobot 风格的终端 AI 助手项目。
 - 会话持久化
 - 工作区启动模板加载
 - 全局 `skills` 扫描与 prompt 注入
-- `cron` 工具驱动的应用内调度、后台轮询、到点执行
+- `cron_create / cron_list / cron_delete / cron_update` 工具驱动的应用内调度、后台轮询、到点执行
 - 文档化的模块教程
 
 按当前代码事实，项目还没有：
@@ -211,6 +211,16 @@ EleBot 默认运行目录：
 
 - 避免不同分支复用旧工作区、旧 cron 状态、旧 skills 状态
 - 避免把上一个分支的运行结果误判成当前代码事实
+
+### Historical Session Rule
+
+如果确认问题来自旧 session / 旧 workspace 的历史污染，不要加兼容旧会话的代码。
+
+固定处理方式：
+
+- 直接删除 `~/.elebot/workspace`
+- 从干净状态重新 `onboard` 或重新启动 agent
+- 优先把问题当成运行态污染处理，而不是主链路兼容需求
 
 ## Build
 
@@ -383,7 +393,11 @@ ContextBuilder 注入 metadata
 - 调度文件在 `~/.elebot/workspace/cron/jobs.json`
 - `CronService` 负责后台轮询和到点执行
 - 只有 `elebot agent` 运行时，cron job 才会触发
-- 模型侧只暴露一个调度工具：`cron`
+- 模型侧暴露四个调度工具：
+  - `cron_create`
+  - `cron_list`
+  - `cron_delete`
+  - `cron_update`
 - cron 到点后会回到 `AgentLoop.process_direct(...)` 跑一次独立执行
 
 当前没有：

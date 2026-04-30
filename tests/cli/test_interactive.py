@@ -103,14 +103,6 @@ class _FakeRenderer:
         self.stop_for_input_calls += 1
 
 
-class _FakePreambleRenderer(_FakeRenderer):
-    async def on_end(self, *, resuming: bool = False):
-        self.ended.append(resuming)
-        if resuming:
-            return ["好的，我来设置 2 分钟后打开微信。"]
-        return None
-
-
 @pytest.mark.asyncio
 async def test_run_interactive_loop_routes_streamed_turn_and_exits(monkeypatch):
     bus = _FakeBus()
@@ -273,7 +265,7 @@ async def test_run_interactive_loop_ignores_interrupt_without_watcher(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_run_interactive_loop_renders_tool_preamble_as_progress_lines(monkeypatch):
+async def test_run_interactive_loop_keeps_model_text_in_body_channel(monkeypatch):
     class _PreambleBus(_FakeBus):
         async def publish_inbound(self, message) -> None:
             self.inbound_messages.append(message)
@@ -298,7 +290,7 @@ async def test_run_interactive_loop_renders_tool_preamble_as_progress_lines(monk
                 OutboundMessage(
                     channel=message.channel,
                     chat_id=message.chat_id,
-                    content='cron("add")',
+                    content='cron_create("打开微信")',
                     metadata={**base_meta, "_progress": True},
                 )
             )
@@ -330,6 +322,8 @@ async def test_run_interactive_loop_renders_tool_preamble_as_progress_lines(monk
     bus = _PreambleBus()
     agent_loop = _FakeAgentLoop()
     print_progress = AsyncMock()
+    print_response = AsyncMock()
+    _FakeRenderer.instances = []
 
     monkeypatch.setattr("elebot.cli.interactive.init_prompt_session", lambda: None)
     monkeypatch.setattr("elebot.cli.interactive._install_signal_handlers", lambda: None)
@@ -340,7 +334,7 @@ async def test_run_interactive_loop_renders_tool_preamble_as_progress_lines(monk
     monkeypatch.setattr("elebot.cli.interactive.flush_pending_tty_input", lambda: None)
     monkeypatch.setattr("elebot.cli.interactive.restore_terminal", MagicMock())
     monkeypatch.setattr("elebot.cli.interactive.print_agent_response", MagicMock())
-    monkeypatch.setattr("elebot.cli.interactive.print_interactive_response", AsyncMock())
+    monkeypatch.setattr("elebot.cli.interactive.print_interactive_response", print_response)
     monkeypatch.setattr("elebot.cli.interactive.print_interactive_progress_line", print_progress)
     monkeypatch.setattr("elebot.cli.interactive.console.print", lambda *_args, **_kwargs: None)
 
@@ -349,11 +343,15 @@ async def test_run_interactive_loop_renders_tool_preamble_as_progress_lines(monk
         bus=bus,
         session_id="cli:test",
         markdown=True,
-        renderer_factory=_FakePreambleRenderer,
+        renderer_factory=_FakeRenderer,
     )
 
     texts = [call.args[0] for call in print_progress.await_args_list]
-    assert texts[:2] == ["好的，我来设置 2 分钟后打开微信。", 'cron("add")']
+    assert texts == ['cron_create("打开微信")']
+    renderer = _FakeRenderer.instances[0]
+    assert renderer.deltas == ["好的，我来设置 2 分钟后打开微信。", "已设置！"]
+    assert renderer.ended == [True, False]
+    print_response.assert_not_awaited()
 
 
 @pytest.mark.asyncio

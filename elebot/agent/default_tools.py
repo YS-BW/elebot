@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from elebot.agent.tools.cron import CronTool
+from elebot.agent.tools.cron import (
+    CronCreateTool,
+    CronDeleteTool,
+    CronListTool,
+    CronUpdateTool,
+)
 from elebot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from elebot.agent.tools.notebook import NotebookEditTool
 from elebot.agent.tools.registry import ToolRegistry
@@ -66,7 +71,8 @@ def register_default_tools(
             extra_allowed_dirs=extra_allowed_dirs,
         )
     )
-    registry.register(CronTool(cron_service=cron_service, default_timezone=default_timezone))
+    for tool_class in (CronCreateTool, CronListTool, CronDeleteTool, CronUpdateTool):
+        registry.register(tool_class(cron_service=cron_service, default_timezone=default_timezone))
     if exec_config.enable:
         registry.register(
             ExecTool(

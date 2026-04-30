@@ -4,12 +4,12 @@
 
 相关源码：
 
-- [elebot/agent/tools/base.py](../elebot/agent/tools/base.py#L21-L377)
+- [elebot/agent/tools/base.py](../elebot/agent/tools/base.py#L153-L377)
 - [elebot/agent/tools/registry.py](../elebot/agent/tools/registry.py#L8-L166)
-- [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L19-L89)
-- [elebot/agent/tools/cron.py](../elebot/agent/tools/cron.py#L14-L250)
-- [elebot/agent/tools/skill_tools.py](../elebot/agent/tools/skill_tools.py#L12-L184)
-- [elebot/templates/TOOLS.md](../elebot/templates/TOOLS.md#L1-L79)
+- [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L24-L95)
+- [elebot/agent/tools/cron.py](../elebot/agent/tools/cron.py#L14-L406)
+- [elebot/agent/tools/skill_tools.py](../elebot/agent/tools/skill_tools.py#L12-L193)
+- [elebot/templates/TOOLS.md](../elebot/templates/TOOLS.md#L1-L81)
 
 ## 1. 当前总链路
 
@@ -41,7 +41,7 @@ tool message 回填模型
 
 ## 2. 默认工具集合
 
-默认工具注册在 [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L19-L89)。
+默认工具注册在 [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L24-L95)。
 
 当前默认工具分成四组：
 
@@ -53,6 +53,11 @@ tool message 回填模型
   - `glob`
   - `grep`
   - `notebook_edit`
+- 调度
+  - `cron_create`
+  - `cron_list`
+  - `cron_delete`
+  - `cron_update`
 - 执行与联网
   - `exec`
   - `web_search`
@@ -61,28 +66,28 @@ tool message 回填模型
   - `list_skills`
   - `install_skill`
   - `uninstall_skill`
-- 调度
-  - `cron`
 
 另外还可能出现运行时动态注册的 `mcp_*` 工具。
 
-## 3. 当前调度工具只剩 `cron`
+## 3. 当前调度工具是 CRUD 四件套
 
-旧任务工具已经全部移除。当前模型侧唯一可用的调度协议是：
+旧任务工具已经全部移除。当前模型侧可用的调度协议固定为：
 
-- `cron(action="add", ...)`
-- `cron(action="list")`
-- `cron(action="remove", job_id="...")`
+- `cron_create`
+- `cron_list`
+- `cron_delete`
+- `cron_update`
 
-实现见 [elebot/agent/tools/cron.py](../elebot/agent/tools/cron.py#L120-L250)。
+实现见 [elebot/agent/tools/cron.py](../elebot/agent/tools/cron.py#L165-L406)。
 
 当前固定规则：
 
-- `cron(action="add")` 时，`instruction` 是真正执行内容，`name` 只是可选展示标题
-- 新增任务时只能在 `every_seconds / cron_expr / at` 三者里选一种
-- `tz` 只能和 `cron_expr` 一起使用
+- `cron_create` 必须填写 `instruction`
+- `cron_create` 和 `cron_update` 的时间参数只能在 `after_seconds / at / every_seconds` 中三选一
 - `at` 的 naive ISO 时间会落到默认时区
-- 提醒、延时执行、周期执行都必须优先走 `cron`，不能再用 `exec` 写 `sleep ... && ...`
+- `cron_list` 只列当前启用中的 job
+- `cron_delete` 和 `cron_update` 只按 `job_id` 精确定位
+- 提醒、延时执行、周期执行都必须优先走 `cron_create`，不能再用 `exec` 写 `sleep ... && ...`
 - `exec` 现在会直接拦截 `sleep ... && ...`、`at`、`crontab`、`launchctl`、`schtasks`、`nohup` 这类伪调度写法
 - 不再存在 `propose_task / create_task / list_tasks / update_task / remove_task`
 
@@ -116,12 +121,13 @@ tool message 回填模型
 
 工作区里的 `TOOLS.md` 模板不是代码 owner，而是给模型的规则说明。
 
-当前模板见 [elebot/templates/TOOLS.md](../elebot/templates/TOOLS.md#L1-L79)。
+当前模板见 [elebot/templates/TOOLS.md](../elebot/templates/TOOLS.md#L1-L81)。
 
 它现在已经固定说明：
 
 - 能用文件工具时不要默认退回 `exec`
-- 调度需求用 `cron`
+- 调度需求优先用 `cron_create`
+- 列任务、删任务、改任务分别走 `cron_list`、`cron_delete`、`cron_update`
 - 不要再调用旧任务工具名
 
 这层规则属于 prompt 协议，不属于 runtime API。

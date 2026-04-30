@@ -630,30 +630,9 @@ class OpenAICompatProvider(LLMProvider):
         tool_name: str,
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
-        """收口已知兼容模型的参数别名，避免 tool owner 看到漂移字段。"""
-        normalized = dict(arguments)
-        if tool_name == "cron":
-            job_payload = normalized.pop("job", None)
-            if isinstance(job_payload, dict):
-                for key in ("name", "at", "every_seconds", "cron_expr", "tz", "job_id"):
-                    value = job_payload.get(key)
-                    if key not in normalized and value not in (None, ""):
-                        normalized[key] = value
-                nested_payload = job_payload.get("payload")
-                if isinstance(nested_payload, dict) and "instruction" not in normalized:
-                    for alias in ("instruction", "message", "prompt", "command"):
-                        value = nested_payload.get(alias)
-                        if isinstance(value, str) and value.strip():
-                            normalized["instruction"] = value.strip()
-                            break
-            legacy_instruction = None
-            for alias in ("message", "prompt", "command"):
-                value = normalized.pop(alias, None)
-                if legacy_instruction is None and isinstance(value, str) and value.strip():
-                    legacy_instruction = value.strip()
-            if "instruction" not in normalized and legacy_instruction:
-                normalized["instruction"] = legacy_instruction
-        return normalized
+        """返回工具参数的浅拷贝，保留当前协议原样。"""
+        del tool_name
+        return dict(arguments)
 
     @classmethod
     def _extract_pseudo_tool_calls(

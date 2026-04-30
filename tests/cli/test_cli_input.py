@@ -217,41 +217,45 @@ def test_stream_renderer_exposes_spinner_property():
 
 
 @pytest.mark.asyncio
-async def test_stream_renderer_converts_short_tool_preamble_to_progress_lines():
+async def test_stream_renderer_starts_live_on_first_visible_token():
     spinner = MagicMock()
     mock_console = MagicMock()
     mock_console.status.return_value = spinner
+    live = MagicMock()
 
     with patch.object(stream_mod, "_make_console", return_value=mock_console), \
-         patch.object(stream_mod, "Live") as live_cls:
-        renderer = stream_mod.StreamRenderer(show_spinner=True)
-        await renderer.on_delta("好的，我来设置 2 分钟后打开微信。")
-        lines = await renderer.on_end(resuming=True)
-
-    assert lines == ["好的，我来设置 2 分钟后打开微信。"]
-    live_cls.assert_not_called()
-    mock_console.print.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_stream_renderer_prints_short_final_response_without_live():
-    spinner = MagicMock()
-    mock_console = MagicMock()
-    mock_console.status.return_value = spinner
-
-    with patch.object(stream_mod, "_make_console", return_value=mock_console), \
-         patch.object(stream_mod, "Live") as live_cls:
+         patch.object(stream_mod, "Live", return_value=live) as live_cls:
         renderer = stream_mod.StreamRenderer(show_spinner=True)
         await renderer.on_delta("你好")
-        lines = await renderer.on_end(resuming=False)
 
-    assert lines is None
-    live_cls.assert_not_called()
-    assert mock_console.print.call_count == 3
+    live_cls.assert_called_once()
+    live.start.assert_called_once()
+    live.update.assert_called()
+    live.refresh.assert_called()
+    mock_console.print.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_stream_renderer_promotes_long_response_to_live_before_tool_resume():
+async def test_stream_renderer_ends_current_live_block_before_tool_resume():
+    spinner = MagicMock()
+    mock_console = MagicMock()
+    mock_console.status.return_value = spinner
+    live = MagicMock()
+
+    with patch.object(stream_mod, "_make_console", return_value=mock_console), \
+         patch.object(stream_mod, "Live", return_value=live) as live_cls:
+        renderer = stream_mod.StreamRenderer(show_spinner=True)
+        await renderer.on_delta("好的，我来设置 2 分钟后打开微信。")
+        await renderer.on_end(resuming=True)
+
+    live_cls.assert_called_once()
+    live.start.assert_called_once()
+    live.stop.assert_called_once()
+    assert spinner.start.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_renderer_keeps_long_response_in_body_channel_before_tool_resume():
     spinner = MagicMock()
     mock_console = MagicMock()
     mock_console.status.return_value = spinner
@@ -261,9 +265,8 @@ async def test_stream_renderer_promotes_long_response_to_live_before_tool_resume
          patch.object(stream_mod, "Live", return_value=live) as live_cls:
         renderer = stream_mod.StreamRenderer(show_spinner=True)
         await renderer.on_delta("a" * 121)
-        lines = await renderer.on_end(resuming=True)
+        await renderer.on_end(resuming=True)
 
-    assert lines is None
     live_cls.assert_called_once()
     live.start.assert_called_once()
     live.stop.assert_called_once()

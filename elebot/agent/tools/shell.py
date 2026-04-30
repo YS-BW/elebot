@@ -114,7 +114,7 @@ class ExecTool(Tool):
             "Execute a shell command and return its output. "
             "Prefer read_file/write_file/edit_file over cat/echo/sed, "
             "and grep/glob over shell find/grep. "
-            "Do not use this tool for delayed or recurring actions; use cron instead of sleep/at/crontab-style scheduling. "
+            "Do not use this tool for delayed or recurring actions; use cron_create instead of sleep/at/crontab-style scheduling. "
             "Use -y or --yes flags to avoid interactive prompts. "
             "Output is truncated at 10 000 chars; timeout defaults to 60s."
         )
@@ -308,11 +308,11 @@ class ExecTool(Tool):
         lower = cmd.lower()
 
         if re.search(r"\bsleep\s+\d+(?:\.\d+)?\s*&&", lower):
-            return "Error: delayed shell execution is not allowed; use the cron tool instead"
+            return "Error: delayed shell execution is not allowed; use cron_create instead"
         if re.search(r"\b(?:at|crontab|schtasks|launchctl)\b", lower):
-            return "Error: shell scheduling commands are not allowed; use the cron tool instead"
+            return "Error: shell scheduling commands are not allowed; use cron_create instead"
         if re.search(r"\bnohup\b", lower):
-            return "Error: background job scheduling is not allowed; use the cron tool instead"
+            return "Error: background job scheduling is not allowed; use cron_create instead"
 
         for pattern in self.deny_patterns:
             if re.search(pattern, lower):

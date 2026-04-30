@@ -64,8 +64,6 @@ class ThinkingSpinner:
 class StreamRenderer:
     """以 Rich Live 渲染流式回复，并在首个可见 token 前展示 spinner。"""
 
-    _PROMOTION_THRESHOLD = 120
-
     def __init__(self, render_markdown: bool = True, show_spinner: bool = True):
         """初始化流式渲染器。
 
@@ -98,13 +96,6 @@ class StreamRenderer:
         """判断当前缓冲里是否已有可见正文。"""
         return bool(self._buffer.strip())
 
-    def _should_promote_to_live(self) -> bool:
-        """判断当前缓冲是否应该升级成正式流式正文。"""
-        visible = self._buffer.strip()
-        if not visible:
-            return False
-        return len(visible) > self._PROMOTION_THRESHOLD or "\n\n" in self._buffer
-
     def _start_live(self) -> None:
         """把当前缓冲升级为正式 assistant 流式输出。"""
         if self._live is not None:
@@ -114,17 +105,6 @@ class StreamRenderer:
         terminal_console.print(f"[cyan]{__logo__} elebot[/cyan]")
         self._live = Live(self._render(), console=terminal_console, auto_refresh=False)
         self._live.start()
-
-    def _consume_preamble_lines(self) -> list[str]:
-        """把缓冲中的短前缀拆成进度行文本。"""
-        return [line.strip() for line in self._buffer.splitlines() if line.strip()]
-
-    def _print_buffered_response(self) -> None:
-        """把尚未升级成 Live 的短回复直接作为完整 assistant 回复打印。"""
-        terminal_console = _make_console()
-        terminal_console.print(f"[cyan]{__logo__} elebot[/cyan]")
-        terminal_console.print(self._render(self._buffer))
-        terminal_console.print()
 
     def _start_spinner(self) -> None:
         if self._show_spinner:
@@ -140,17 +120,17 @@ class StreamRenderer:
         """接收增量文本，并按节流策略刷新 Live 视图。"""
         self.streamed = True
         self._buffer += delta
-        if self._live is None:
-            if not self._should_promote_to_live():
-                return
+        if self._live is None and self._has_visible_buffer():
             self._start_live()
+        if self._live is None:
+            return
         now = time.monotonic()
-        if "\n" in delta or (now - self._last_refresh_at) > 0.05:
+        if self._last_refresh_at == 0.0 or "\n" in delta or (now - self._last_refresh_at) > 0.05:
             self._live.update(self._render())
             self._live.refresh()
             self._last_refresh_at = now
 
-    async def on_end(self, *, resuming: bool = False) -> list[str] | None:
+    async def on_end(self, *, resuming: bool = False) -> None:
         """结束当前流式渲染；恢复续写时重新拉起 spinner。"""
         if self._live:
             self._live.update(self._render())
@@ -164,25 +144,13 @@ class StreamRenderer:
                 self._start_spinner()
             else:
                 _make_console().print()
-            return None
-
-        preamble_lines: list[str] | None = None
-        if self._has_visible_buffer():
-            if resuming:
-                preamble_lines = self._consume_preamble_lines()
-            else:
-                self._stop_spinner()
-                self._print_buffered_response()
-                self._last_refresh_at = 0.0
-                self._buffer = ""
-                return None
+            return
 
         self._stop_spinner()
         self._last_refresh_at = 0.0
         self._buffer = ""
         if resuming:
             self._start_spinner()
-        return preamble_lines
 
     def stop_for_input(self) -> None:
         """在读取下一次用户输入前停掉 spinner，避免 prompt_toolkit 冲突。"""
@@ -194,3 +162,5 @@ class StreamRenderer:
             self._live.stop()
             self._live = None
         self._stop_spinner()
+        self._buffer = ""
+        self._last_refresh_at = 0.0

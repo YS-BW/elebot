@@ -86,6 +86,47 @@ def test_cron_service_rejects_invalid_schedule_inputs(tmp_path) -> None:
         )
 
 
+def test_cron_service_update_job_preserves_id_and_history(tmp_path) -> None:
+    service = CronService(tmp_path / "cron" / "jobs.json", default_timezone="Asia/Shanghai")
+    job = service.add_job(
+        name="open-wechat",
+        schedule=CronSchedule(kind="every", every_ms=60_000),
+        message="打开微信",
+        channel="cli",
+        chat_id="direct",
+    )
+    created_at_ms = job.created_at_ms
+    job.state.last_run_at_ms = 123
+    job.state.last_status = "ok"
+    job.state.run_history = []
+
+    updated = service.update_job(
+        job.id,
+        message="打开浏览器",
+        name="打开浏览器",
+        schedule=CronSchedule(kind="at", at_ms=int(datetime.fromisoformat(_future_iso(10)).timestamp() * 1000)),
+        delete_after_run=True,
+    )
+
+    assert updated is not None
+    assert updated.id == job.id
+    assert updated.created_at_ms == created_at_ms
+    assert updated.updated_at_ms >= created_at_ms
+    assert updated.payload.message == "打开浏览器"
+    assert updated.name == "打开浏览器"
+    assert updated.schedule.kind == "at"
+    assert updated.delete_after_run is True
+    assert updated.enabled is True
+    assert updated.state.last_run_at_ms == 123
+    assert updated.state.last_status == "ok"
+
+
+def test_cron_service_update_job_returns_none_when_missing(tmp_path) -> None:
+    service = CronService(tmp_path / "cron" / "jobs.json", default_timezone="Asia/Shanghai")
+
+    assert service.update_job("cron_missing", message="hi") is None
+
+
 @pytest.mark.asyncio
 async def test_cron_service_runs_due_job_and_records_state(tmp_path) -> None:
     calls: list[str] = []

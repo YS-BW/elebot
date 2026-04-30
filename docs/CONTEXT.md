@@ -4,9 +4,9 @@
 
 相关源码：
 
-- [elebot/agent/context.py](../elebot/agent/context.py#L16-L140)
-- [elebot/agent/loop.py](../elebot/agent/loop.py#L241-L298)
-- [elebot/templates/agent/cron_rules.md](../elebot/templates/agent/cron_rules.md#L1-L7)
+- [elebot/agent/context.py](../elebot/agent/context.py#L16-L239)
+- [elebot/agent/loop.py](../elebot/agent/loop.py#L241-L299)
+- [elebot/templates/agent/cron_rules.md](../elebot/templates/agent/cron_rules.md#L1-L10)
 - [elebot/agent/memory/store.py](../elebot/agent/memory/store.py#L199-L254)
 - [elebot/session/manager.py](../elebot/session/manager.py#L37-L63)
 
@@ -35,7 +35,7 @@ AgentRunner
 - `skill_registry`
 - `timezone`
 
-创建这些 owner 的地方在 [elebot/agent/loop.py](../elebot/agent/loop.py#L241-L298)，也就是 `AgentLoop`。
+创建这些 owner 的地方在 [elebot/agent/loop.py](../elebot/agent/loop.py#L241-L299)，也就是 `AgentLoop`。
 
 ## 3. system prompt 现在由哪些块组成
 
@@ -50,7 +50,7 @@ AgentRunner
 5. 最近未被 Dream 吸收的历史
 6. cron 规则
 
-其中调度规则不再硬编码在 Python 字符串里，而是来自 [elebot/templates/agent/cron_rules.md](../elebot/templates/agent/cron_rules.md#L1-L7)。
+其中调度规则不再硬编码在 Python 字符串里，而是来自 [elebot/templates/agent/cron_rules.md](../elebot/templates/agent/cron_rules.md#L1-L10)。
 
 ## 4. `ContextBuilder` 不再记录 skill 使用
 
@@ -76,7 +76,7 @@ skills 摘要注入 = ContextBuilder
 
 ## 6. 为什么运行时元数据塞进 user message
 
-当前实现会在用户正文前加一段运行时元数据块，相关逻辑在 [elebot/agent/context.py](../elebot/agent/context.py#L97-L140)。
+当前实现会在用户正文前加一段运行时元数据块，相关逻辑在 [elebot/agent/context.py](../elebot/agent/context.py#L97-L180)。
 
 它包含的主要是：
 

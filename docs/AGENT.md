@@ -4,11 +4,11 @@
 
 相关源码：
 
-- [elebot/agent/loop.py](../elebot/agent/loop.py#L169-L1455)
-- [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L19-L89)
-- [elebot/agent/context.py](../elebot/agent/context.py#L16-L140)
+- [elebot/agent/loop.py](../elebot/agent/loop.py#L84-L1420)
+- [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L24-L95)
+- [elebot/agent/context.py](../elebot/agent/context.py#L16-L239)
 - [elebot/command/builtin.py](../elebot/command/builtin.py#L11-L58)
-- [elebot/cron/service.py](../elebot/cron/service.py#L25-L320)
+- [elebot/cron/service.py](../elebot/cron/service.py#L25-L384)
 
 ## 1. `AgentLoop` 现在是什么 owner
 
@@ -39,7 +39,7 @@ AgentLoop = 会话内控制中心
 
 1. 绑定外部依赖，例如 `Bus`、provider、workspace
 2. 创建执行 owner，例如 `MemoryStore`、`CronService`、`CommandRouter`
-3. 通过 [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L19-L89) 注册默认工具
+3. 通过 [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L24-L95) 注册默认工具
 4. 注册当前保留的 slash 命令
 
 这里要注意两条已经固定下来的边界：
@@ -152,5 +152,6 @@ cron 到点后最终还是通过 `AgentLoop.process_direct(...)` 跑一轮完整
 - `AgentLoop` 是会话执行 owner
 - interrupt 是 runtime 控制动作，不是 slash 命令
 - `CronService` 是调度领域 owner
+- 模型侧调度协议是 `cron_create / cron_list / cron_delete / cron_update`
 - `MemoryStore` 是记忆与 Dream 历史 owner
 - `ContextBuilder` 是纯上下文装配器

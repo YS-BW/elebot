@@ -323,6 +323,53 @@ class CronService:
         logger.info("Cron: added job '{}' ({})", job.name, job.id)
         return job
 
+    def update_job(
+        self,
+        job_id: str,
+        *,
+        message: str | None = None,
+        name: str | None = None,
+        schedule: CronSchedule | None = None,
+        delete_after_run: bool | None = None,
+    ) -> CronJob | None:
+        """更新一个 cron job。
+
+        参数:
+            job_id: 目标 job 标识。
+            message: 可选的新指令。
+            name: 可选的新展示名称。
+            schedule: 可选的新调度对象。
+            delete_after_run: 可选的新一次性删除策略。
+
+        返回:
+            更新后的 job；找不到时返回 ``None``。
+        """
+        if not self._running and not self._jobs:
+            self._jobs = self._load_jobs()
+            self._recompute_next_runs()
+
+        target = next((job for job in self._jobs if job.id == job_id), None)
+        if target is None:
+            return None
+
+        now_ms = _now_ms()
+        if message is not None:
+            target.payload.message = message
+        if name is not None:
+            target.name = name
+        if schedule is not None:
+            self._validate_schedule(schedule, now_ms=now_ms)
+            target.schedule = schedule
+            if delete_after_run is not None:
+                target.delete_after_run = delete_after_run
+        target.enabled = True
+        target.state.next_run_at_ms = self._compute_next_run(target.schedule, now_ms)
+        target.updated_at_ms = now_ms
+        self._save_jobs()
+        self._arm_timer()
+        logger.info("Cron: updated job '{}' ({})", target.name, target.id)
+        return target
+
     def remove_job(self, job_id: str) -> bool:
         """删除一个 cron job。"""
         if not self._running and not self._jobs:

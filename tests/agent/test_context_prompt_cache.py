@@ -235,7 +235,10 @@ def test_system_prompt_contains_cron_rules(tmp_path) -> None:
 
     prompt = builder.build_system_prompt()
     assert "# Cron 规则" in prompt
-    assert "cron(action=\"add\")" in prompt
+    assert "cron_create" in prompt
+    assert "cron_list" in prompt
+    assert "cron_delete" in prompt
+    assert "cron_update" in prompt
     assert "不需要再走额外的确认流" in prompt
     assert "不要用 `exec` 模拟定时" in prompt
     assert "不要再使用旧任务工具名" in prompt

@@ -17,6 +17,9 @@ _TOOL_FORMATS: dict[str, tuple[list[str], str, bool, bool]] = {
     "web_search": (["query"],                          'search "{}"', False, False),
     "web_fetch":  (["url"],                            "fetch {}",    True,  False),
     "list_dir":   (["path"],                           "ls {}",       True,  False),
+    "cron_create": (["instruction"],                   'cron_create("{}")', False, False),
+    "cron_delete": (["job_id"],                        'cron_delete("{}")', False, False),
+    "cron_update": (["job_id"],                        'cron_update("{}")', False, False),
 }
 
 # 匹配命令中的路径片段，兼容带引号且包含空格的路径。

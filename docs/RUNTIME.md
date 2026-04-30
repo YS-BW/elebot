@@ -5,7 +5,7 @@
 相关源码：
 
 - [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L86)
-- [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L323)
+- [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L350)
 - [elebot/runtime/lifecycle.py](../elebot/runtime/lifecycle.py#L10-L106)
 - [elebot/runtime/models.py](../elebot/runtime/models.py#L8-L57)
 - [tests/cli/test_runtime.py](../tests/cli/test_runtime.py#L13-L176)

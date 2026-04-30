@@ -5,11 +5,11 @@
 相关源码：
 
 - [elebot/cron/types.py](../elebot/cron/types.py#L9-L138)
-- [elebot/cron/service.py](../elebot/cron/service.py#L25-L320)
-- [elebot/agent/tools/cron.py](../elebot/agent/tools/cron.py#L14-L250)
-- [elebot/agent/loop.py](../elebot/agent/loop.py#L256-L298)
+- [elebot/cron/service.py](../elebot/cron/service.py#L25-L384)
+- [elebot/agent/tools/cron.py](../elebot/agent/tools/cron.py#L14-L406)
+- [elebot/agent/loop.py](../elebot/agent/loop.py#L257-L299)
 - [elebot/agent/loop.py](../elebot/agent/loop.py#L520-L589)
-- [elebot/config/paths.py](../elebot/config/paths.py#L38-L45)
+- [elebot/config/paths.py](../elebot/config/paths.py#L37-L44)
 - [elebot/runtime/app.py](../elebot/runtime/app.py#L184-L204)
 
 ## 1. 当前已经没有旧 `tasks`
@@ -36,7 +36,7 @@ CronSchedule / CronJob / CronService
 ~/.elebot/workspace/cron/jobs.json
 ```
 
-路径 helper 在 [elebot/config/paths.py](../elebot/config/paths.py#L38-L45)。
+路径 helper 在 [elebot/config/paths.py](../elebot/config/paths.py#L37-L44)。
 
 这意味着：
 
@@ -74,7 +74,7 @@ CronSchedule / CronJob / CronService
 
 ### 3.3 `CronService`
 
-定义在 [elebot/cron/service.py](../elebot/cron/service.py#L25-L320)。
+定义在 [elebot/cron/service.py](../elebot/cron/service.py#L25-L384)。
 
 它当前负责：
 
@@ -84,40 +84,38 @@ CronSchedule / CronJob / CronService
 - 后台唤醒
 - 执行 due jobs
 - 维护最近运行状态
-- `add / list / remove`
+- `add / list / get / update / remove`
 
-## 4. 模型侧现在只剩一个工具：`cron`
+## 4. 模型侧现在是 CRUD 四个工具
 
-工具定义在 [elebot/agent/tools/cron.py](../elebot/agent/tools/cron.py#L120-L250)。
+工具定义在 [elebot/agent/tools/cron.py](../elebot/agent/tools/cron.py#L165-L406)。
 
 当前固定协议是：
 
-- `cron(action="add", ...)`
-- `cron(action="list")`
-- `cron(action="remove", job_id="...")`
+- `cron_create(instruction, after_seconds|at|every_seconds)`
+- `cron_list()`
+- `cron_delete(job_id)`
+- `cron_update(job_id, instruction?, after_seconds|at|every_seconds?)`
 
-`add` 当前只支持三种调度参数：
+当前固定规则：
 
-- `instruction`
-- `every_seconds`
-- `cron_expr`
-- `at`
-
-并且还有三条固定规则：
-
-- `instruction` 是实际执行内容，`name` 只是可选展示标题
-- `tz` 只能和 `cron_expr` 一起使用
+- `instruction` 是实际执行内容，模型侧不再暴露 `name`
+- `cron_create` 和 `cron_update` 的时间参数只能三选一：`after_seconds`、`at`、`every_seconds`
+- `after_seconds` 会转换成一次性 `at` job
 - `at` 接收 ISO 时间；没有 offset 时使用 agent 默认时区
-- 一次性 `at` job 默认 `delete_after_run=True`
+- `every_seconds` 会创建周期 job
+- `cron_list` 只列当前启用中的任务
+- `cron_delete` 和 `cron_update` 只按 `job_id` 精确定位
+- 底层 `CronService` 仍然保留 `kind="cron"` 与时区校验能力，但这一轮不对模型开放 `cron_expr / tz`
 
 ## 5. 运行时闭环现在怎么走
 
 当前真实链路是：
 
 ```text
-模型调用 cron(action="add")
+模型调用 cron_create
   ↓
-CronTool
+CronCreateTool
   ↓
 CronService.add_job()
   ↓
@@ -157,6 +155,6 @@ session_key = cron:<job_id>
 - `/cron` slash 命令
 - `/task` 兼容命令
 - 旧 `tasks.json` 迁移
-- `update / enable / disable / run-now` 的模型工具协议
+- `enable / disable / run-now` 的模型工具协议
 
-当前用户侧人工管理 cron，还不是通过 slash 命令，而是通过模型调用 `cron` 工具。
+当前用户侧人工管理 cron，还不是通过 slash 命令，而是通过 `cron_create / cron_list / cron_delete / cron_update` 这四个工具。

@@ -92,11 +92,12 @@ def register_agent_command(app: typer.Typer) -> None:
                 )
                 if not renderer.streamed:
                     await renderer.close()
-                    print_agent_response(
-                        response.content if response else "",
-                        render_markdown=markdown,
-                        metadata=response.metadata if response else None,
-                    )
+                    if response and response.content:
+                        print_agent_response(
+                            response.content,
+                            render_markdown=markdown,
+                            metadata=response.metadata,
+                        )
                 thinking = None
                 await runtime.close()
 

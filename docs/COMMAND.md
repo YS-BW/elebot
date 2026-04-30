@@ -109,7 +109,7 @@ command/
 
 中断现在是 runtime 控制动作，不是命令协议。
 
-调度现在通过模型调用 `cron` 工具完成，而不是通过 slash 命令管理。
+调度现在通过模型调用 `cron_create / cron_list / cron_delete / cron_update` 完成，而不是通过 slash 命令管理。
 
 ## 6. 当前固定边界
 

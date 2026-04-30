@@ -5,13 +5,13 @@
 相关源码：
 
 - [elebot/cli/app.py](../elebot/cli/app.py#L1-L67)
-- [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L323)
-- [elebot/runtime/models.py](../elebot/runtime/models.py#L8-L43)
+- [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L350)
+- [elebot/runtime/models.py](../elebot/runtime/models.py#L8-L57)
 - [elebot/bus/queue.py](../elebot/bus/queue.py#L8-L40)
-- [elebot/agent/loop.py](../elebot/agent/loop.py#L241-L958)
+- [elebot/agent/loop.py](../elebot/agent/loop.py#L84-L1420)
 - [elebot/command/router.py](../elebot/command/router.py#L15-L82)
 - [elebot/command/builtin.py](../elebot/command/builtin.py#L11-L58)
-- [elebot/cron/service.py](../elebot/cron/service.py#L25-L320)
+- [elebot/cron/service.py](../elebot/cron/service.py#L25-L384)
 - [elebot/agent/memory/store.py](../elebot/agent/memory/store.py#L18-L320)
 - [elebot/providers/resolution.py](../elebot/providers/resolution.py#L11-L150)
 - [elebot/providers/factory.py](../elebot/providers/factory.py#L10-L72)
@@ -118,7 +118,7 @@ agent.process_direct(...)
 - `CronJob`
 - `CronService`
 
-模型只通过 `cron` 工具与它交互。
+模型只通过 `cron_create / cron_list / cron_delete / cron_update` 与它交互。
 
 ### 2.7 `agent/memory`
 
@@ -188,5 +188,5 @@ runtime / agent / cron / memory = 业务 owner
 当前项目有三条必须记住的事实：
 
 1. 未来多入口统一复用 runtime，而不是重新引入 facade。
-2. 调度领域统一从 `CronService` 对外，模型工具只保留 `cron`。
+2. 调度领域统一从 `CronService` 对外，模型工具固定为 `cron_create / cron_list / cron_delete / cron_update`。
 3. Dream 历史统一从 `MemoryStore` 对外，命令层不再知道 `GitStore` 细节。

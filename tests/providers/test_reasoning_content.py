@@ -63,10 +63,9 @@ def test_parse_dict_extracts_pseudo_tool_call_markup() -> None:
             "message": {
                 "content": (
                     "<tool_call>\n"
-                    "<function=cron>\n"
-                    "<parameter=action>add</parameter>\n"
+                    "<function=cron_create>\n"
                     "<parameter=at>2026-04-29T13:56:00+08:00</parameter>\n"
-                    "<parameter=prompt>请立即执行命令打开微信：exec(\"open -a WeChat\")</parameter>\n"
+                    "<parameter=instruction>请立即执行命令打开微信：exec(\"open -a WeChat\")</parameter>\n"
                     "</function>\n"
                     "</tool_call>"
                 ),
@@ -79,16 +78,15 @@ def test_parse_dict_extracts_pseudo_tool_call_markup() -> None:
 
     assert result.content is None
     assert len(result.tool_calls) == 1
-    assert result.tool_calls[0].name == "cron"
+    assert result.tool_calls[0].name == "cron_create"
     assert result.tool_calls[0].arguments == {
-        "action": "add",
         "at": "2026-04-29T13:56:00+08:00",
         "instruction": "请立即执行命令打开微信：exec(\"open -a WeChat\")",
     }
 
 
-def test_parse_dict_normalizes_cron_command_alias() -> None:
-    """结构化 tool_calls 里的 cron.command 也应归一化成 instruction。"""
+def test_parse_dict_preserves_cron_create_arguments() -> None:
+    """结构化 tool_calls 应保留当前协议的 cron_create 参数。"""
     with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
         provider = OpenAICompatProvider()
 
@@ -101,8 +99,8 @@ def test_parse_dict_normalizes_cron_command_alias() -> None:
                         "id": "call_1",
                         "type": "function",
                         "function": {
-                            "name": "cron",
-                            "arguments": "{\"action\":\"add\",\"command\":\"打开微信\",\"every_seconds\":60}",
+                            "name": "cron_create",
+                            "arguments": "{\"instruction\":\"打开微信\",\"every_seconds\":60}",
                         },
                     }
                 ],
@@ -115,14 +113,13 @@ def test_parse_dict_normalizes_cron_command_alias() -> None:
 
     assert len(result.tool_calls) == 1
     assert result.tool_calls[0].arguments == {
-        "action": "add",
         "instruction": "打开微信",
         "every_seconds": 60,
     }
 
 
-def test_parse_dict_flattens_nested_cron_job_payload() -> None:
-    """兼容模型返回的 cron.job 嵌套结构也应收口成固定参数。"""
+def test_parse_dict_preserves_nested_arguments_shape() -> None:
+    """当前协议外的嵌套参数不再被 provider 擅自改写。"""
     with patch("elebot.providers.openai_compat_provider.AsyncOpenAI"):
         provider = OpenAICompatProvider()
 
@@ -134,12 +131,11 @@ def test_parse_dict_flattens_nested_cron_job_payload() -> None:
                         "id": "call_1",
                         "type": "function",
                         "function": {
-                            "name": "cron",
+                            "name": "cron_create",
                             "arguments": (
-                                "{\"action\":\"add\",\"job\":{"
-                                "\"name\":\"打开微信\","
+                                "{\"job\":{"
                                 "\"at\":\"2026-04-29T14:11:00+08:00\","
-                                "\"payload\":{\"kind\":\"agentTurn\",\"instruction\":\"请打开微信\"}"
+                                "\"payload\":{\"instruction\":\"请打开微信\"}"
                                 "}}"
                             ),
                         },
@@ -154,10 +150,10 @@ def test_parse_dict_flattens_nested_cron_job_payload() -> None:
 
     assert len(result.tool_calls) == 1
     assert result.tool_calls[0].arguments == {
-        "action": "add",
-        "name": "打开微信",
-        "at": "2026-04-29T14:11:00+08:00",
-        "instruction": "请打开微信",
+        "job": {
+            "at": "2026-04-29T14:11:00+08:00",
+            "payload": {"instruction": "请打开微信"},
+        }
     }
 
 
@@ -211,7 +207,7 @@ def test_parse_chunks_extracts_pseudo_tool_call_markup() -> None:
         {
             "choices": [{
                 "finish_reason": None,
-                "delta": {"content": "<tool_call>\n<function=cron>\n"},
+                "delta": {"content": "<tool_call>\n<function=cron_create>\n"},
             }],
         },
         {
@@ -219,7 +215,6 @@ def test_parse_chunks_extracts_pseudo_tool_call_markup() -> None:
                 "finish_reason": None,
                 "delta": {
                     "content": (
-                        "<parameter=action>add</parameter>\n"
                         "<parameter=every_seconds>60</parameter>\n"
                     )
                 },
@@ -230,7 +225,7 @@ def test_parse_chunks_extracts_pseudo_tool_call_markup() -> None:
                 "finish_reason": "stop",
                 "delta": {
                     "content": (
-                        "<parameter=prompt>打开微信</parameter>\n"
+                        "<parameter=instruction>打开微信</parameter>\n"
                         "</function>\n</tool_call>"
                     )
                 },
@@ -242,9 +237,8 @@ def test_parse_chunks_extracts_pseudo_tool_call_markup() -> None:
 
     assert result.content is None
     assert len(result.tool_calls) == 1
-    assert result.tool_calls[0].name == "cron"
+    assert result.tool_calls[0].name == "cron_create"
     assert result.tool_calls[0].arguments == {
-        "action": "add",
         "every_seconds": 60,
         "instruction": "打开微信",
     }

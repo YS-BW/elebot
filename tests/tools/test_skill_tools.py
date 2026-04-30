@@ -91,4 +91,7 @@ def test_register_default_tools_includes_skill_management_tools(tmp_path) -> Non
     assert "install_skill" in registry.tool_names
     assert "list_skills" in registry.tool_names
     assert "uninstall_skill" in registry.tool_names
-    assert "cron" in registry.tool_names
+    assert "cron_create" in registry.tool_names
+    assert "cron_list" in registry.tool_names
+    assert "cron_delete" in registry.tool_names
+    assert "cron_update" in registry.tool_names

@@ -131,12 +131,9 @@ async def run_interactive_loop(
                     continue
                 if metadata.get("_stream_end"):
                     if renderer and belongs_to_active_turn:
-                        preamble_lines = await renderer.on_end(
+                        await renderer.on_end(
                             resuming=metadata.get("_resuming", False),
                         )
-                        if preamble_lines:
-                            for line in preamble_lines:
-                                await print_interactive_progress_line(line, thinking)
                     continue
                 if metadata.get("_streamed"):
                     if belongs_to_active_turn:

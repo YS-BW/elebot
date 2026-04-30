@@ -548,7 +548,7 @@ class AgentLoop:
         返回:
             无返回值。
         """
-        from elebot.agent.tools.cron import CronTool
+        from elebot.agent.tools.cron import CronCreateTool
 
         reminder_note = (
             "[Scheduled Instruction]\n\n"
@@ -557,9 +557,9 @@ class AgentLoop:
             f"定时指令：{job.payload.message}"
         )
 
-        cron_tool = self.tools.get("cron")
+        cron_tool = self.tools.get("cron_create")
         cron_token = None
-        if isinstance(cron_tool, CronTool):
+        if isinstance(cron_tool, CronCreateTool):
             cron_token = cron_tool.set_cron_context(True)
         try:
             response = await self.process_direct(
@@ -569,7 +569,7 @@ class AgentLoop:
                 chat_id=job.payload.chat_id,
             )
         finally:
-            if isinstance(cron_tool, CronTool) and cron_token is not None:
+            if isinstance(cron_tool, CronCreateTool) and cron_token is not None:
                 cron_tool.reset_cron_context(cron_token)
 
         if response is None or not response.content.strip():

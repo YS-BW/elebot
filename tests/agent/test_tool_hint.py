@@ -1,7 +1,7 @@
 """Tests for tool hint formatting (elebot.utils.tool_hints)."""
 
-from elebot.utils.tool_hints import format_tool_hints
 from elebot.providers.base import ToolCallRequest
+from elebot.utils.tool_hints import format_tool_hints
 
 
 def _tc(name: str, args) -> ToolCallRequest:
@@ -106,6 +106,18 @@ class TestToolHintKnownTools:
     def test_web_fetch(self):
         result = _hint([_tc("web_fetch", {"url": "https://example.com/page"})])
         assert result == "fetch https://example.com/page"
+
+    def test_cron_create(self):
+        result = _hint([_tc("cron_create", {"instruction": "1 分钟后打开微信"})])
+        assert result == 'cron_create("1 分钟后打开微信")'
+
+    def test_cron_delete(self):
+        result = _hint([_tc("cron_delete", {"job_id": "cron_123"})])
+        assert result == 'cron_delete("cron_123")'
+
+    def test_cron_update(self):
+        result = _hint([_tc("cron_update", {"job_id": "cron_123"})])
+        assert result == 'cron_update("cron_123")'
 
 
 class TestToolHintMCP:
