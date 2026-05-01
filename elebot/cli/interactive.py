@@ -246,7 +246,10 @@ async def run_interactive_loop(
                             if turn_done_task in done:
                                 break
                             if interrupt_task is not None and interrupt_task in done:
-                                interrupt_task.result()
+                                if not interrupt_task.result():
+                                    # 非真实 Esc 中断（如 Windows 平台限制），跳过
+                                    interrupt_task = None
+                                    continue
                                 interrupt_result = interrupt_session(
                                     session_id,
                                     "user_interrupt",

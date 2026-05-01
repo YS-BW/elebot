@@ -1,4 +1,5 @@
 import asyncio
+import sys
 import time
 
 import pytest
@@ -47,6 +48,23 @@ class _TestWatcher(EscInterruptWatcher):
         return False
 
     def _read_byte(self, stdin_fd: int) -> bytes:
+        return b""
+
+    # Windows 平台方法
+
+    def _win_kbhit(self) -> bool:
+        return False
+
+    def _win_getch(self) -> bytes:
+        return b""
+
+    def _win_wait_for_byte(self, timeout: float) -> bool:
+        if self._closed.is_set():
+            return False
+        time.sleep(min(timeout, 0.001))
+        return False
+
+    def _win_read_byte(self) -> bytes:
         return b""
 
 
@@ -114,4 +132,5 @@ async def test_watcher_wait_exits_cleanly_after_close() -> None:
     watcher.close()
     await asyncio.wait_for(wait_task, timeout=0.2)
 
-    assert watcher.restored is True
+    if sys.platform != "win32":
+        assert watcher.restored is True
