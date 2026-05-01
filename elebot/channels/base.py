@@ -29,6 +29,9 @@ class ChannelRuntimeControl(Protocol):
     async def get_status_snapshot(self, session_id: str) -> RuntimeStatusSnapshot:
         """获取指定会话的状态快照。"""
 
+    async def transcribe_audio(self, file_path: str) -> str:
+        """转写一段本地音频。"""
+
 
 class BaseChannel(ABC):
     """多通道入口的基础适配器。"""
@@ -53,6 +56,7 @@ class BaseChannel(ABC):
         client_id: str,
         chat_id: str,
         content: str,
+        media: list[str] | None = None,
         session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
@@ -70,10 +74,22 @@ class BaseChannel(ABC):
                 sender_id=client_id,
                 chat_id=chat_id,
                 content=content,
+                media=list(media or []),
                 metadata=inbound_metadata,
                 session_key_override=session_id,
             )
         )
+
+    async def transcribe_audio(self, file_path: str) -> str:
+        """通过 runtime 统一发起语音转写。
+
+        参数:
+            file_path: 本地音频路径。
+
+        返回:
+            转写文本；失败时返回空字符串。
+        """
+        return await self.runtime.transcribe_audio(file_path)
 
     @abstractmethod
     async def start(self) -> None:

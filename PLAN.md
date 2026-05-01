@@ -37,6 +37,7 @@ EleBot 当前阶段的目标不变：
 - 单 runtime、单会话下的真实 interrupt
 - `serve stdio` 第二入口
 - `channels/` 适配层与 `websocket / weixin` 两种内置 channel
+- runtime 级语音转写与语音合成 provider
 
 ### 2.2 当前还没有
 
@@ -169,6 +170,7 @@ utils         = 低层通用小工具
 - CLI 根命令当前固定为：`onboard / agent / channels / serve / status`
 - 当前已经有 `elebot channels login weixin`
 - 微信 channel 第一版固定为个人微信私聊文本入口，不做流式、不做群聊、不做媒体
+- `transcription` 当前只接 `qwen3-asr-flash`
 
 ## 3. 模块完成定义
 
@@ -277,7 +279,7 @@ utils         = 低层通用小工具
 - `AgentLoop` 改为持有 `CronService`
 - `ElebotRuntime` 删除 `list_tasks/remove_task`，改成 `list_cron_jobs/remove_cron_job`
 - `/task` 已彻底移除，也不新增 `/cron`
-- `templates/agent/task_rules.md` 已替换为 `templates/agent/cron_rules.md`
+- 调度规则已并入 `templates/IDENTITY.md`
 - `workspace/cron/jobs.json` 成为唯一调度状态文件
 - 这轮只做 `cron`，不引入 `heartbeat`
 - 当前模型侧协议已经进一步收口为四个 CRUD 工具：

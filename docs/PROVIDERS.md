@@ -4,11 +4,12 @@
 
 相关源码：
 
-- [elebot/config/schema.py](../elebot/config/schema.py#L28-L159)
+- [elebot/config/schema.py](../elebot/config/schema.py#L157-L208)
 - [elebot/providers/registry.py](../elebot/providers/registry.py#L11-L340)
 - [elebot/providers/resolution.py](../elebot/providers/resolution.py#L11-L150)
 - [elebot/providers/factory.py](../elebot/providers/factory.py#L10-L72)
 - [elebot/providers/model_catalog.py](../elebot/providers/model_catalog.py#L10-L257)
+- [elebot/providers/transcription.py](../elebot/providers/transcription.py#L1-L199)
 - [elebot/cli/onboard.py](../elebot/cli/onboard.py#L19-L23)
 - [elebot/cli/onboard.py](../elebot/cli/onboard.py#L639-L668)
 
@@ -157,7 +158,26 @@ runtime 和 CLI 只复用这些能力，不再各自保留第二套 provider 知
 - 首次 `onboard` 生成的默认 provider 是 `deepseek`
 - 首次 `onboard` 生成的默认模型是 `deepseek-v4-flash`
 
-## 9. DeepSeek 的 assistant transcript 为什么要补 `reasoning_content`
+## 9. runtime 级辅助音频 provider
+
+除主 LLM provider 之外，当前还有一条已经落地、但不参与 `resolve_provider()` 的辅助音频链路：
+
+- 顶层 `transcription`
+  - 只负责语音转写
+  - 当前固定模型是 `qwen3-asr-flash`
+
+这两条链路的固定边界是：
+
+- 配置仍然只放在 [elebot/config/schema.py](../elebot/config/schema.py#L157-L199)
+- 具体协议 owner 在 [elebot/providers/transcription.py](../elebot/providers/transcription.py#L1-L199)
+- `runtime` 只负责装配和委托，不把它混进主 LLM provider 解析层
+
+这意味着：
+
+- `providers.registry` / `resolution` / `factory` 仍然只讨论主聊天模型
+- 语音输入能力由 runtime 级辅助 provider 单独承接
+
+## 10. DeepSeek 的 assistant transcript 为什么要补 `reasoning_content`
 
 当前 DeepSeek 还有一个已经坐实的协议事实：在 thinking mode 下，下一轮重放 assistant transcript 时，消息里必须继续带回 `reasoning_content`。最容易出问题的是两类历史：
 

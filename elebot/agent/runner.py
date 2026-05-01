@@ -570,10 +570,9 @@ class AgentRunner:
                     max_iterations=spec.max_iterations,
                 )
             else:
-                final_content = render_template(
-                    "agent/max_iterations_message.md",
-                    strip=True,
-                    max_iterations=spec.max_iterations,
+                final_content = (
+                    f"我已经达到工具调用的最大迭代次数（{spec.max_iterations}），"
+                    "但仍未完成任务。你可以尝试把任务拆成更小的步骤后再执行。"
                 )
             self._append_final_message(messages, final_content)
 

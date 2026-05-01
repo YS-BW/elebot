@@ -53,6 +53,7 @@ class DirectProcessResult:
     stop_reason: str = "completed"
     session_key: str = ""
     interrupt_reason: InterruptReason | None = None
+    saw_stream_delta: bool = False
 
 
 @dataclasses.dataclass(slots=True)
@@ -91,6 +92,7 @@ class _LoopHook(AgentHook):
         channel: str = "cli",
         chat_id: str = "direct",
         message_id: str | None = None,
+        session_key: str | None = None,
     ) -> None:
         """绑定一轮执行需要回写到外层的回调。
 
@@ -105,7 +107,9 @@ class _LoopHook(AgentHook):
         self._channel = channel
         self._chat_id = chat_id
         self._message_id = message_id
+        self._session_key = session_key
         self._stream_buf = ""
+        self._saw_stream_delta = False
 
     def wants_streaming(self) -> bool:
         """只有外层声明需要流式输出时，才要求 Runner 逐段回调。"""
@@ -122,6 +126,7 @@ class _LoopHook(AgentHook):
         new_clean = strip_think(self._stream_buf)
         incremental = new_clean[len(prev_clean) :]
         if incremental and self._on_stream:
+            self._saw_stream_delta = True
             await self._on_stream(incremental)
 
     async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
@@ -129,6 +134,11 @@ class _LoopHook(AgentHook):
         if self._on_stream_end:
             await self._on_stream_end(resuming=resuming)
         self._stream_buf = ""
+
+    @property
+    def saw_stream_delta(self) -> bool:
+        """返回本轮是否实际收到过正文 delta。"""
+        return self._saw_stream_delta
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
         """在工具执行前补一层对用户可见的进度反馈。
@@ -148,7 +158,12 @@ class _LoopHook(AgentHook):
         for tc in context.tool_calls:
             args_str = json.dumps(tc.arguments, ensure_ascii=False)
             logger.info("Tool call: {}({})", tc.name, args_str[:200])
-        self._loop._set_tool_context(self._channel, self._chat_id, self._message_id)
+        self._loop._set_tool_context(
+            self._channel,
+            self._chat_id,
+            self._message_id,
+            self._session_key,
+        )
 
     async def after_iteration(self, context: AgentHookContext) -> None:
         """在迭代结束后统一记录 token 用量。"""
@@ -169,7 +184,6 @@ class AgentLoop:
     """负责把消息总线、会话、Provider 和工具闭环串成主执行链路。"""
 
     _RUNTIME_CHECKPOINT_KEY = "runtime_checkpoint"
-
     def __init__(
         self,
         bus: MessageBus,
@@ -290,8 +304,11 @@ class AgentLoop:
             web_config=self.web_config,
             restrict_to_workspace=self.restrict_to_workspace,
             cron_service=self.cron_service,
+            provider=provider,
+            model=self.model,
             default_timezone=default_timezone,
             extra_allowed_dirs=[GLOBAL_SKILLS_DIR],
+            sessions=self.sessions,
         )
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
@@ -610,13 +627,20 @@ class AgentLoop:
         finally:
             self._mcp_connecting = False
 
-    def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
+    def _set_tool_context(
+        self,
+        channel: str,
+        chat_id: str,
+        message_id: str | None = None,
+        session_key: str | None = None,
+    ) -> None:
         """更新本轮工具执行上下文。
 
         参数:
             channel: 当前消息来源通道。
             chat_id: 当前会话标识。
             message_id: 可选的消息编号。
+            session_key: 当前会话键。
 
         返回:
             无返回值。
@@ -627,9 +651,12 @@ class AgentLoop:
             if not callable(setter):
                 continue
             try:
-                setter(channel, chat_id, message_id)
+                setter(channel, chat_id, message_id, session_key)
             except TypeError:
-                setter(channel, chat_id)
+                try:
+                    setter(channel, chat_id, message_id)
+                except TypeError:
+                    setter(channel, chat_id)
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -663,7 +690,7 @@ class AgentLoop:
         chat_id: str = "direct",
         message_id: str | None = None,
         pending_queue: asyncio.Queue | None = None,
-    ) -> tuple[str | None, list[str], list[dict], str, bool]:
+    ) -> tuple[str | None, list[str], list[dict], str, bool, bool]:
         """Run the agent iteration loop.
 
         *on_stream*: called with each content delta during streaming.
@@ -671,7 +698,7 @@ class AgentLoop:
         ``resuming=True`` means tool calls follow (spinner should restart);
         ``resuming=False`` means this is the final response.
 
-        Returns (final_content, tools_used, messages, stop_reason, had_injections).
+        Returns (final_content, tools_used, messages, stop_reason, had_injections, saw_stream_delta).
         """
         loop_hook = _LoopHook(
             self,
@@ -681,6 +708,7 @@ class AgentLoop:
             channel=channel,
             chat_id=chat_id,
             message_id=message_id,
+            session_key=session.key if session is not None else None,
         )
         hook: AgentHook = (
             CompositeHook([loop_hook] + self._extra_hooks) if self._extra_hooks else loop_hook
@@ -740,7 +768,14 @@ class AgentLoop:
             logger.warning("Max iterations ({}) reached", self.max_iterations)
         elif result.stop_reason == "error":
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
-        return result.final_content, result.tools_used, result.messages, result.stop_reason, result.had_injections
+        return (
+            result.final_content,
+            result.tools_used,
+            result.messages,
+            result.stop_reason,
+            result.had_injections,
+            loop_hook.saw_stream_delta,
+        )
 
     async def run(self) -> None:
         """持续消费消息总线并分发任务。
@@ -996,7 +1031,12 @@ class AgentLoop:
 
         await self.consolidator.maybe_consolidate_by_tokens(session)
 
-        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
+        self._set_tool_context(
+            msg.channel,
+            msg.chat_id,
+            msg.metadata.get("message_id"),
+            key,
+        )
         self._record_explicit_skill_mentions(
             msg.content,
             channel=msg.channel,
@@ -1010,6 +1050,7 @@ class AgentLoop:
             current_message=msg.content,
             session_summary=pending,
             media=msg.media if msg.media else None,
+            attachments=msg.metadata.get("attachments"),
             channel=msg.channel,
             chat_id=msg.chat_id,
         )
@@ -1029,7 +1070,7 @@ class AgentLoop:
                 )
             )
 
-        final_content, tools_used, all_msgs, stop_reason, had_injections = await self._run_agent_loop(
+        final_content, tools_used, all_msgs, stop_reason, had_injections, saw_stream_delta = await self._run_agent_loop(
             initial_messages,
             on_progress=on_progress or _bus_progress,
             on_stream=on_stream,
@@ -1053,7 +1094,7 @@ class AgentLoop:
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
 
         meta = dict(msg.metadata or {})
-        if on_stream is not None and stop_reason != "error":
+        if saw_stream_delta and stop_reason != "error":
             meta["_streamed"] = True
         self._clear_interrupt_state(key)
         outbound = OutboundMessage(
@@ -1069,6 +1110,7 @@ class AgentLoop:
             messages=all_msgs,
             stop_reason=stop_reason,
             session_key=key,
+            saw_stream_delta=saw_stream_delta,
         )
 
     def _record_explicit_skill_mentions(

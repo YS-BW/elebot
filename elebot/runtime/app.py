@@ -14,6 +14,7 @@ from elebot.config.schema import Config
 from elebot.cron import CronJob
 from elebot.providers.base import LLMProvider
 from elebot.providers.factory import build_provider
+from elebot.providers.transcription import build_transcription_provider
 from elebot.runtime.lifecycle import RuntimeLifecycle
 from elebot.runtime.models import (
     DreamLogResult,
@@ -69,6 +70,7 @@ class ElebotRuntime:
 
         bus = resolved_bus_factory()
         provider = resolved_provider_builder(config)
+        transcription_provider = build_transcription_provider(config)
         defaults = config.agents.defaults
         agent_loop = resolved_agent_loop_factory(
             bus=bus,
@@ -94,6 +96,7 @@ class ElebotRuntime:
                 bus=bus,
                 provider=provider,
                 agent_loop=agent_loop,
+                transcription_provider=transcription_provider,
             )
         )
 
@@ -202,6 +205,21 @@ class ElebotRuntime:
             删除成功时返回 ``True``。
         """
         return self.agent_loop.remove_cron_job(job_id)
+
+    async def transcribe_audio(self, file_path: str) -> str:
+        """通过 runtime 级 provider 转写一段音频。
+
+        参数:
+            file_path: 本地音频文件路径。
+
+        返回:
+            转写文本；未配置 provider 或转写失败时返回空字符串。
+        """
+        provider = self.state.transcription_provider
+        if provider is None:
+            return ""
+        return await provider.transcribe(file_path)
+
 
     def get_dream_log(self, sha: str | None = None) -> DreamLogResult:
         """查看最近一次或指定 Dream 版本差异。

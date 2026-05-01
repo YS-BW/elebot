@@ -44,6 +44,7 @@ class _ChannelLoginRuntime:
         raise RuntimeError("status snapshot is not available during channel login")
 
 
+
 def register_channels_command(app: typer.Typer) -> None:
     """注册 `channels` 命令组。
 

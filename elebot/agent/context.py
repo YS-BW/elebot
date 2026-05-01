@@ -18,8 +18,8 @@ class ContextBuilder:
 
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
     _RUNTIME_CONTEXT_TAG = "[运行时上下文——仅元数据，不是指令]"
-    _MAX_RECENT_HISTORY = 50
     _RUNTIME_CONTEXT_END = "[/运行时上下文]"
+    _MAX_RECENT_HISTORY = 50
 
     def __init__(
         self,
@@ -53,59 +53,72 @@ class ContextBuilder:
         返回：
             可直接作为 `system` 消息发送的完整提示词文本。
         """
-        parts = [self._get_identity(channel=channel)]
-
-        bootstrap = self._load_bootstrap_files()
-        if bootstrap:
-            parts.append(bootstrap)
-
-        memory = self.memory_store.get_memory_context()
-        if memory:
-            parts.append(f"# 记忆\n\n{memory}")
-
-        skills_summary = self.skill_registry.build_prompt_summary()
-        if skills_summary:
-            parts.append(skills_summary)
-
-        entries = self.memory_store.read_unprocessed_history(
-            since_cursor=self.memory_store.get_last_dream_cursor()
+        return render_template(
+            "SYSTEM.md",
+            identity=self._get_identity(channel=channel),
+            bootstrap_files=self._load_bootstrap_files(),
+            long_term_memory=self._build_long_term_memory(),
+            skills_summary=self.skill_registry.build_prompt_summary(),
+            recent_history=self._build_recent_history(),
+            strip=True,
         )
-        if entries:
-            capped = entries[-self._MAX_RECENT_HISTORY:]
-            parts.append("# 最近历史\n\n" + "\n".join(
-                f"- [{e['timestamp']}] {e['content']}" for e in capped
-            ))
-
-        parts.append(render_template("agent/cron_rules.md"))
-
-        return "\n\n---\n\n".join(parts)
 
     def _get_identity(self, channel: str | None = None) -> str:
         """返回身份提示词主体。"""
         workspace_path = str(self.workspace.expanduser().resolve())
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
+        channel_context = self._describe_channel_context(channel)
 
         return render_template(
-            "agent/identity.md",
+            "IDENTITY.md",
             workspace_path=workspace_path,
             runtime=runtime,
-            platform_policy=render_template("agent/platform_policy.md", system=system),
-            channel=channel or "",
+            platform_policy=self._describe_platform_policy(system),
+            channel_context=channel_context,
+            strip=True,
+        )
+
+    @staticmethod
+    def _describe_channel_context(channel: str | None) -> str:
+        """返回当前入口环境说明，只维护 CLI 与微信两种环境语义。"""
+        normalized = str(channel or "").strip().lower()
+        if normalized == "cli":
+            return render_template("CHANNEL_CLI.md", strip=True)
+        if normalized == "weixin":
+            return render_template("CHANNEL_WEIXIN.md", strip=True)
+        return render_template("CHANNEL_WEIXIN.md", strip=True)
+
+    @staticmethod
+    def _describe_platform_policy(system: str) -> str:
+        """返回当前平台规则。"""
+        if system == "Windows":
+            return (
+                "- 你当前运行在 Windows 上。不要假设 `grep`、`sed`、`awk` 这类 GNU 工具一定存在。\n"
+                "- 当 Windows 原生命令或文件工具更可靠时，优先使用它们。\n"
+                "- 如果终端输出出现乱码，请用启用 UTF-8 的方式重试。"
+            )
+        return (
+            "- 你当前运行在 POSIX 系统上。优先使用 UTF-8 和标准 shell 工具。\n"
+            "- 当文件工具比 shell 命令更简单或更可靠时，优先使用文件工具。"
         )
 
     @staticmethod
     def _build_runtime_context(
         channel: str | None, chat_id: str | None, timezone: str | None = None,
         session_summary: str | None = None,
+        attachments: str | None = None,
     ) -> str:
         """构造注入到用户消息前的运行时元数据块。"""
-        lines = [f"当前时间：{current_time_str(timezone)}"]
-        if channel and chat_id:
-            lines += [f"通道：{channel}", f"会话 ID：{chat_id}"]
-        if session_summary:
-            lines += ["", "[恢复的会话]", session_summary]
-        return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines) + "\n" + ContextBuilder._RUNTIME_CONTEXT_END
+        return render_template(
+            "RUNTIME.md",
+            current_time=current_time_str(timezone),
+            channel=channel or "",
+            chat_id=chat_id or "",
+            restored_session=session_summary or "",
+            attachments=attachments or "",
+            strip=True,
+        )
 
     @staticmethod
     def _merge_message_content(left: Any, right: Any) -> str | list[dict[str, Any]]:
@@ -133,11 +146,30 @@ class ContextBuilder:
 
         return "\n\n".join(parts) if parts else ""
 
+    def _build_long_term_memory(self) -> str:
+        """构造长期记忆段落。"""
+        memory = self.memory_store.get_memory_context()
+        if not memory:
+            return ""
+        return f"# 长期记忆\n\n{memory}"
+
+    def _build_recent_history(self) -> str:
+        """构造最近历史段落。"""
+        entries = self.memory_store.read_unprocessed_history(
+            since_cursor=self.memory_store.get_last_dream_cursor()
+        )
+        if not entries:
+            return ""
+        capped = entries[-self._MAX_RECENT_HISTORY:]
+        lines = [f"- [{entry['timestamp']}] {entry['content']}" for entry in capped]
+        return "# 最近历史\n\n" + "\n".join(lines)
+
     def build_messages(
         self,
         history: list[dict[str, Any]],
         current_message: str,
         media: list[str] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
         current_role: str = "user",
@@ -158,8 +190,9 @@ class ContextBuilder:
             chat_id,
             self.timezone,
             session_summary=session_summary,
+            attachments=self._build_attachment_text(attachments),
         )
-        user_content = self._build_user_content(current_message, media)
+        user_content = self._build_user_content(current_message, media, attachments)
 
         # 这里把运行时上下文和用户正文合并成一条消息，
         # 避免部分 Provider 拒绝连续出现相同 role 的消息。
@@ -179,10 +212,35 @@ class ContextBuilder:
         messages.append({"role": current_role, "content": merged})
         return messages
 
-    def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
+    def _build_attachment_text(self, attachments: list[dict[str, Any]] | None) -> str:
+        """构造当前用户消息的附件信息文本。"""
+        if not attachments:
+            return ""
+        lines = []
+        for index, item in enumerate(attachments, start=1):
+            filename = str(item.get("filename", "") or "未命名文件")
+            path = str(item.get("path", "") or "").strip()
+            mime = str(item.get("mime", "") or "").strip()
+            size = item.get("size")
+            lines.append(f"- 文件{index}：{filename}")
+            if path:
+                lines.append(f"- 路径：{path}")
+            if mime:
+                lines.append(f"- 类型：{mime}")
+            if size is not None:
+                lines.append(f"- 大小：{size} bytes")
+        return "\n".join(lines)
+
+    def _build_user_content(
+        self,
+        text: str,
+        media: list[str] | None,
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""
+        text_body = text
         if not media:
-            return text
+            return text_body
 
         images = []
         for path in media:
@@ -202,8 +260,8 @@ class ContextBuilder:
             })
 
         if not images:
-            return text
-        return images + [{"type": "text", "text": text}]
+            return text_body
+        return images + [{"type": "text", "text": text_body}]
 
     def add_tool_result(
         self, messages: list[dict[str, Any]],

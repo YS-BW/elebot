@@ -933,7 +933,7 @@ async def test_loop_max_iterations_message_stays_stable(tmp_path):
     loop.tools.execute = AsyncMock(return_value="ok")
     loop.max_iterations = 2
 
-    final_content, _, _, _, _ = await loop._run_agent_loop([])
+    final_content, _, _, _, _, _ = await loop._run_agent_loop([])
 
     assert final_content == (
         "我已经达到工具调用的最大迭代次数（2），但仍未完成任务。"
@@ -960,7 +960,7 @@ async def test_loop_stream_filter_handles_think_only_prefix_without_crashing(tmp
     async def on_stream_end(*, resuming: bool = False) -> None:
         endings.append(resuming)
 
-    final_content, _, _, _, _ = await loop._run_agent_loop(
+    final_content, _, _, _, _, _ = await loop._run_agent_loop(
         [],
         on_stream=on_stream,
         on_stream_end=on_stream_end,
@@ -984,7 +984,7 @@ async def test_loop_retries_think_only_final_response(tmp_path):
 
     loop.provider.chat_with_retry = chat_with_retry
 
-    final_content, _, _, _, _ = await loop._run_agent_loop([])
+    final_content, _, _, _, _, _ = await loop._run_agent_loop([])
 
     assert final_content == "Recovered answer"
     assert call_count["n"] == 2
@@ -1056,6 +1056,45 @@ async def test_streamed_flag_not_set_on_llm_error(tmp_path):
     assert "503" in result.content
     assert not result.metadata.get("_streamed"), \
         "_streamed must not be set when stop_reason is error"
+
+
+@pytest.mark.asyncio
+async def test_streamed_flag_not_set_when_stream_channel_has_no_delta(tmp_path):
+    """Streaming-capable channels should not set _streamed if no delta was ever emitted."""
+    from elebot.agent.loop import AgentLoop
+    from elebot.bus.events import InboundMessage
+    from elebot.bus.queue import MessageBus
+
+    bus = MessageBus()
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+    final_resp = LLMResponse(
+        content="最终兜底文本",
+        finish_reason="stop",
+        tool_calls=[],
+        usage={},
+    )
+    loop.provider.chat_with_retry = AsyncMock(return_value=final_resp)
+    loop.provider.chat_stream_with_retry = AsyncMock(return_value=final_resp)
+    loop.tools.get_definitions = MagicMock(return_value=[])
+
+    msg = InboundMessage(
+        channel="weixin",
+        sender_id="u1",
+        chat_id="c1",
+        content="hi",
+    )
+    result = await loop._process_message(
+        msg,
+        on_stream=AsyncMock(),
+        on_stream_end=AsyncMock(),
+    )
+
+    assert result is not None
+    assert result.content == "最终兜底文本"
+    assert not result.metadata.get("_streamed"), \
+        "_streamed must not be set when no stream delta was emitted"
 
 
 @pytest.mark.asyncio
@@ -2170,7 +2209,7 @@ async def test_loop_injected_followup_preserves_image_media(tmp_path):
         media=[str(image_path)],
     ))
 
-    final_content, _, _, _, had_injections = await loop._run_agent_loop(
+    final_content, _, _, _, had_injections, _ = await loop._run_agent_loop(
         [{"role": "user", "content": "hello"}],
         channel="cli",
         chat_id="c",
@@ -2408,7 +2447,7 @@ async def test_pending_queue_preserves_overflow_for_next_injection_cycle(tmp_pat
             content=f"follow-up-{idx}",
         ))
 
-    final_content, _, _, _, had_injections = await loop._run_agent_loop(
+    final_content, _, _, _, had_injections, _ = await loop._run_agent_loop(
         [{"role": "user", "content": "hello"}],
         channel="cli",
         chat_id="c",

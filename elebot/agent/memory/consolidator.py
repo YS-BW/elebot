@@ -164,7 +164,7 @@ class Consolidator:
                     {
                         "role": "system",
                         "content": render_template(
-                            "agent/consolidator_archive.md",
+                            "CONSOLIDATOR_ARCHIVE.md",
                             strip=True,
                         ),
                     },

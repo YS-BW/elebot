@@ -154,6 +154,13 @@ class ToolsConfig(Base):
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class TranscriptionConfig(Base):
+    """语音转写配置。"""
+
+    api_key: str = ""
+    api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
 class WebSocketChannelConfig(StrictBase):
     """WebSocket channel 的最小配置。"""
 
@@ -188,6 +195,7 @@ class Config(BaseSettings):
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    transcription: TranscriptionConfig = Field(default_factory=TranscriptionConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
 
     @property

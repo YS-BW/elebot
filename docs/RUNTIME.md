@@ -5,11 +5,11 @@
 相关源码：
 
 - [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L123)
-- [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L350)
+- [elebot/runtime/app.py](../elebot/runtime/app.py#L33-L390)
 - [elebot/runtime/lifecycle.py](../elebot/runtime/lifecycle.py#L10-L106)
 - [elebot/runtime/models.py](../elebot/runtime/models.py#L8-L57)
 - [elebot/runtime/protocol.py](../elebot/runtime/protocol.py#L1-L99)
-- [tests/cli/test_runtime.py](../tests/cli/test_runtime.py#L1-L196)
+- [tests/cli/test_runtime.py](../tests/cli/test_runtime.py#L1-L210)
 
 ## 1. runtime 解决什么问题
 
@@ -27,18 +27,20 @@ runtime = 进程内统一装配入口 + 生命周期管理层
 
 ## 2. `ElebotRuntime.from_config()` 现在装配什么
 
-装配入口在 [elebot/runtime/app.py](../elebot/runtime/app.py#L46-L98)。
+装配入口在 [elebot/runtime/app.py](../elebot/runtime/app.py#L48-L104)。
 
 它会统一创建：
 
 - `MessageBus`
-- provider
+- 主 LLM provider
+- `transcription_provider`
 - `AgentLoop`
 - `RuntimeState`
 
 这里最重要的事实是：
 
 - provider 默认来自 `providers.factory.build_provider()`
+- 语音转写 provider 也在这里一并装配
 - 入口层只需要把 `Config` 交给 runtime
 
 ## 3. CLI 怎么复用 runtime
@@ -64,7 +66,7 @@ CLI 侧现在通过 [elebot/cli/runtime_support.py](../elebot/cli/runtime_suppor
 
 ### 4.2 对话入口
 
-对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L245-L323)：
+对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L285-L346)：
 
 - `run_once()`
 - `run_interactive()`
@@ -91,7 +93,7 @@ CLI 侧现在通过 [elebot/cli/runtime_support.py](../elebot/cli/runtime_suppor
 
 ### 4.4 薄控制 API
 
-对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L124-L243)：
+对应 [elebot/runtime/app.py](../elebot/runtime/app.py#L130-L283)：
 
 - `interrupt_session()`
 - `reset_session()`
@@ -99,6 +101,7 @@ CLI 侧现在通过 [elebot/cli/runtime_support.py](../elebot/cli/runtime_suppor
 - `trigger_dream()`
 - `list_cron_jobs()`
 - `remove_cron_job()`
+- `transcribe_audio()`
 - `get_dream_log()`
 - `restore_dream_version()`
 

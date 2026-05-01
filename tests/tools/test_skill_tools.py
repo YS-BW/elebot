@@ -9,6 +9,7 @@ from elebot.agent.skills import SkillManager, SkillRegistry
 from elebot.agent.tools.registry import ToolRegistry
 from elebot.agent.tools.skill_tools import InstallSkillTool, ListSkillsTool, UninstallSkillTool
 from elebot.config.schema import ExecToolConfig, WebToolsConfig
+from elebot.session.manager import SessionManager
 
 
 def _write_skill(root, key: str, content: str) -> None:
@@ -84,8 +85,11 @@ def test_register_default_tools_includes_skill_management_tools(tmp_path) -> Non
         web_config=WebToolsConfig(enable=False),
         restrict_to_workspace=False,
         cron_service=MagicMock(),
+        provider=MagicMock(),
+        model="test-model",
         default_timezone="Asia/Shanghai",
         extra_allowed_dirs=[],
+        sessions=SessionManager(tmp_path),
     )
 
     assert "install_skill" in registry.tool_names
@@ -95,3 +99,5 @@ def test_register_default_tools_includes_skill_management_tools(tmp_path) -> Non
     assert "cron_list" in registry.tool_names
     assert "cron_delete" in registry.tool_names
     assert "cron_update" in registry.tool_names
+    assert "analyze_image" in registry.tool_names
+    assert "voice_reply_once" not in registry.tool_names

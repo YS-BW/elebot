@@ -20,7 +20,7 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
     from importlib.resources import files as pkg_files
 
     try:
-        tpl = pkg_files("elebot") / "templates"
+        tpl = pkg_files("elebot") / "templates" / "workspace"
     except Exception:
         return []
     if not tpl.is_dir():

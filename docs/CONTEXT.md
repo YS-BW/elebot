@@ -6,7 +6,7 @@
 
 - [elebot/agent/context.py](../elebot/agent/context.py#L16-L239)
 - [elebot/agent/loop.py](../elebot/agent/loop.py#L241-L299)
-- [elebot/templates/agent/cron_rules.md](../elebot/templates/agent/cron_rules.md#L1-L10)
+- [elebot/templates/IDENTITY.md](../elebot/templates/IDENTITY.md#L1-L39)
 - [elebot/agent/memory/store.py](../elebot/agent/memory/store.py#L199-L254)
 - [elebot/session/manager.py](../elebot/session/manager.py#L37-L63)
 
@@ -50,7 +50,7 @@ AgentRunner
 5. 最近未被 Dream 吸收的历史
 6. cron 规则
 
-其中调度规则不再硬编码在 Python 字符串里，而是来自 [elebot/templates/agent/cron_rules.md](../elebot/templates/agent/cron_rules.md#L1-L10)。
+其中调度和执行规则不再硬编码在 Python 字符串里，而是收口在 [elebot/templates/IDENTITY.md](../elebot/templates/IDENTITY.md#L1-L39)。
 
 ## 4. `ContextBuilder` 不再记录 skill 使用
 

@@ -9,6 +9,7 @@ from elebot.agent.loop import AgentLoop
 from elebot.bus.queue import MessageBus
 from elebot.config.schema import Config
 from elebot.providers.base import LLMProvider
+from elebot.providers.transcription import QwenAsrTranscriptionProvider
 
 
 @dataclass(slots=True)
@@ -20,6 +21,7 @@ class RuntimeState:
         bus: 主链路消息总线。
         provider: 已完成装配的 LLM 提供方。
         agent_loop: 复用主链路逻辑的执行循环。
+        transcription_provider: 统一语音转写 provider。
         serve_task: 后台运行 `agent_loop.run()` 时持有的任务句柄。
         started: runtime 是否已经进入运行态。
 
@@ -31,5 +33,6 @@ class RuntimeState:
     bus: MessageBus
     provider: LLMProvider
     agent_loop: AgentLoop
+    transcription_provider: QwenAsrTranscriptionProvider | None = None
     serve_task: asyncio.Task[None] | None = None
     started: bool = False

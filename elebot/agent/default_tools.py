@@ -11,6 +11,7 @@ from elebot.agent.tools.cron import (
     CronUpdateTool,
 )
 from elebot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from elebot.agent.tools.image_analysis import AnalyzeImageTool
 from elebot.agent.tools.notebook import NotebookEditTool
 from elebot.agent.tools.registry import ToolRegistry
 from elebot.agent.tools.search import GlobTool, GrepTool
@@ -19,6 +20,8 @@ from elebot.agent.tools.skill_tools import InstallSkillTool, ListSkillsTool, Uni
 from elebot.agent.tools.web import WebFetchTool, WebSearchTool
 from elebot.config.schema import ExecToolConfig, WebToolsConfig
 from elebot.cron import CronService
+from elebot.providers.base import LLMProvider
+from elebot.session.manager import SessionManager
 
 
 def register_default_tools(
@@ -28,8 +31,11 @@ def register_default_tools(
     web_config: WebToolsConfig,
     restrict_to_workspace: bool,
     cron_service: CronService,
+    provider: LLMProvider,
+    model: str,
     default_timezone: str,
     extra_allowed_dirs: list[Path],
+    sessions: SessionManager,
 ) -> None:
     """注册主链路默认工具集合。
 
@@ -42,6 +48,7 @@ def register_default_tools(
         cron_service: Cron 调度 owner。
         default_timezone: 默认时区。
         extra_allowed_dirs: 额外允许访问的目录。
+        sessions: 当前会话持久化 owner。
 
     返回:
         无返回值。
@@ -66,6 +73,15 @@ def register_default_tools(
         )
     registry.register(
         NotebookEditTool(
+            workspace=workspace,
+            allowed_dir=allowed_dir,
+            extra_allowed_dirs=extra_allowed_dirs,
+        )
+    )
+    registry.register(
+        AnalyzeImageTool(
+            provider=provider,
+            model=model,
             workspace=workspace,
             allowed_dir=allowed_dir,
             extra_allowed_dirs=extra_allowed_dirs,

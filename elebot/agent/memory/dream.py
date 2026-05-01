@@ -110,7 +110,7 @@ class Dream:
                 messages=[
                     {
                         "role": "system",
-                        "content": render_template("agent/dream_phase1.md", strip=True),
+                        "content": render_template("DREAM_PHASE1.md", strip=True),
                     },
                     {"role": "user", "content": phase1_prompt},
                 ],
@@ -132,7 +132,7 @@ class Dream:
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
-                "content": render_template("agent/dream_phase2.md", strip=True),
+                    "content": render_template("DREAM_PHASE2.md", strip=True),
             },
             {"role": "user", "content": phase2_prompt},
         ]

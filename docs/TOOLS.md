@@ -9,7 +9,7 @@
 - [elebot/agent/default_tools.py](../elebot/agent/default_tools.py#L24-L95)
 - [elebot/agent/tools/cron.py](../elebot/agent/tools/cron.py#L14-L406)
 - [elebot/agent/tools/skill_tools.py](../elebot/agent/tools/skill_tools.py#L12-L193)
-- [elebot/templates/TOOLS.md](../elebot/templates/TOOLS.md#L1-L81)
+- [elebot/templates/workspace/TOOLS.md](../elebot/templates/workspace/TOOLS.md#L1-L81)
 
 ## 1. 当前总链路
 
@@ -121,7 +121,7 @@ tool message 回填模型
 
 工作区里的 `TOOLS.md` 模板不是代码 owner，而是给模型的规则说明。
 
-当前模板见 [elebot/templates/TOOLS.md](../elebot/templates/TOOLS.md#L1-L81)。
+当前模板见 [elebot/templates/workspace/TOOLS.md](../elebot/templates/workspace/TOOLS.md#L1-L81)。
 
 它现在已经固定说明：
 

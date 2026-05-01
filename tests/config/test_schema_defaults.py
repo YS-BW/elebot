@@ -48,3 +48,10 @@ def test_weixin_channel_defaults() -> None:
     assert cfg.channels.weixin.token == ""
     assert cfg.channels.weixin.state_dir == ""
     assert cfg.channels.weixin.poll_timeout == 35
+
+
+def test_transcription_defaults() -> None:
+    """语音转写默认配置应固定为单一 qwen3-asr-flash 入口。"""
+    cfg = Config()
+    assert cfg.transcription.api_key == ""
+    assert cfg.transcription.api_base == "https://dashscope.aliyuncs.com/compatible-mode/v1"

@@ -24,7 +24,7 @@ def render_template(name: str, *, strip: bool = False, **kwargs: Any) -> str:
     """渲染指定模板文件。
 
     参数:
-        name: 模板相对路径，如 ``agent/identity.md``。
+        name: 模板相对路径，如 ``IDENTITY.md``。
         strip: 是否移除尾部换行。
         **kwargs: 模板渲染变量。
 

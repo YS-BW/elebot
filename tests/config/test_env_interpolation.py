@@ -55,16 +55,18 @@ class TestResolveConfig:
         config_path = tmp_path / "config.json"
         config_path.write_text(
             json.dumps(
-                {"providers": {"groq": {"apiKey": "${TEST_API_KEY}"}}}
+                {
+                    "transcription": {"apiKey": "${TEST_API_KEY}"},
+                }
             ),
             encoding="utf-8",
         )
 
         raw = load_config(config_path)
-        assert raw.providers.groq.api_key == "${TEST_API_KEY}"
+        assert raw.transcription.api_key == "${TEST_API_KEY}"
 
         resolved = resolve_config_env_vars(raw)
-        assert resolved.providers.groq.api_key == "resolved-key"
+        assert resolved.transcription.api_key == "resolved-key"
 
     def test_save_preserves_templates(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MY_TOKEN", "real-token")

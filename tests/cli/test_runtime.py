@@ -143,7 +143,6 @@ async def test_runtime_control_apis_delegate_to_owner_objects() -> None:
         changed_files=["SOUL.md"],
         message=None,
     )
-
     runtime = ElebotRuntime.from_config(
         config,
         provider_builder=lambda _config: object(),
