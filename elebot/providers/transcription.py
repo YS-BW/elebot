@@ -190,7 +190,7 @@ def build_transcription_provider(config: Config) -> QwenAsrTranscriptionProvider
         可用的转写 provider；未配置 API Key 时返回 `None`。
     """
     transcription = config.transcription
-    api_key = (transcription.api_key or os.environ.get("DASHSCOPE_API_KEY") or "").strip()
+    api_key = (transcription.api_key or "").strip()
     if not api_key:
         return None
     return QwenAsrTranscriptionProvider(

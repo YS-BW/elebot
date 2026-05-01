@@ -111,12 +111,15 @@ class StdioServer:
         """执行一轮直连请求，并把过程事件写回 JSONL。"""
 
         async def on_progress(text: str, *, tool_hint: bool = False) -> None:
+            """把工具进度或模型提示转成 `progress` 事件发回客户端。"""
             await self._emit(build_progress_event(session_id=session_id, content=text, tool_hint=tool_hint))
 
         async def on_stream(delta: str) -> None:
+            """把流式正文增量转成 `delta` 事件发回客户端。"""
             await self._emit(build_delta_event(session_id=session_id, content=delta))
 
         async def on_stream_end(*, resuming: bool = False) -> None:
+            """在一段流式输出结束时发出 `stream_end` 事件。"""
             await self._emit(build_stream_end_event(session_id=session_id, resuming=resuming))
 
         try:

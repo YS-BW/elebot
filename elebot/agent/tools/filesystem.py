@@ -7,9 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from elebot.agent.messages import build_image_content_blocks, detect_image_mime
-from elebot.agent.tools.base import Tool, tool_parameters
-from elebot.agent.tools.schema import BooleanSchema, IntegerSchema, StringSchema, tool_parameters_schema
 from elebot.agent.tools import file_state
+from elebot.agent.tools.base import Tool, tool_parameters
+from elebot.agent.tools.schema import (
+    BooleanSchema,
+    IntegerSchema,
+    StringSchema,
+    tool_parameters_schema,
+)
 from elebot.config.paths import get_media_dir
 
 
@@ -26,7 +31,7 @@ def _resolve_path(
     resolved = p.resolve()
     if allowed_dir:
         media_path = get_media_dir().resolve()
-        all_dirs = [allowed_dir] + [media_path] + (extra_allowed_dirs or []) 
+        all_dirs = [allowed_dir] + [media_path] + (extra_allowed_dirs or [])
         if not any(_is_under(resolved, d) for d in all_dirs):
             raise PermissionError(f"Path {path} is outside allowed directory {allowed_dir}")
     return resolved

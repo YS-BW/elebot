@@ -5,9 +5,9 @@ from __future__ import annotations
 import typer
 
 from elebot.cli.commands.agent import register_agent_command
-from elebot.cli.commands.weixin import register_channel_command
 from elebot.cli.commands.onboard import register_onboard_command
 from elebot.cli.commands.status import register_status_command
+from elebot.cli.commands.weixin import register_channel_command
 
 
 def register_commands(app: typer.Typer) -> None:

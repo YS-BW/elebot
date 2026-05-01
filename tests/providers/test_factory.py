@@ -32,11 +32,11 @@ def test_build_provider_uses_forced_openai_backend() -> None:
     assert provider._spec.name == "openai"
 
 
-def test_build_provider_uses_deepseek_for_default_first_run() -> None:
-    """首次默认主链路应装配 DeepSeek 的兼容 provider。"""
+def test_build_provider_uses_xiaomi_mimo_for_default_first_run() -> None:
+    """首次默认主链路应装配小米 MIMO 的兼容 provider。"""
     config = Config.model_validate(
         {
-            "providers": {"deepseek": {"apiKey": "deepseek-test-key"}},
+            "providers": {"xiaomi_mimo": {"apiKey": "mimo-test-key"}},
         }
     )
 
@@ -44,10 +44,10 @@ def test_build_provider_uses_deepseek_for_default_first_run() -> None:
         provider = build_provider(config)
 
     assert provider.__class__.__name__ == "OpenAICompatProvider"
-    assert provider.get_default_model() == "deepseek-v4-flash"
+    assert provider.get_default_model() == "mimo-v2.5"
     assert provider._spec is not None
-    assert provider._spec.name == "deepseek"
-    assert provider._effective_base == "https://api.deepseek.com"
+    assert provider._spec.name == "xiaomi_mimo"
+    assert provider._effective_base == "https://api.xiaomimimo.com/v1"
 
 
 def test_build_provider_applies_default_generation_settings() -> None:

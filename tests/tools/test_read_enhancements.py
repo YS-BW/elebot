@@ -2,8 +2,8 @@
 
 import pytest
 
-from elebot.agent.tools.filesystem import ReadFileTool, WriteFileTool
 from elebot.agent.tools import file_state
+from elebot.agent.tools.filesystem import ReadFileTool, WriteFileTool
 
 
 @pytest.fixture(autouse=True)

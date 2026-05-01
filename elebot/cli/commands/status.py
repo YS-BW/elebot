@@ -9,11 +9,11 @@ import typer
 from rich.table import Table
 
 from elebot import __logo__
-from elebot.cli.render import console
 from elebot.cli.commands.weixin import (
     get_channel_service_state,
     resolve_weixin_state_path,
 )
+from elebot.cli.render import console
 
 
 def _format_home_path(path: Path) -> str:

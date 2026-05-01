@@ -13,9 +13,9 @@ from pathlib import Path
 import typer
 from loguru import logger
 
+from elebot.bus.queue import MessageBus
 from elebot.channels import ChannelManager
 from elebot.channels.weixin import WeixinChannel
-from elebot.bus.queue import MessageBus
 from elebot.cli.render import console
 from elebot.cli.runtime_support import _load_runtime_config, _make_runtime
 from elebot.config.loader import load_config, resolve_config_env_vars, set_config_path

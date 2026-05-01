@@ -8,7 +8,6 @@ import re
 import tokenize
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CODE_ROOT = REPO_ROOT / "elebot"
 CHINESE_RE = re.compile(r"[\u4e00-\u9fff]")

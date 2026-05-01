@@ -7,7 +7,6 @@ import pytest
 from elebot.providers.azure_openai_provider import AzureOpenAIProvider
 from elebot.providers.base import LLMResponse
 
-
 # ---------------------------------------------------------------------------
 # Init & validation
 # ---------------------------------------------------------------------------

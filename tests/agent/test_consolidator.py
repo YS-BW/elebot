@@ -1,8 +1,8 @@
 """Tests for the lightweight Consolidator — append-only to history.jsonl."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from elebot.agent.memory import Consolidator, MemoryStore
 

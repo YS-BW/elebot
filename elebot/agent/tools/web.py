@@ -318,19 +318,29 @@ class WebFetchTool(Tool):
         """
         return True
 
-    async def execute(self, url: str, extractMode: str = "markdown", maxChars: int | None = None, **kwargs: Any) -> Any:
+    async def execute(
+        self,
+        url: str,
+        extract_mode: str = "markdown",
+        max_chars: int | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """抓取并提取网页内容。
 
         参数:
             url: 目标 URL。
-            extractMode: 提取模式。
-            maxChars: 本次调用覆盖的最大字符数。
+            extract_mode: 提取模式。
+            max_chars: 本次调用覆盖的最大字符数。
             **kwargs: 兼容额外参数。
 
         返回:
             JSON 文本结果或图片内容块。
         """
-        max_chars = maxChars or self.max_chars
+        if "extractMode" in kwargs:
+            extract_mode = kwargs.pop("extractMode")
+        if "maxChars" in kwargs:
+            max_chars = kwargs.pop("maxChars")
+        max_chars = max_chars or self.max_chars
         is_valid, error_msg = _validate_url_safe(url)
         if not is_valid:
             return json.dumps({"error": f"URL validation failed: {error_msg}", "url": url}, ensure_ascii=False)
@@ -349,7 +359,7 @@ class WebFetchTool(Tool):
 
         result = await self._fetch_jina(url, max_chars)
         if result is None:
-            result = await self._fetch_readability(url, extractMode, max_chars)
+            result = await self._fetch_readability(url, extract_mode, max_chars)
         return result
 
     async def _fetch_jina(self, url: str, max_chars: int) -> str | None:

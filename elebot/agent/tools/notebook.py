@@ -7,8 +7,8 @@ import uuid
 from typing import Any
 
 from elebot.agent.tools.base import tool_parameters
-from elebot.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
 from elebot.agent.tools.filesystem import _FsTool
+from elebot.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
 
 
 def _new_cell(source: str, cell_type: str = "code", generate_id: bool = False) -> dict:

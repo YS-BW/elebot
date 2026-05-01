@@ -136,19 +136,19 @@ class ToolRegistry:
         返回:
             工具执行结果或错误提示。
         """
-        _HINT = "\n\n[Analyze the error above and try a different approach.]"
+        error_hint = "\n\n[Analyze the error above and try a different approach.]"
         tool, params, error = self.prepare_call(name, params)
         if error:
-            return error + _HINT
+            return error + error_hint
 
         try:
             assert tool is not None  # 这里能断言非空，是因为 prepare_call 已完成存在性校验。
             result = await tool.execute(**params)
             if isinstance(result, str) and result.startswith("Error"):
-                return result + _HINT
+                return result + error_hint
             return result
         except Exception as e:
-            return f"Error executing {name}: {str(e)}" + _HINT
+            return f"Error executing {name}: {str(e)}" + error_hint
 
     @property
     def tool_names(self) -> list[str]:

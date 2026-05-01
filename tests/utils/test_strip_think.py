@@ -1,4 +1,3 @@
-import pytest
 
 from elebot.utils.text import strip_think
 

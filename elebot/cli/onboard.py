@@ -16,13 +16,13 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from elebot.config.loader import get_config_path, load_config
+from elebot.config.schema import Config
 from elebot.providers.model_catalog import (
     format_token_count,
     get_model_context_limit,
     get_model_suggestions,
 )
-from elebot.config.loader import get_config_path, load_config
-from elebot.config.schema import Config
 
 console = Console()
 
@@ -190,13 +190,13 @@ def _get_field_type_info(field_info) -> FieldTypeInfo:
             origin = get_origin(annotation)
             args = get_args(annotation)
 
-    _SIMPLE_TYPES: dict[type, str] = {bool: "bool", int: "int", float: "float"}
+    simple_types: dict[type, str] = {bool: "bool", int: "int", float: "float"}
 
     if origin is list or (hasattr(origin, "__name__") and origin.__name__ == "List"):
         return FieldTypeInfo("list", args[0] if args else str)
     if origin is dict or (hasattr(origin, "__name__") and origin.__name__ == "Dict"):
         return FieldTypeInfo("dict", None)
-    for py_type, name in _SIMPLE_TYPES.items():
+    for py_type, name in simple_types.items():
         if annotation is py_type:
             return FieldTypeInfo(name, None)
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
@@ -912,7 +912,7 @@ def run_onboard(initial_config: Config | None = None) -> OnboardResult:
                 return OnboardResult(config=original_config, should_save=False)
             continue
 
-        _MENU_DISPATCH = {
+        menu_dispatch = {
             "[P] LLM Provider": lambda: _configure_providers(config),
             "[A] Agent Settings": lambda: _configure_general_settings(config, "Agent Settings"),
             "[T] Tools": lambda: _configure_general_settings(config, "Tools"),
@@ -924,6 +924,6 @@ def run_onboard(initial_config: Config | None = None) -> OnboardResult:
         if answer == "[X] Exit Without Saving":
             return OnboardResult(config=original_config, should_save=False)
 
-        action_fn = _MENU_DISPATCH.get(answer)
+        action_fn = menu_dispatch.get(answer)
         if action_fn:
             action_fn()
