@@ -16,10 +16,13 @@
 - 定时调度：`cron_create`、`cron_list`、`cron_delete`、`cron_update`
 - MCP 工具：只有当前配置并连接成功时才会出现，不要默认它们一定可用
 
+
+
 ## 2. 文件和搜索工具的使用顺序
 
 - 先 `list_dir` / `glob` / `grep` 确认范围，再 `read_file`，最后才 `write_file` / `edit_file`
 - 能用文件工具时，不要直接退回到 `exec`
+- 找用户文件：先 `glob`；打开程序：直接 `exec`
 - 面对大结果集时，优先分页、缩小范围或继续定向读取，不要一次把整仓内容拉进上下文
 
 ## 3. `read_file`
@@ -44,6 +47,28 @@
 - `glob` 适合按文件名或路径模式找文件，例如 `*.py`、`tests/**/test_*.py`
 - `grep` 适合按内容搜索，默认更适合先找命中文件，再继续定向读取
 - 结果太多时，优先使用分页参数或继续缩小搜索条件
+
+### 搜索速度优化
+
+在 Windows 上，`glob` 和 `grep` 内置了索引加速，但只有特定写法才能触发快速路径：
+**重要：windows找用户文件（配置、代码、文档）必须先用 `glob`。打开/启动程序直接用 `exec`。**
+**`glob` 快速写法（毫秒级）：** 用简单文件名模式，不要带路径
+- 好：`glob pattern="config.json"`、`glob pattern="*.py"`、`glob pattern="test_*.py"`
+- 慢：`glob pattern="**/config.json"`、`glob pattern="src/**/*.ts"`（含 `**` 或 `/` 会走全盘遍历）
+
+**`grep` 快速写法（毫秒级）：** 用默认模式，不加过滤
+- 好：`grep pattern="def main"`（默认 `files_with_matches`，无 glob/type 限制）
+- 慢：`grep pattern="def main" glob="*.py"`（有过滤条件会走全盘遍历）
+
+**找用户文件（配置、代码、文档等）：**
+1. `glob pattern="文件名"` — 如 `config.json`、`*.py`
+2. 搜不到 → `glob pattern="前缀*"` 或 `glob pattern="*关键词*"`
+3. 还搜不到 → `exec` 降级
+
+**打开/启动程序（如微信、浏览器等）：**
+- 第一步：`exec command="Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like '*关键词*' } | Select-Object DisplayName,InstallLocation,DisplayIcon"` 查注册表，DisplayIcon 就是 exe 路径
+- 拿到路径后 → `exec command="Start-Process '完整路径'"` 启动
+- 没找到 → `exec command="Get-StartApps | Where-Object { $_.Name -like '*关键词*' }"` 查开始菜单
 
 ## 6. `exec`
 

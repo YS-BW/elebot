@@ -3,14 +3,135 @@
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 import re
+import sys
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, TypeVar
 
 from elebot.agent.tools.filesystem import ListDirTool, _FsTool
 
 _DEFAULT_HEAD_LIMIT = 250
+_logger = logging.getLogger(__name__)
+
+
+class _WindowsSearchBackend:
+    """Windows Search 索引查询后端，懒初始化，不可用时自动降级。"""
+
+    def __init__(self) -> None:
+        """初始化后端，尝试连接 Windows Search。"""
+        self._conn: Any = None
+        self._available: bool | None = None  # None = 未检测
+
+    def available(self) -> bool:
+        """检查 Windows Search 是否可用。
+
+        返回:
+            可用时返回 ``True``。
+        """
+        if self._available is not None:
+            return self._available
+        if sys.platform != "win32":
+            self._available = False
+            return False
+        try:
+            import win32com.client
+
+            conn = win32com.client.Dispatch("ADODB.Connection")
+            conn.Open(
+                "Provider=Search.CollatorDSO;Extended Properties='Application=Windows';"
+            )
+            # 验证连接可用
+            rs = conn.Execute(
+                "SELECT TOP 1 System.ItemPathDisplay FROM SystemIndex"
+            )[0]
+            rs.Close()
+            self._conn = conn
+            self._available = True
+        except Exception:
+            _logger.debug("Windows Search 不可用，回退到 os.walk", exc_info=True)
+            self._available = False
+        return self._available
+
+    def search_files(self, keyword: str, max_results: int = 250) -> list[tuple[str, float]]:
+        """按文件名搜索，返回 (路径, 修改时间) 列表。
+
+        参数:
+            keyword: 文件名关键词。
+            max_results: 最大结果数。
+
+        返回:
+            (路径, mtime) 元组列表。
+        """
+        if not self.available():
+            return []
+        try:
+            kw = keyword.replace("'", "''")
+            sql = (
+                f"SELECT TOP {max_results} "
+                f"System.ItemPathDisplay, System.DateModified "
+                f"FROM SystemIndex "
+                f"WHERE CONTAINS(System.ItemNameDisplay, '\"{kw}*\"') "
+                f"ORDER BY System.DateModified DESC"
+            )
+            rs = self._conn.Execute(sql)[0]
+            results: list[tuple[str, float]] = []
+            while not rs.EOF:
+                path = rs.Fields.Item(0).Value or ""
+                mod_time = rs.Fields.Item(1).Value
+                if path:
+                    # 将 COM 日期转为 timestamp
+                    try:
+                        mtime = float(mod_time) if mod_time else 0.0
+                    except (TypeError, ValueError):
+                        mtime = 0.0
+                    results.append((path, mtime))
+                rs.MoveNext()
+            rs.Close()
+            return results
+        except Exception:
+            _logger.debug("Windows Search 文件名查询失败", exc_info=True)
+            return []
+
+    def search_content(
+        self, keyword: str, max_results: int = 250
+    ) -> list[str]:
+        """按内容搜索，返回匹配的文件路径列表。
+
+        参数:
+            keyword: 搜索关键词。
+            max_results: 最大结果数。
+
+        返回:
+            匹配的文件路径列表。
+        """
+        if not self.available():
+            return []
+        try:
+            kw = keyword.replace("'", "''")
+            sql = (
+                f"SELECT TOP {max_results} System.ItemPathDisplay "
+                f"FROM SystemIndex "
+                f"WHERE CONTAINS(System.Search.Contents, '\"{kw}\"') "
+                f"ORDER BY System.DateModified DESC"
+            )
+            rs = self._conn.Execute(sql)[0]
+            results: list[str] = []
+            while not rs.EOF:
+                path = rs.Fields.Item(0).Value or ""
+                if path and path not in results:
+                    results.append(path)
+                rs.MoveNext()
+            rs.Close()
+            return results
+        except Exception:
+            _logger.debug("Windows Search 内容查询失败", exc_info=True)
+            return []
+
+
+# 全局懒实例
+_ws_backend = _WindowsSearchBackend()
 T = TypeVar("T")
 _TYPE_GLOB_MAP = {
     "py": ("*.py", "*.pyi"),
@@ -249,9 +370,55 @@ class GlobTool(_SearchTool):
                 limit = max_results
             else:
                 limit = _DEFAULT_HEAD_LIMIT
+
+            normalized = _normalize_pattern(pattern)
+            matches: list[tuple[str, float]] = []
+
+            # Windows Search 快速路径：简单文件名模式且搜索文件时
+            if (
+                _ws_backend.available()
+                and "/" not in normalized
+                and not normalized.startswith("**")
+                and entry_type == "files"
+            ):
+                keyword = self._glob_to_keyword(pattern)
+                if keyword:
+                    ws_results = _ws_backend.search_files(
+                        keyword, max_results=limit * 2 if limit else 500,
+                    )
+                    root_str = str(root)
+                    root_prefix = root_str.rstrip("\\") + "\\"
+                    # 用户指定了具体路径时，只返回该路径下的结果
+                    # 未指定时（默认工作区），搜索全盘，返回绝对路径
+                    scope_filter = path and path not in (".", "")
+                    for ws_path, mtime in ws_results:
+                        if ws_path == root_str:
+                            continue
+                        name = os.path.basename(ws_path)
+                        if not fnmatch.fnmatch(name, pattern):
+                            continue
+                        if scope_filter:
+                            if not ws_path.startswith(root_prefix):
+                                continue
+                            try:
+                                rel = os.path.relpath(ws_path, root_str).replace("\\", "/")
+                            except ValueError:
+                                continue
+                            matches.append((rel, mtime))
+                        else:
+                            matches.append((ws_path, mtime))
+                    if matches:
+                        matches.sort(key=lambda item: (-item[1], item[0]))
+                        ordered = [name for name, _ in matches]
+                        paged, truncated = _paginate(ordered, limit, offset)
+                        result = "\n".join(paged)
+                        if note := _pagination_note(limit, offset, truncated):
+                            result += f"\n\n{note}"
+                        return result
+
+            # 兜底：os.walk 遍历
             include_files = entry_type in {"files", "both"}
             include_dirs = entry_type in {"dirs", "both"}
-            matches: list[tuple[str, float]] = []
             for entry in self._iter_entries(
                 root,
                 include_files=include_files,
@@ -282,6 +449,21 @@ class GlobTool(_SearchTool):
             return f"Error: {e}"
         except Exception as e:
             return f"Error finding files: {e}"
+
+    @staticmethod
+    def _glob_to_keyword(pattern: str) -> str | None:
+        """从简单 glob 模式中提取搜索关键词。
+
+        参数:
+            pattern: glob 模式，如 ``*.py`` 或 ``test_*.json``。
+
+        返回:
+            提取的关键词，无法提取时返回 ``None``。
+        """
+        # 去掉 * 和 ? 通配符，保留字面部分
+        parts = re.split(r"[\*\?]", pattern)
+        keyword = "".join(parts).strip(". ")
+        return keyword if keyword else None
 
 
 class GrepTool(_SearchTool):
@@ -501,6 +683,77 @@ class GrepTool(_SearchTool):
             counts: dict[str, int] = {}
             file_mtimes: dict[str, float] = {}
             root = target if target.is_dir() else target.parent
+
+            # Windows Search 快速路径：files_with_matches 模式，无 glob/type 限制
+            if (
+                _ws_backend.available()
+                and output_mode == "files_with_matches"
+                and not glob
+                and not type
+                and target.is_dir()
+            ):
+                ws_paths = _ws_backend.search_content(
+                    pattern, max_results=limit * 3 if limit else 750,
+                )
+                root_str = str(root)
+                root_prefix = root_str.rstrip("\\") + "\\"
+                for ws_path in ws_paths:
+                    if ws_path == root_str:
+                        continue
+                    if not ws_path.startswith(root_prefix):
+                        continue
+                    try:
+                        fp = Path(ws_path)
+                        raw = fp.read_bytes()
+                    except (OSError, PermissionError):
+                        continue
+                    if len(raw) > self._MAX_FILE_BYTES:
+                        skipped_large += 1
+                        continue
+                    if _is_binary(raw):
+                        skipped_binary += 1
+                        continue
+                    try:
+                        content = raw.decode("utf-8")
+                    except UnicodeDecodeError:
+                        skipped_binary += 1
+                        continue
+                    if regex.search(content):
+                        rel = os.path.relpath(ws_path, root_str).replace("\\", "/")
+                        if rel not in matching_files:
+                            matching_files.append(rel)
+                            try:
+                                file_mtimes[rel] = fp.stat().st_mtime
+                            except OSError:
+                                file_mtimes[rel] = 0.0
+                    if limit is not None and len(matching_files) >= limit:
+                        truncated = True
+                        break
+
+                if matching_files:
+                    notes: list[str] = []
+                    # 收集本地 mtime 并按与 os.walk 相同规则排序
+                    for mf in list(matching_files):
+                        try:
+                            file_mtimes[mf] = (root / mf).stat().st_mtime
+                        except OSError:
+                            file_mtimes[mf] = 0.0
+                    ordered_files = sorted(
+                        matching_files,
+                        key=lambda name: (-file_mtimes.get(name, 0.0), name),
+                    )
+                    paged, truncated = _paginate(ordered_files, limit, offset)
+                    result = "\n".join(paged)
+                    if truncated:
+                        notes.append(f"(pagination: limit={limit}, offset={offset})")
+                    if skipped_binary:
+                        notes.append(f"(skipped {skipped_binary} binary/unreadable files)")
+                    if skipped_large:
+                        notes.append(f"(skipped {skipped_large} large files)")
+                    if notes:
+                        result += "\n\n" + "\n".join(notes)
+                    return result
+                # 无匹配则回退到 os.walk
 
             for file_path in self._iter_files(target):
                 rel_path = file_path.relative_to(root).as_posix()
