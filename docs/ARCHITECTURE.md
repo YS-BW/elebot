@@ -10,7 +10,6 @@
 - [elebot/runtime/app.py](../elebot/runtime/app.py#L31-L350)
 - [elebot/runtime/models.py](../elebot/runtime/models.py#L8-L57)
 - [elebot/channels/manager.py](../elebot/channels/manager.py#L1-L113)
-- [elebot/channels/websocket.py](../elebot/channels/websocket.py#L1-L298)
 - [elebot/channels/weixin.py](../elebot/channels/weixin.py#L57-L620)
 - [elebot/bus/queue.py](../elebot/bus/queue.py#L8-L40)
 - [elebot/agent/loop.py](../elebot/agent/loop.py#L84-L1458)
@@ -57,24 +56,6 @@ CronService
 AgentLoop._run_cron_job()
   ↓
 agent.process_direct(...)
-```
-
-如果是 websocket channel，则链路是：
-
-```text
-WebSocket client
-  ↓
-WebSocketChannel
-  ↓
-MessageBus
-  ↓
-AgentLoop.run()
-  ↓
-MessageBus
-  ↓
-ChannelManager
-  ↓
-WebSocketChannel
 ```
 
 如果是个人微信 channel，则链路是：
@@ -139,7 +120,6 @@ WeixinChannel
 
 当前已经落地的 bus 驱动入口有两类：
 
-- `serve websocket`
 - `serve channels`
 
 ### 2.4 `agent`
@@ -199,7 +179,6 @@ Bus + provider + AgentLoop
 当前已经落地的“第二入口验证”不是 Web UI，而是：
 
 - `serve stdio`
-- `serve websocket`
 - `serve channels`
 
 ## 4. runtime 暴露什么能力
@@ -247,5 +226,5 @@ runtime / agent / cron / memory = 业务 owner
 1. 未来多入口统一复用 runtime，而不是重新引入 facade。
 2. 调度领域统一从 `CronService` 对外，模型工具固定为 `cron_create / cron_list / cron_delete / cron_update`。
 3. channel 是 `bus` 两侧的协议适配层，不是平行 runtime，也不是新的业务 owner。
-4. 当前内置 channel 已经有两种：`websocket` 和 `weixin`；前者是本机流式入口，后者是个人微信文本入口。
+4. 当前内置 channel 只保留 `weixin`，作为个人微信文本入口。
 5. Dream 历史统一从 `MemoryStore` 对外，命令层不再知道 `GitStore` 细节。

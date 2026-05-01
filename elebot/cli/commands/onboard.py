@@ -121,5 +121,5 @@ def register_onboard_command(app: typer.Typer) -> None:
             console.print(f"  1. 开始对话：[cyan]{agent_cmd}[/cyan]")
         else:
             console.print(f"  1. 把 API Key 填到 [cyan]{config_path}[/cyan]")
-            console.print("     获取地址：https://platform.deepseek.com/")
+            console.print("     获取地址：https://platform.xiaomimimo.com/console/api-keys")
             console.print(f"  2. 开始对话：[cyan]{agent_cmd}[/cyan]")

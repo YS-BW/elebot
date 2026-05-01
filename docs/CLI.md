@@ -5,8 +5,7 @@
 相关源码：
 
 - [elebot/cli/commands/agent.py](../elebot/cli/commands/agent.py#L21-L110)
-- [elebot/cli/commands/channels.py](../elebot/cli/commands/channels.py#L1-L79)
-- [elebot/cli/commands/serve.py](../elebot/cli/commands/serve.py#L1-L97)
+- [elebot/cli/commands/weixin.py](../elebot/cli/commands/weixin.py#L1-L286)
 - [elebot/cli/runtime_support.py](../elebot/cli/runtime_support.py#L18-L123)
 - [elebot/cli/serve_stdio.py](../elebot/cli/serve_stdio.py#L1-L165)
 - [elebot/cli/interactive.py](../elebot/cli/interactive.py#L54-L313)
@@ -16,12 +15,11 @@
 
 ## 1. CLI 现在保留哪些命令
 
-当前根命令面只保留真实主链路需要的五个命令：
+当前根命令面只保留真实主链路需要的四个命令：
 
 - `elebot onboard`
 - `elebot agent`
-- `elebot channels`
-- `elebot serve`
+- `elebot weixin`
 - `elebot status`
 
 根入口本身很薄，只做三件事：
@@ -30,48 +28,25 @@
 2. 注册当前保留的命令
 3. 处理 `--version`
 
-## 2. `elebot channels` 现在承担什么角色
+## 2. `elebot weixin` 现在承担什么角色
 
-`channels` 不是旧版那种大而全的 channel 管理面。
+`weixin` 是当前唯一对用户暴露的 channel 命令组。
 
-当前只保留一条真实命令：
+当前保留这些真实命令：
 
-- `elebot channels login weixin`
+- `elebot weixin login`
+- `elebot weixin run`
+- `elebot weixin start`
+- `elebot weixin stop`
+- `elebot weixin restart`
 
 它只负责：
 
-- 读取当前配置
-- 解析配置里的环境变量
-- 用一个最小 runtime stub 跑内置 channel 的登录流程
+- 登录
+- 前台运行微信 channel
+- 后台启动、停止、重启微信服务
 
-当前不会通过这条命令：
-
-- 启动 runtime 主循环
-- 启动 websocket server
-- 管理一整套 channel 生命周期
-
-## 3. `elebot serve` 现在承担什么角色
-
-`serve` 不是新的业务 owner，它只是把现有 runtime 复用给第二入口：
-
-- `elebot serve stdio`
-  - 提供一行一个 JSON 的脚本化入口
-  - 内部直接复用 `runtime.run_once()`、`interrupt_session()`、`reset_session()`、`get_status_snapshot()`
-- `elebot serve channels`
-  - 启动 `runtime.start()`
-  - 再启动所有 `enabled=true` 的内置 channel
-  - 当前内置 channel 只有 `websocket` 和 `weixin`
-- `elebot serve websocket`
-  - 启动 `runtime.start()`
-  - 再把 websocket channel 接到 `runtime.bus`
-  - 让 `ChannelManager` 负责 outbound 路由
-
-这里最重要的事实是：
-
-- `stdio` 不是 channel
-- `channels` 是“所有已启用内置 channel”的统一入口
-- `websocket` 是 channel
-- 三者都没有绕过 `ElebotRuntime`
+当前 `stdio` 实现仍保留在代码中，但不对用户暴露 CLI 入口。
 
 ## 4. `elebot agent` 的真实启动链路
 

@@ -36,17 +36,13 @@ EleBot 当前阶段的目标不变：
 - DeepSeek tool-call transcript 的 `reasoning_content` 协议修复
 - 单 runtime、单会话下的真实 interrupt
 - `serve stdio` 第二入口
-- `channels/` 适配层与 `websocket / weixin` 两种内置 channel
+- `channels/` 适配层与 `weixin` 内置 channel
 - runtime 级语音转写与语音合成 provider
 
 ### 2.2 当前还没有
 
 - 系统级调度后端
 - `heartbeat`
-- 正式的 Web / desktop 多端入口
-- 面向公网的 channel 安全方案
-- 多平台 channel 生态
-- 重新设计后的子代理体系
 
 ### 2.3 当前主链路
 
@@ -70,22 +66,6 @@ stdin JSONL
 runtime.run_once()
   ↓
 AgentLoop.process_direct()
-```
-
-如果是 websocket channel，则链路是：
-
-```text
-WebSocketChannel
-  ↓
-Bus
-  ↓
-AgentLoop.run()
-  ↓
-Bus
-  ↓
-ChannelManager
-  ↓
-WebSocketChannel
 ```
 
 如果是个人微信 channel，则链路是：
@@ -141,10 +121,10 @@ utils         = 低层通用小工具
 - `runtime` 是未来多入口唯一可复用底座
 - 当前第二入口验证固定为 `serve stdio`
 - `runtime` 对外不再暴露 `cancel_session_tasks()`，用户级中断入口固定为 `interrupt_session()`
-- 当前 `serve websocket` 也直接复用同一份 `ElebotRuntime`
 - 当前 `serve channels` 也直接复用同一份 `ElebotRuntime`
 - channel owner 固定在 `elebot/channels`
-- 当前内置 channel 固定为 `websocket` 和 `weixin`
+- 当前内置 channel 固定为 `weixin`
+- 当前最多只再考虑新增一个 `feishu` channel，不展开多平台 channel 生态
 - 当前唯一调度 owner 是 `CronService`
 - 调度存储路径固定为 `workspace/cron/jobs.json`
 - 模型侧调度工具固定为 `cron_create / cron_list / cron_delete / cron_update`
@@ -166,7 +146,7 @@ utils         = 低层通用小工具
 - interrupted 历史只保留结构化事实，不保留半截自然语言
 - `/new` 现在会清空短期消息和运行态 `metadata`
 - active turn 的 CLI 渲染现在已收口为单写入器；tool hint 不再走 prompt 重绘通道
-- `serve stdio` 和 `websocket` 共用一套外部事件名：`ready / progress / delta / stream_end / message / error`
+- `serve stdio` 复用当前外部事件名：`ready / progress / delta / stream_end / message / error`
 - CLI 根命令当前固定为：`onboard / agent / channels / serve / status`
 - 当前已经有 `elebot channels login weixin`
 - 微信 channel 第一版固定为个人微信私聊文本入口，不做流式、不做群聊、不做媒体
@@ -185,14 +165,13 @@ utils         = 低层通用小工具
 
 从现在开始，后续优先级固定为：
 
-- `P0`：模块九，子代理
-- `P1`：模块七/八后的缺陷修复和文档同步
-- `P2`：系统级调度与 `heartbeat`
+- `P0`：模块七/八后的缺陷修复和文档同步
+- `P1`：系统级调度与 `heartbeat`
 
 另外还有两条边界必须固定下来：
 
 - 模块一到模块八已经完成，后续默认只接受缺陷修复、文档同步和必要的小范围事实回写
-- 不应把 status 面板增强、model catalog 动态化、skill marketplace、WebUI 包装之类事项插到模块九之前
+- 不应把 status 面板增强、model catalog 动态化、skill marketplace、WebUI 包装之类事项插到系统级调度之前
 
 ## 5. 已完成模块回顾
 
@@ -379,35 +358,23 @@ AgentLoop
 
 - 新增 `elebot/channels/base.py`
 - 新增 `elebot/channels/manager.py`
-- 新增 `elebot/channels/websocket.py`
 - 新增 `elebot/channels/weixin.py`
 - 新增 `elebot channels login weixin`
 - 新增 `elebot serve channels`
-- `serve websocket` 通过 `runtime.start() + ChannelManager` 闭环
-- 第一版 `websocket` 没有照搬 nanobot 的随机 `chat_id`
-- 第一版 `websocket` 使用稳定 `chat_id`，默认等于 `client_id`
 - 第一版 `weixin` 使用稳定会话键 `weixin:{from_user_id}`
 - 第一版 `weixin` 只做个人微信私聊文本收发
+- 后续 channel 侧最多只再考虑一个 `feishu` 适配器
 - 当前不做 TLS、token issuance、离线消息队列
 
-## 9. 模块九：子代理
-
-当前状态：`P0 / 未开始`
-
-### 9.1 目标
-
-最后才考虑重新设计子代理，不恢复旧实现，也不把它做成当前主链路依赖。
-
-## 10. 实际执行顺序
+## 9. 实际执行顺序
 
 后续实际开工顺序固定为：
 
-1. 先做模块九，子代理
-2. 模块七和模块八只做缺陷修复、测试补齐、文档同步
-3. 系统级调度与 `heartbeat` 另开模块，不回退到旧 task 体系
-4. 模块一到模块八默认不再做结构性返工
+1. 先做模块七和模块八的缺陷修复、测试补齐、文档同步
+2. 系统级调度与 `heartbeat` 另开模块，不回退到旧 task 体系
+3. 模块一到模块八默认不再做结构性返工
 
-## 11. 一句话原则
+## 10. 一句话原则
 
 下一阶段不要急着继续扩高级能力，而是先把 EleBot 做成：
 

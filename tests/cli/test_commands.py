@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import signal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -75,7 +77,7 @@ def test_onboard_fresh_install(mock_paths) -> None:
     assert "已创建配置文件" in result.stdout
     assert "已创建工作区" in result.stdout
     assert "elebot 已就绪" in result.stdout
-    assert "获取地址：https://platform.deepseek.com/" in result.stdout
+    assert "获取地址：https://platform.xiaomimimo.com/console/api-keys" in result.stdout
     assert config_file.exists()
     assert (workspace_dir / "AGENTS.md").exists()
     assert (workspace_dir / "memory" / "MEMORY.md").exists()
@@ -139,11 +141,23 @@ def test_root_help_shows_only_current_commands() -> None:
     stripped_output = _strip_ansi(result.stdout)
     assert "onboard" in stripped_output
     assert "agent" in stripped_output
-    assert "channels" in stripped_output
-    assert "serve" in stripped_output
+    assert "channel" in stripped_output
     assert "status" in stripped_output
+    assert "channels" not in stripped_output
+    assert "serve" not in stripped_output
     assert "gateway" not in stripped_output
     assert "plugins" not in stripped_output
+
+
+def test_root_help_localizes_builtin_completion_options() -> None:
+    """根帮助页里的补全选项说明应为中文。"""
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    stripped_output = _strip_ansi(result.stdout)
+    assert "为当前 shell 安装补全脚本" in stripped_output
+    assert "显示当前 shell" in stripped_output
+    assert "的补全脚本" in stripped_output
 
 
 def test_onboard_interactive_discard_does_not_save_or_create_workspace(
@@ -299,6 +313,43 @@ def test_agent_uses_default_config_when_no_workspace_or_config_flags(mock_agent_
     )
 
 
+def test_agent_warns_when_default_config_file_is_missing(monkeypatch, tmp_path: Path) -> None:
+    """默认配置文件缺失时应提示先运行 onboard。"""
+    config = Config()
+    config.agents.defaults.workspace = str(tmp_path / "workspace")
+    missing_config = tmp_path / "missing-config.json"
+
+    monkeypatch.setattr("elebot.config.loader.get_config_path", lambda: missing_config)
+    monkeypatch.setattr("elebot.config.loader.load_config", lambda _path=None: config)
+    monkeypatch.setattr("elebot.config.loader.resolve_config_env_vars", lambda loaded: loaded)
+    monkeypatch.setattr("elebot.cli.commands.agent.sync_workspace_templates", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("elebot.cli.runtime_support._make_provider", lambda _config: object())
+    monkeypatch.setattr("elebot.cli.runtime_support.MessageBus", lambda: object())
+
+    class _FakeAgentLoop:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def process_direct(self, *_args, **_kwargs):
+            return OutboundMessage(channel="cli", chat_id="direct", content="ok")
+
+        def stop(self) -> None:
+            return None
+
+        async def close_mcp(self) -> None:
+            return None
+
+    monkeypatch.setattr("elebot.cli.runtime_support.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("elebot.cli.commands.agent.print_agent_response", lambda *_args, **_kwargs: None)
+
+    result = runner.invoke(app, ["agent", "-m", "hello"])
+
+    assert result.exit_code == 0
+    stripped = _strip_ansi(result.stdout)
+    assert "未找到配置文件" in stripped
+    assert "elebot onboard" in stripped
+
+
 def test_agent_uses_explicit_config_path(mock_agent_runtime, tmp_path: Path) -> None:
     """显式配置路径应传给 load_config。"""
     config_path = tmp_path / "agent-config.json"
@@ -434,13 +485,21 @@ def test_status_reports_basic_runtime_state(monkeypatch, tmp_path: Path) -> None
 
     assert result.exit_code == 0
     stripped = _strip_ansi(result.stdout)
-    assert "Config:" in stripped
-    assert "Workspace:" in stripped
-    assert "Model:" in stripped
+    assert "Config" in stripped
+    assert "Workspace" in stripped
+    assert "Provider" in stripped
+    assert "Model" in stripped
+    assert "Timezone" in stripped
+    assert "Channel Enabled" in stripped
+    assert "Channel Owner" in stripped
+    assert "Channel Running" in stripped
+    assert "Channel Logged In" in stripped
+    assert "Channel Uptime" in stripped
+    assert "Channel Log" in stripped
 
 
-def test_channels_login_invokes_weixin_login(monkeypatch) -> None:
-    """channels login 应调用 weixin 登录链。"""
+def test_channel_login_invokes_weixin_login(monkeypatch) -> None:
+    """channel login 应调用当前微信登录链。"""
     called: dict[str, object] = {}
 
     class _FakeChannel:
@@ -452,28 +511,40 @@ def test_channels_login_invokes_weixin_login(monkeypatch) -> None:
             called["force"] = force
             return True
 
-    monkeypatch.setattr("elebot.cli.commands.channels.load_config", lambda _path=None: Config())
-    monkeypatch.setattr("elebot.cli.commands.channels.resolve_config_env_vars", lambda config: config)
-    monkeypatch.setattr("elebot.cli.commands.channels.WeixinChannel", _FakeChannel)
+    monkeypatch.setattr("elebot.cli.commands.weixin.load_config", lambda _path=None: Config())
+    monkeypatch.setattr("elebot.cli.commands.weixin.resolve_config_env_vars", lambda config: config)
+    monkeypatch.setattr("elebot.cli.commands.weixin.WeixinChannel", _FakeChannel)
 
-    result = runner.invoke(app, ["channels", "login", "weixin", "--force"])
+    result = runner.invoke(app, ["channel", "login", "--force"])
 
     assert result.exit_code == 0
     assert called["runtime_has_bus"] is True
     assert called["force"] is True
 
 
-def test_channels_login_rejects_unknown_channel() -> None:
-    """channels login 第一版只接受 weixin。"""
-    result = runner.invoke(app, ["channels", "login", "telegram"])
+def test_channel_without_subcommand_shows_help() -> None:
+    """channel 裸调用时应直接展示帮助。"""
+    result = runner.invoke(app, ["channel"])
 
-    assert result.exit_code == 2
+    assert result.exit_code == 0
+    stripped = _strip_ansi(result.stdout)
+    assert "Manage external channel service" in stripped
+    assert "login" in stripped
+    assert "run" in stripped
+    assert "start" in stripped
+    assert "log" in stripped
+    assert "restart" in stripped
+    assert "stop" in stripped
 
 
-def test_serve_channels_starts_channel_manager(monkeypatch) -> None:
-    """serve channels 应复用 runtime 和 channel manager 启动已启用 channel。"""
+def test_channel_run_starts_channel_manager_with_logs(monkeypatch, tmp_path) -> None:
+    """channel run 应复用 runtime 和 channel manager 启动当前启用的微信 channel。"""
     loaded_config = Config()
     loaded_config.channels.weixin.enabled = True
+    state_dir = tmp_path / "weixin"
+    state_dir.mkdir(parents=True)
+    (state_dir / "account.json").write_text("{}", encoding="utf-8")
+    loaded_config.channels.weixin.state_dir = str(state_dir)
     events: list[str] = []
 
     class _FakeRuntime:
@@ -499,15 +570,17 @@ def test_serve_channels_starts_channel_manager(monkeypatch) -> None:
         async def stop_all(self) -> None:
             events.append("manager.stop_all")
 
-    monkeypatch.setattr("elebot.cli.commands.serve._load_runtime_config", lambda *_args, **_kwargs: loaded_config)
-    monkeypatch.setattr("elebot.cli.commands.serve.sync_workspace_templates", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("elebot.cli.commands.serve._make_runtime", lambda *_args, **_kwargs: _FakeRuntime())
-    monkeypatch.setattr("elebot.cli.commands.serve.ChannelManager", _FakeManager)
+    monkeypatch.setattr("elebot.cli.commands.weixin._load_runtime_config", lambda *_args, **_kwargs: loaded_config)
+    monkeypatch.setattr("elebot.cli.commands.weixin.sync_workspace_templates", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("elebot.cli.commands.weixin._make_runtime", lambda *_args, **_kwargs: _FakeRuntime())
+    monkeypatch.setattr("elebot.cli.commands.weixin.ChannelManager", _FakeManager)
+    monkeypatch.setattr("elebot.cli.commands.weixin.logger.enable", lambda *_args, **_kwargs: events.append("logger.enable"))
 
-    result = runner.invoke(app, ["serve", "channels"])
+    result = runner.invoke(app, ["channel", "run"])
 
     assert result.exit_code == 0
     assert events == [
+        "logger.enable",
         "runtime.start",
         "manager.start_all",
         "manager.wait",
@@ -517,11 +590,44 @@ def test_serve_channels_starts_channel_manager(monkeypatch) -> None:
     assert _FakeManager.captured_config.channels.weixin.enabled is True
 
 
-def test_serve_websocket_stays_websocket_only_even_if_weixin_is_enabled(monkeypatch) -> None:
-    """serve websocket 不应顺带启动已启用的 weixin channel。"""
+def test_channel_run_rejects_when_service_is_already_running(monkeypatch) -> None:
+    """后台已运行时，channel run 应拒绝再起前台实例。"""
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_channel_service_state", lambda: ("running", 2468))
+
+    result = runner.invoke(app, ["channel", "run"])
+
+    assert result.exit_code == 2
+    stripped = _strip_ansi(result.stdout + result.stderr)
+    assert "channel service 已被 weixin 占用" in stripped
+    assert "elebot channel stop" in stripped
+
+
+def test_channel_run_requires_login_state(monkeypatch, tmp_path) -> None:
+    """channel run 在没有登录态时，应直接给出明确提示。"""
     loaded_config = Config()
     loaded_config.channels.weixin.enabled = True
-    captured: dict[str, Config] = {}
+    loaded_config.channels.weixin.state_dir = str(tmp_path / "weixin")
+
+    monkeypatch.setattr("elebot.cli.commands.weixin._load_runtime_config", lambda *_args, **_kwargs: loaded_config)
+    monkeypatch.setattr("elebot.cli.commands.weixin.sync_workspace_templates", lambda *_args, **_kwargs: None)
+
+    result = runner.invoke(app, ["channel", "run"])
+
+    assert result.exit_code == 2
+    stripped = _strip_ansi(result.stdout + result.stderr)
+    assert "weixin channel 已启用，但未找到可用登录态" in stripped
+    assert "elebot channel login" in stripped
+
+
+def test_channel_run_warns_when_default_config_file_is_missing(monkeypatch, tmp_path: Path) -> None:
+    """channel run 在默认配置文件缺失时应提示先运行 onboard。"""
+    loaded_config = Config()
+    loaded_config.channels.weixin.enabled = True
+    state_dir = tmp_path / "weixin"
+    state_dir.mkdir(parents=True)
+    (state_dir / "account.json").write_text("{}", encoding="utf-8")
+    loaded_config.channels.weixin.state_dir = str(state_dir)
+    missing_config = tmp_path / "missing-config.json"
 
     class _FakeRuntime:
         async def start(self) -> None:
@@ -532,8 +638,7 @@ def test_serve_websocket_stays_websocket_only_even_if_weixin_is_enabled(monkeypa
 
     class _FakeManager:
         def __init__(self, config, runtime) -> None:
-            del runtime
-            captured["config"] = config
+            del config, runtime
 
         async def start_all(self) -> None:
             return None
@@ -544,16 +649,247 @@ def test_serve_websocket_stays_websocket_only_even_if_weixin_is_enabled(monkeypa
         async def stop_all(self) -> None:
             return None
 
-    monkeypatch.setattr("elebot.cli.commands.serve._load_runtime_config", lambda *_args, **_kwargs: loaded_config)
-    monkeypatch.setattr("elebot.cli.commands.serve.sync_workspace_templates", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("elebot.cli.commands.serve._make_runtime", lambda *_args, **_kwargs: _FakeRuntime())
-    monkeypatch.setattr("elebot.cli.commands.serve.ChannelManager", _FakeManager)
+    monkeypatch.setattr("elebot.config.loader.get_config_path", lambda: missing_config)
+    monkeypatch.setattr("elebot.config.loader.load_config", lambda _path=None: loaded_config)
+    monkeypatch.setattr("elebot.config.loader.resolve_config_env_vars", lambda config: config)
+    monkeypatch.setattr("elebot.cli.commands.weixin.sync_workspace_templates", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("elebot.cli.commands.weixin._make_runtime", lambda *_args, **_kwargs: _FakeRuntime())
+    monkeypatch.setattr("elebot.cli.commands.weixin.ChannelManager", _FakeManager)
+    monkeypatch.setattr("elebot.cli.commands.weixin.logger.enable", lambda *_args, **_kwargs: None)
 
-    result = runner.invoke(app, ["serve", "websocket"])
+    result = runner.invoke(app, ["channel", "run"])
 
     assert result.exit_code == 0
-    assert captured["config"].channels.websocket.enabled is True
-    assert captured["config"].channels.weixin.enabled is False
+    stripped = _strip_ansi(result.stdout)
+    assert "未找到配置文件" in stripped
+    assert "elebot onboard" in stripped
+
+
+def test_channel_run_requires_enabled_channel(monkeypatch) -> None:
+    """未启用 channel 时应直接失败退出。"""
+    loaded_config = Config()
+
+    monkeypatch.setattr("elebot.cli.commands.weixin._load_runtime_config", lambda *_args, **_kwargs: loaded_config)
+    monkeypatch.setattr("elebot.cli.commands.weixin.sync_workspace_templates", lambda *_args, **_kwargs: None)
+
+    result = runner.invoke(app, ["channel", "run"])
+
+    assert result.exit_code == 2
+    stripped = _strip_ansi(result.stdout + result.stderr)
+    assert "当前未启用 weixin channel" in stripped
+
+
+def test_channel_start_spawns_background_process(monkeypatch, tmp_path: Path) -> None:
+    """channel start 预检通过后应写 pid 并后台启动。"""
+    loaded_config = Config()
+    loaded_config.channels.weixin.enabled = True
+    weixin_dir = tmp_path / "weixin"
+    weixin_dir.mkdir(parents=True)
+    (weixin_dir / "account.json").write_text("{}", encoding="utf-8")
+    loaded_config.channels.weixin.state_dir = str(weixin_dir)
+    pid_path = tmp_path / "channels-service.pid"
+    log_path = tmp_path / "channels-service.log"
+    captured: dict[str, object] = {}
+
+    class _FakeProcess:
+        pid = 43210
+
+    def _fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return _FakeProcess()
+
+    monkeypatch.setattr("elebot.cli.commands.weixin._load_runtime_config", lambda *_args, **_kwargs: loaded_config)
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_channel_service_state", lambda: ("stopped", None))
+    monkeypatch.setattr("elebot.cli.commands.weixin._get_channel_service_pid_path", lambda: pid_path)
+    monkeypatch.setattr("elebot.cli.commands.weixin._get_channel_service_log_path", lambda: log_path)
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_logs_dir", lambda: tmp_path)
+    monkeypatch.setattr("elebot.cli.commands.weixin.subprocess.Popen", _fake_popen)
+
+    result = runner.invoke(app, ["channel", "start"])
+
+    assert result.exit_code == 0
+    assert pid_path.read_text(encoding="utf-8") == "43210"
+    assert captured["command"][:4] == [os.sys.executable, "-m", "elebot", "channel"]
+    assert captured["command"][4] == "_serve_internal"
+    assert "日志文件" in result.stdout
+
+
+def test_channel_start_requires_login_state(monkeypatch, tmp_path: Path) -> None:
+    """channel start 遇到缺微信登录态时应直接失败。"""
+    loaded_config = Config()
+    loaded_config.channels.weixin.enabled = True
+    loaded_config.channels.weixin.state_dir = str(tmp_path / "weixin")
+
+    monkeypatch.setattr("elebot.cli.commands.weixin._load_runtime_config", lambda *_args, **_kwargs: loaded_config)
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_channel_service_state", lambda: ("stopped", None))
+
+    result = runner.invoke(app, ["channel", "start"])
+
+    assert result.exit_code == 2
+    stripped = _strip_ansi(result.stdout + result.stderr)
+    assert "weixin channel 已启用，但未找到可用登录态" in stripped
+
+
+def test_channel_start_reports_running_instance(monkeypatch) -> None:
+    """channel start 遇到已存活实例时不应重复启动。"""
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_channel_service_state", lambda: ("running", 2468))
+
+    result = runner.invoke(app, ["channel", "start"])
+
+    assert result.exit_code == 0
+    assert "已被 weixin 占用" in result.stdout
+
+
+def test_channel_log_follows_existing_log_file(monkeypatch, tmp_path: Path) -> None:
+    """channel log 应从现有日志文件实时输出。"""
+    log_path = tmp_path / "channels-service.log"
+    log_path.write_text("existing line\n", encoding="utf-8")
+
+    monkeypatch.setattr("elebot.cli.commands.weixin._get_channel_service_log_path", lambda: log_path)
+
+    calls = {"count": 0}
+
+    def _fake_sleep(_seconds: float) -> None:
+        calls["count"] += 1
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("elebot.cli.commands.weixin.time.sleep", _fake_sleep)
+
+    result = runner.invoke(app, ["channel", "log"])
+
+    assert result.exit_code == 0
+
+
+def test_channel_log_requires_existing_log_file(monkeypatch, tmp_path: Path) -> None:
+    """channel log 在日志文件不存在时应直接报错。"""
+    log_path = tmp_path / "missing.log"
+    monkeypatch.setattr("elebot.cli.commands.weixin._get_channel_service_log_path", lambda: log_path)
+
+    result = runner.invoke(app, ["channel", "log"])
+
+    assert result.exit_code == 2
+    stripped = _strip_ansi(result.stdout + result.stderr)
+    assert "日志文件不存在" in stripped
+
+
+def test_channel_stop_terminates_running_process(monkeypatch, tmp_path: Path) -> None:
+    """channel stop 应终止存活进程并清理 pid 文件。"""
+    pid_path = tmp_path / "channels-service.pid"
+    pid_path.write_text("2468", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_channel_service_state", lambda: ("running", 2468))
+    monkeypatch.setattr("elebot.cli.commands.weixin._get_channel_service_pid_path", lambda: pid_path)
+    monkeypatch.setattr("elebot.cli.commands.weixin._wait_for_process_exit", lambda pid, timeout_seconds: True)
+    monkeypatch.setattr("elebot.cli.commands.weixin.os.kill", lambda pid, sig: seen.update({"pid": pid, "sig": sig}))
+
+    result = runner.invoke(app, ["channel", "stop"])
+
+    assert result.exit_code == 0
+    assert seen == {"pid": 2468, "sig": signal.SIGTERM}
+    assert not pid_path.exists()
+
+
+def test_channel_stop_cleans_stale_pid(monkeypatch, tmp_path: Path) -> None:
+    """channel stop 遇到 stale pid 时应清理并提示。"""
+    pid_path = tmp_path / "channels-service.pid"
+    pid_path.write_text("9999", encoding="utf-8")
+
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_channel_service_state", lambda: ("stale", 9999))
+    monkeypatch.setattr("elebot.cli.commands.weixin._get_channel_service_pid_path", lambda: pid_path)
+
+    result = runner.invoke(app, ["channel", "stop"])
+
+    assert result.exit_code == 0
+    assert not pid_path.exists()
+    assert "已失效" in result.stdout
+
+
+def test_channel_restart_restarts_running_process(monkeypatch) -> None:
+    """channel restart 遇到运行中实例时应先停再启。"""
+    calls: list[tuple[str, object, object]] = []
+
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_channel_service_state", lambda: ("running", 2468))
+    monkeypatch.setattr(
+        "elebot.cli.commands.weixin._stop_weixin_service",
+        lambda: calls.append(("stop", None, None)),
+    )
+    monkeypatch.setattr(
+        "elebot.cli.commands.weixin._start_weixin_service",
+        lambda config, workspace: calls.append(("start", config, workspace)),
+    )
+
+    result = runner.invoke(app, ["channel", "restart"])
+
+    assert result.exit_code == 0
+    assert calls == [("stop", None, None), ("start", None, None)]
+
+
+def test_channel_restart_starts_when_stopped(monkeypatch) -> None:
+    """channel restart 遇到未运行实例时应直接启动。"""
+    calls: list[tuple[str, object, object]] = []
+
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_channel_service_state", lambda: ("stopped", None))
+    monkeypatch.setattr(
+        "elebot.cli.commands.weixin._start_weixin_service",
+        lambda config, workspace: calls.append(("start", config, workspace)),
+    )
+
+    result = runner.invoke(app, ["channel", "restart"])
+
+    assert result.exit_code == 0
+    assert calls == [("start", None, None)]
+
+
+def test_status_reports_channel_runtime_state(monkeypatch, tmp_path: Path) -> None:
+    """status 应输出统一 channel 启用、登录、后台运行状态。"""
+    config_path = tmp_path / "config.json"
+    workspace = tmp_path / "workspace"
+    weixin_dir = tmp_path / "weixin"
+    workspace.mkdir()
+    weixin_dir.mkdir()
+    state_path = weixin_dir / "account.json"
+    state_path.write_text("{}", encoding="utf-8")
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace)
+    config.agents.defaults.provider = "xiaomi_mimo"
+    config.agents.defaults.model = "mimo-v2.5"
+    config.agents.defaults.timezone = "Asia/Shanghai"
+    config.channels.weixin.enabled = True
+    config.channels.weixin.state_dir = str(weixin_dir)
+
+    monkeypatch.setattr("elebot.config.loader.get_config_path", lambda: config_path)
+    monkeypatch.setattr("elebot.config.loader.load_config", lambda: config)
+    monkeypatch.setattr("elebot.cli.commands.status.get_channel_service_state", lambda: ("running", 1357))
+    monkeypatch.setattr("elebot.cli.commands.status.list_channel_service_pids", lambda: [1357, 2468])
+    monkeypatch.setattr(
+        "elebot.cli.commands.status.Path.home",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr(
+        "subprocess.check_output",
+        lambda *args, **kwargs: "Thu May 01 12:00:00 2026",
+    )
+
+    result = runner.invoke(app, ["status"])
+
+    assert result.exit_code == 0
+    stripped = _strip_ansi(result.stdout)
+    assert "Provider" in stripped
+    assert "xiaomi_mimo" in stripped
+    assert "Model" in stripped
+    assert "mimo-v2.5" in stripped
+    assert "Timezone" in stripped
+    assert "Asia/Shanghai" in stripped
+    assert "Channel Enabled" in stripped
+    assert "Channel Owner" in stripped
+    assert "Channel Running" in stripped
+    assert "weixin" in stripped
+    assert "Channel Logged In" in stripped
+    assert "Channel Uptime" in stripped
+    assert "Channel Log" in stripped
 
 
 def test_onboard_auto_fills_context_window_via_model_catalog(monkeypatch) -> None:

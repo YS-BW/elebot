@@ -81,10 +81,6 @@ CLI 侧现在通过 [elebot/cli/runtime_support.py](../elebot/cli/runtime_suppor
 - `serve channels`
   - 先 `runtime.start()`
   - 再由 `ChannelManager.start_all()` 启动所有已启用的内置 channel
-- `serve websocket`
-  - 先 `runtime.start()`
-  - 再让 channel 把入站消息写进 `runtime.bus`
-  - 由 `AgentLoop.run()` 和 `ChannelManager` 一起闭环
 
 这说明 runtime 现在不只是“给 CLI 用的一层包装”，而是已经能承接：
 

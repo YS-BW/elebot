@@ -6,7 +6,6 @@
 
 - [elebot/channels/base.py](../elebot/channels/base.py#L1-L108)
 - [elebot/channels/manager.py](../elebot/channels/manager.py#L1-L113)
-- [elebot/channels/websocket.py](../elebot/channels/websocket.py#L1-L298)
 - [elebot/channels/weixin.py](../elebot/channels/weixin.py#L57-L620)
 - [elebot/bus/events.py](../elebot/bus/events.py#L1-L34)
 - [tests/channels/test_manager.py](../tests/channels/test_manager.py#L1-L118)
@@ -23,14 +22,10 @@
   - 负责启动、停止
   - 负责消费 `runtime.bus.outbound` 并路由回 channel
 - concrete channel
-  - `WebSocketChannel`
   - `WeixinChannel`
 
-当前两个 concrete channel 的边界分别是：
+当前唯一 concrete channel 的边界是：
 
-- `WebSocketChannel`
-  - 本机 websocket 入口
-  - 支持 `progress / delta / message` 三类出站显示
 - `WeixinChannel`
   - 个人微信 HTTP 长轮询入口
   - 第一版只发最终文本消息
@@ -38,7 +33,6 @@
 
 更具体的平台协议见：
 
-- [WEBSOCKET](./WEBSOCKET.md)
 - [WEIXIN](./WEIXIN.md)
 
 ## 2. 为什么说 channel 不是 runtime
@@ -68,14 +62,10 @@ AgentLoop
 
 ## 3. 当前有哪些正式入口
 
-当前 channel 相关入口只有两条：
+当前 channel 相关入口只有一条：
 
-- `elebot serve websocket`
-  - 强制只启动 websocket
 - `elebot serve channels`
   - 启动所有 `enabled=true` 的内置 channel
-
-也就是说，`channel manager` 现在既可以承接“单一 channel 入口”，也可以承接“按配置同时启动多个内置 channel”。
 
 ## 4. `ChannelManager` 现在识别哪些 outbound metadata
 
@@ -105,7 +95,6 @@ session_key = channel + ":" + chat_id
 
 所以：
 
-- websocket 默认是 `websocket:{chat_id}`
 - weixin 默认是 `weixin:{from_user_id}`
 
 这也是为什么个人微信 channel 第一版可以直接把私聊发送者稳定映射到独立会话。

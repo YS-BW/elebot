@@ -62,7 +62,6 @@ EleBot 当前是一个 nanobot 风格的终端 AI 助手项目。
 
 这些能力当前不在默认主链路里，不要按“差一点恢复”的心态处理：
 
-- `channels`
 - `api`
 - `heartbeat`
 - `security`
@@ -229,6 +228,7 @@ EleBot 默认运行目录：
 固定保留范围：
 
 - `~/.elebot/config.json`
+- `~/.elebot/weixin`
 
 固定清理范围：
 
@@ -236,9 +236,10 @@ EleBot 默认运行目录：
 - `~/.elebot/sessions`
 - `~/.elebot/skills`
 - `~/.elebot/logs`
-- `~/.elebot/site-auth` 之外的其它运行态缓存和临时文件
+- `~/.elebot/site-auth` 之外，且不包含 `~/.elebot/weixin` 的其它运行态缓存和临时文件
 
 如果本轮代码修改涉及 `config` 结构、默认值、字段名或配置加载逻辑，则需要同步重写当前本机 `~/.elebot/config.json`，并保留用户当前实际在用的配置值，不要重置成模板默认值。
+
 
 ## Build
 

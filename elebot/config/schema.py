@@ -39,8 +39,8 @@ class AgentDefaults(Base):
     """Agent 默认配置。"""
 
     workspace: str = "~/.elebot/workspace"
-    model: str = "deepseek-v4-flash"
-    provider: str = "deepseek"
+    model: str = "mimo-v2.5"
+    provider: str = "xiaomi_mimo"
     max_tokens: int = 8192
     context_window_tokens: int = 65_536
     context_block_limit: int | None = None
@@ -161,15 +161,6 @@ class TranscriptionConfig(Base):
     api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
-class WebSocketChannelConfig(StrictBase):
-    """WebSocket channel 的最小配置。"""
-
-    enabled: bool = False
-    port: int = Field(default=8765, ge=1, le=65535)
-    path: str = "/"
-    streaming: bool = True
-
-
 class WeixinChannelConfig(StrictBase):
     """个人微信 channel 的最小配置。"""
 
@@ -185,7 +176,6 @@ class WeixinChannelConfig(StrictBase):
 class ChannelsConfig(StrictBase):
     """多通道入口配置。"""
 
-    websocket: WebSocketChannelConfig = Field(default_factory=WebSocketChannelConfig)
     weixin: WeixinChannelConfig = Field(default_factory=WeixinChannelConfig)
 
 

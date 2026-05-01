@@ -1,6 +1,6 @@
 # STDIO 入口协议
 
-这篇文档只讲 `elebot serve stdio` 的 JSONL 协议，不讨论 websocket channel。
+这篇文档只讲 `elebot serve stdio` 的 JSONL 协议，不讨论 channel 入口细节。
 
 相关源码：
 

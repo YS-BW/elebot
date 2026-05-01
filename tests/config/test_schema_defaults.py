@@ -3,16 +3,16 @@
 from elebot.config.schema import Config
 
 
-def test_default_model_is_deepseek_v4_flash() -> None:
-    """默认模型固定为 deepseek-v4-flash。"""
+def test_default_model_is_mimo_v2_5() -> None:
+    """默认模型固定为 mimo-v2.5。"""
     cfg = Config()
-    assert cfg.agents.defaults.model == "deepseek-v4-flash"
+    assert cfg.agents.defaults.model == "mimo-v2.5"
 
 
-def test_default_provider_is_deepseek() -> None:
-    """默认 provider 固定为 deepseek。"""
+def test_default_provider_is_xiaomi_mimo() -> None:
+    """默认 provider 固定为 xiaomi_mimo。"""
     cfg = Config()
-    assert cfg.agents.defaults.provider == "deepseek"
+    assert cfg.agents.defaults.provider == "xiaomi_mimo"
 
 
 def test_reads_elebot_env_prefix(monkeypatch) -> None:
@@ -27,16 +27,7 @@ def test_ignores_legacy_nanobot_env_prefix(monkeypatch) -> None:
     monkeypatch.delenv("ELEBOT_AGENTS__DEFAULTS__MODEL", raising=False)
     monkeypatch.setenv("NANOBOT_AGENTS__DEFAULTS__MODEL", "legacy/model")
     cfg = Config()
-    assert cfg.agents.defaults.model == "deepseek-v4-flash"
-
-
-def test_websocket_channel_defaults() -> None:
-    """WebSocket channel 默认配置固定为本机最小入口。"""
-    cfg = Config()
-    assert cfg.channels.websocket.enabled is False
-    assert cfg.channels.websocket.port == 8765
-    assert cfg.channels.websocket.path == "/"
-    assert cfg.channels.websocket.streaming is True
+    assert cfg.agents.defaults.model == "mimo-v2.5"
 
 
 def test_weixin_channel_defaults() -> None:

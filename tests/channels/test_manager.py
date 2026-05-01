@@ -19,7 +19,7 @@ class _FakeRuntime:
 
 
 class _FakeChannel(BaseChannel):
-    name = "websocket"
+    name = "weixin"
 
     def __init__(self, config, runtime) -> None:
         super().__init__(config, runtime)
@@ -55,19 +55,19 @@ class _FakeWeixinChannel(_FakeChannel):
 @pytest.mark.asyncio
 async def test_channel_manager_routes_outbound_metadata() -> None:
     config = Config()
-    config.channels.websocket.enabled = True
+    config.channels.weixin.enabled = True
     runtime = _FakeRuntime()
     manager = ChannelManager(
         config,
         runtime,
-        channel_factories={"websocket": _FakeChannel},
+        channel_factories={"weixin": _FakeChannel},
     )
 
     await manager.start_all()
 
     await runtime.bus.publish_outbound(
         OutboundMessage(
-            channel="websocket",
+            channel="weixin",
             chat_id="room1",
             content='cron_create("提醒我看书")',
             metadata={"_tool_transition": True},
@@ -75,7 +75,7 @@ async def test_channel_manager_routes_outbound_metadata() -> None:
     )
     await runtime.bus.publish_outbound(
         OutboundMessage(
-            channel="websocket",
+            channel="weixin",
             chat_id="room1",
             content="running",
             metadata={"_progress": True},
@@ -83,7 +83,7 @@ async def test_channel_manager_routes_outbound_metadata() -> None:
     )
     await runtime.bus.publish_outbound(
         OutboundMessage(
-            channel="websocket",
+            channel="weixin",
             chat_id="room1",
             content="你",
             metadata={"_stream_delta": True},
@@ -91,7 +91,7 @@ async def test_channel_manager_routes_outbound_metadata() -> None:
     )
     await runtime.bus.publish_outbound(
         OutboundMessage(
-            channel="websocket",
+            channel="weixin",
             chat_id="room1",
             content="",
             metadata={"_stream_end": True, "_resuming": False},
@@ -99,7 +99,7 @@ async def test_channel_manager_routes_outbound_metadata() -> None:
     )
     await runtime.bus.publish_outbound(
         OutboundMessage(
-            channel="websocket",
+            channel="weixin",
             chat_id="room1",
             content="你好",
             metadata={},
@@ -107,7 +107,7 @@ async def test_channel_manager_routes_outbound_metadata() -> None:
     )
 
     await asyncio.sleep(0.05)
-    channel = manager.channels["websocket"]
+    channel = manager.channels["weixin"]
     assert isinstance(channel, _FakeChannel)
     assert channel.started is True
     assert channel.progresses == [
@@ -130,7 +130,7 @@ def test_channel_manager_initializes_enabled_weixin_channel() -> None:
     manager = ChannelManager(
         config,
         runtime,
-        channel_factories={"websocket": _FakeChannel, "weixin": _FakeWeixinChannel},
+        channel_factories={"weixin": _FakeWeixinChannel},
     )
 
     channel = manager.channels["weixin"]

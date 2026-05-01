@@ -101,32 +101,6 @@ class TestResolveConfig:
         with pytest.raises(ValueError, match="已移除的顶层字段: api, gateway"):
             load_config(config_path)
 
-    def test_load_config_accepts_new_channels_schema(self, tmp_path: Path) -> None:
-        """新的 channels.websocket 配置应通过校验。"""
-        config_path = tmp_path / "config.json"
-        config_path.write_text(
-            json.dumps(
-                {
-                    "channels": {
-                        "websocket": {
-                            "enabled": True,
-                            "port": 9001,
-                            "path": "/ws",
-                            "streaming": False,
-                        }
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        loaded = load_config(config_path)
-
-        assert loaded.channels.websocket.enabled is True
-        assert loaded.channels.websocket.port == 9001
-        assert loaded.channels.websocket.path == "/ws"
-        assert loaded.channels.websocket.streaming is False
-
     def test_load_config_accepts_weixin_channel_schema(self, tmp_path: Path) -> None:
         """新的 channels.weixin 配置应通过校验。"""
         config_path = tmp_path / "config.json"

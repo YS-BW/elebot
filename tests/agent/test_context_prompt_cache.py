@@ -461,16 +461,6 @@ def test_system_prompt_does_not_inject_weixin_part_protocol_for_cli(tmp_path) ->
     assert "使用字面量 `<part>` 作为分段符" not in prompt
 
 
-def test_system_prompt_contains_non_cli_weixin_style_context(tmp_path) -> None:
-    """非 CLI 非微信通道也应落到微信语义。"""
-    workspace = _make_workspace(tmp_path)
-    builder = _make_builder(workspace)
-
-    prompt = builder.build_system_prompt(channel="websocket")
-    assert "按个人微信 channel 语义处理" in prompt
-    assert "用户看不到终端界面、tool hint、shell 原始输出" in prompt
-
-
 def test_build_messages_passes_channel_to_system_prompt(tmp_path) -> None:
     """build_messages should pass channel through to build_system_prompt."""
     workspace = _make_workspace(tmp_path)

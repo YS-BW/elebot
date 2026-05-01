@@ -8,7 +8,6 @@ from loguru import logger
 
 from elebot.bus.events import OutboundMessage
 from elebot.channels.base import BaseChannel, ChannelRuntimeControl
-from elebot.channels.websocket import WebSocketChannel
 from elebot.channels.weixin import WeixinChannel
 from elebot.config.schema import Config
 
@@ -28,7 +27,6 @@ class ChannelManager:
         self.runtime = runtime
         self.bus = runtime.bus
         self._channel_factories = channel_factories or {
-            "websocket": WebSocketChannel,
             "weixin": WeixinChannel,
         }
         self.channels: dict[str, BaseChannel] = {}
@@ -38,9 +36,6 @@ class ChannelManager:
 
     def _init_channels(self) -> None:
         """按配置启用 channel。"""
-        if self.config.channels.websocket.enabled:
-            factory = self._channel_factories["websocket"]
-            self.channels["websocket"] = factory(self.config.channels.websocket, self.runtime)
         if self.config.channels.weixin.enabled:
             factory = self._channel_factories["weixin"]
             self.channels["weixin"] = factory(self.config.channels.weixin, self.runtime)

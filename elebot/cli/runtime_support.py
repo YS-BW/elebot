@@ -55,7 +55,12 @@ def _load_runtime_config(
     返回:
         解析并展开环境变量后的配置对象。
     """
-    from elebot.config.loader import load_config, resolve_config_env_vars, set_config_path
+    from elebot.config.loader import (
+        get_config_path,
+        load_config,
+        resolve_config_env_vars,
+        set_config_path,
+    )
 
     config_path = None
     if config:
@@ -67,6 +72,13 @@ def _load_runtime_config(
         set_config_path(config_path)
         if not silent:
             console.print(f"[dim]Using config: {config_path}[/dim]")
+    else:
+        default_config_path = get_config_path()
+        if not default_config_path.exists():
+            console.print(
+                "[yellow]未找到配置文件，当前将使用默认内存配置运行。"
+                "建议先运行 `elebot onboard` 完成初始化。[/yellow]"
+            )
 
     try:
         loaded = resolve_config_env_vars(load_config(config_path))

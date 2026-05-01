@@ -31,24 +31,6 @@ MessageBus.outbound
 CLI 渲染
 ```
 
-如果是 websocket channel，则会变成：
-
-```text
-WebSocket client
-  ↓
-WebSocketChannel
-  ↓
-MessageBus.inbound
-  ↓
-AgentLoop.run()
-  ↓
-MessageBus.outbound
-  ↓
-ChannelManager
-  ↓
-WebSocketChannel
-```
-
 bus 的定位不是“复杂事件系统”，而是：
 
 > 一个很轻的异步消息中介层。

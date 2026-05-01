@@ -5,8 +5,7 @@
 相关源码：
 
 - [elebot/config/schema.py](../elebot/config/schema.py#L157-L199)
-- [elebot/cli/commands/channels.py](../elebot/cli/commands/channels.py#L47-L79)
-- [elebot/cli/commands/serve.py](../elebot/cli/commands/serve.py#L62-L97)
+- [elebot/cli/commands/weixin.py](../elebot/cli/commands/weixin.py#L1-L286)
 - [elebot/channels/weixin.py](../elebot/channels/weixin.py#L66-L755)
 - [elebot/runtime/app.py](../elebot/runtime/app.py#L47-L221)
 - [elebot/providers/transcription.py](../elebot/providers/transcription.py#L19-L177)
@@ -55,13 +54,13 @@
 当前登录命令只有一条：
 
 ```bash
-elebot channels login weixin
+elebot weixin login
 ```
 
 如果需要强制重新扫码：
 
 ```bash
-elebot channels login weixin --force
+elebot weixin login --force
 ```
 
 登录成功后，状态默认持久化到：
@@ -81,7 +80,7 @@ elebot channels login weixin --force
 
 1. `channels.weixin.token`
 2. 已保存的 `account.json`
-3. 否则直接报错，提示先执行 `elebot channels login weixin`
+3. 否则直接报错，提示先执行 `elebot weixin login`
 
 当前不会在 `start()` 里自动弹扫码登录。
 
@@ -89,11 +88,22 @@ elebot channels login weixin --force
 
 微信 channel 不通过 `elebot agent` 启动。
 
-正式入口是：
+正式前台入口是：
 
 ```bash
-elebot serve channels
+elebot weixin run
 ```
+
+后台入口是：
+
+```bash
+elebot weixin start
+elebot weixin log
+elebot weixin stop
+elebot weixin restart
+```
+
+其中 `elebot weixin log` 只负责实时输出后台日志；按 `Ctrl+C` 退出后，不会影响已经运行中的后台 service。
 
 当且仅当 `channels.weixin.enabled=true` 时，`ChannelManager` 才会初始化并启动 `WeixinChannel`。
 

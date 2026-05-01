@@ -513,7 +513,7 @@ class WeixinChannel(BaseChannel):
             self._token = str(self.config.token).strip()
         elif not state_loaded:
             logger.error(
-                "Weixin channel has no authentication state. Run 'elebot channels login weixin' first."
+                "Weixin channel has no authentication state. Run 'elebot weixin login' first."
             )
             self._running = False
             await self._client.aclose()
