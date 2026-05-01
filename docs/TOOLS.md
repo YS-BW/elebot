@@ -52,7 +52,6 @@ tool message 回填模型
   - `list_dir`
   - `glob`
   - `grep`
-  - `notebook_edit`
 - 调度
   - `cron_create`
   - `cron_list`

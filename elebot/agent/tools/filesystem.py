@@ -690,10 +690,6 @@ class EditFileTool(_FsTool):
             if new_text is None:
                 raise ValueError("Unknown new_text")
 
-            # Notebook 需要保留结构化语义，混用 edit_file 会破坏单元格边界。
-            if path.endswith(".ipynb"):
-                return "Error: This is a Jupyter notebook. Use the notebook_edit tool instead of edit_file."
-
             fp = self._resolve(path)
 
             # 允许用空 old_text 创建新文件，这样模型无需额外判断“先创建还是再编辑”。

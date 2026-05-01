@@ -12,7 +12,6 @@ from elebot.agent.tools.cron import (
 )
 from elebot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from elebot.agent.tools.image_analysis import AnalyzeImageTool
-from elebot.agent.tools.notebook import NotebookEditTool
 from elebot.agent.tools.registry import ToolRegistry
 from elebot.agent.tools.search import GlobTool, GrepTool
 from elebot.agent.tools.shell import ExecTool
@@ -71,13 +70,6 @@ def register_default_tools(
                 extra_allowed_dirs=extra_allowed_dirs,
             )
         )
-    registry.register(
-        NotebookEditTool(
-            workspace=workspace,
-            allowed_dir=allowed_dir,
-            extra_allowed_dirs=extra_allowed_dirs,
-        )
-    )
     registry.register(
         AnalyzeImageTool(
             provider=provider,

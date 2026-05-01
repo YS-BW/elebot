@@ -11,7 +11,6 @@
 - 目录浏览：`list_dir`
 - 按文件名或路径模式找文件：`glob`
 - 按内容搜索：`grep`
-- Jupyter Notebook 修改：`notebook_edit`
 - Shell / 程序执行：`exec`
 - Web 搜索与抓取：`web_search`、`web_fetch`
 - 定时调度：`cron_create`、`cron_list`、`cron_delete`、`cron_update`
@@ -37,7 +36,6 @@
 - `write_file` 会覆盖整个文件，适合新建文件或整文件重写
 - `edit_file` 适合局部替换，依赖 `old_text` 命中当前文件内容
 - `edit_file` 多处命中时，应补更多上下文；只有明确需要全量替换时才用 `replace_all=true`
-- `.ipynb` 不要用 `edit_file`，改用 `notebook_edit`
 - 如果 `edit_file` 返回 closest match / diff，先根据提示重新读取或收窄替换范围
 
 ## 5. `list_dir` / `glob` / `grep`
