@@ -863,7 +863,6 @@ def test_status_reports_channel_runtime_state(monkeypatch, tmp_path: Path) -> No
     monkeypatch.setattr("elebot.config.loader.get_config_path", lambda: config_path)
     monkeypatch.setattr("elebot.config.loader.load_config", lambda: config)
     monkeypatch.setattr("elebot.cli.commands.status.get_channel_service_state", lambda: ("running", 1357))
-    monkeypatch.setattr("elebot.cli.commands.status.list_channel_service_pids", lambda: [1357, 2468])
     monkeypatch.setattr(
         "elebot.cli.commands.status.Path.home",
         lambda: tmp_path,

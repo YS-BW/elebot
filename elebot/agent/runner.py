@@ -16,7 +16,6 @@ from elebot.agent.tokens import estimate_message_tokens, estimate_prompt_tokens_
 from elebot.agent.tool_results import maybe_persist_tool_result
 from elebot.agent.tools.registry import ToolRegistry
 from elebot.providers.base import LLMProvider, ToolCallRequest
-from elebot.utils.prompt_templates import render_template
 from elebot.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
     build_finalization_retry_message,

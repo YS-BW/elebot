@@ -11,9 +11,7 @@ from rich.table import Table
 from elebot import __logo__
 from elebot.cli.render import console
 from elebot.cli.commands.weixin import (
-    get_channel_service_owner,
     get_channel_service_state,
-    list_channel_service_pids,
     resolve_weixin_state_path,
 )
 
@@ -55,7 +53,6 @@ def register_status_command(app: typer.Typer) -> None:
             无返回值。
         """
         from elebot.config.loader import get_config_path, load_config
-        from elebot.providers.registry import find_by_name
 
         config_path = get_config_path()
         config = load_config()
@@ -65,12 +62,8 @@ def register_status_command(app: typer.Typer) -> None:
         weixin_state_path = resolve_weixin_state_path(config)
         channel_logged_in = bool(str(config.channels.weixin.token or "").strip()) or weixin_state_path.exists()
         service_state, service_pid = get_channel_service_state()
-        service_pids = list_channel_service_pids()
         service_log_path = Path.home() / ".elebot" / "logs" / "channels-service.log"
         channel_uptime = ""
-
-        provider_spec = find_by_name(config.agents.defaults.provider)
-        provider_label = provider_spec.label if provider_spec is not None else config.agents.defaults.provider
 
         if service_pid is not None:
             if service_state == "running":
