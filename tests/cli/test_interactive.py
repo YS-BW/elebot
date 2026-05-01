@@ -204,25 +204,29 @@ async def test_run_interactive_loop_esc_interrupts_active_turn(monkeypatch):
                     chat_id=message.chat_id,
                     content="hello",
                     metadata={**base_meta, "_stream_delta": True},
+                    )
                 )
-            )
-            await asyncio.sleep(0.05)
-            await self._outbound.put(
-                OutboundMessage(
-                    channel=message.channel,
-                    chat_id=message.chat_id,
-                    content="",
-                    metadata={**base_meta, "_stream_end": True},
+
+            async def _finish_stream() -> None:
+                await asyncio.sleep(0.05)
+                await self._outbound.put(
+                    OutboundMessage(
+                        channel=message.channel,
+                        chat_id=message.chat_id,
+                        content="",
+                        metadata={**base_meta, "_stream_end": True},
+                    )
                 )
-            )
-            await self._outbound.put(
-                OutboundMessage(
-                    channel=message.channel,
-                    chat_id=message.chat_id,
-                    content="",
-                    metadata={**base_meta, "_streamed": True},
+                await self._outbound.put(
+                    OutboundMessage(
+                        channel=message.channel,
+                        chat_id=message.chat_id,
+                        content="",
+                        metadata={**base_meta, "_streamed": True},
+                    )
                 )
-            )
+
+            asyncio.create_task(_finish_stream())
 
     bus = _SlowBus()
     agent_loop = _FakeAgentLoop()
