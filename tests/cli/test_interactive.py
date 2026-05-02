@@ -70,11 +70,12 @@ class _FakeInterruptWatcher:
         self._trigger = trigger
         self.closed = False
 
-    async def wait(self) -> None:
+    async def wait(self) -> bool:
         if self._trigger:
             await asyncio.sleep(0)
-            return
+            return True
         await asyncio.sleep(60)
+        return False
 
     def close(self) -> None:
         self.closed = True

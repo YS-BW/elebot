@@ -255,16 +255,16 @@ class EscInterruptWatcher:
         self._sequence_timeout = sequence_timeout
         self._closed = threading.Event()
 
-    async def wait(self) -> None:
+    async def wait(self) -> bool:
         """等待用户按下真实的 `Esc` 中断键。
 
         参数:
             无。
 
         返回:
-            在探测到真实的 `Esc` 中断后返回。
+            检测到真实 Esc 中断时返回 ``True``，因平台限制或提前关闭时返回 ``False``。
         """
-        await asyncio.to_thread(self._wait_blocking)
+        return await asyncio.to_thread(self._wait_blocking)
 
     def close(self) -> None:
         """请求停止监听器。
@@ -368,11 +368,18 @@ class EscInterruptWatcher:
         """
         return os.read(stdin_fd, 1)
 
-    def _wait_blocking(self) -> None:
-        """在阻塞终端读取循环里等待真实的 `Esc` 中断。"""
+    def _wait_blocking(self) -> bool:
+        """在阻塞终端读取循环里等待真实的 `Esc` 中断。
+
+        返回:
+            检测到真实 Esc 中断时返回 ``True``，因平台限制或提前关闭时返回 ``False``。
+        """
+        if sys.platform == "win32":
+            return self._wait_blocking_windows()
+
         stdin_fd = self._get_stdin_fd()
         if stdin_fd is None or not self._is_tty(stdin_fd):
-            return
+            return False
 
         original_attrs: Any | None = None
         try:
@@ -382,7 +389,7 @@ class EscInterruptWatcher:
                     continue
                 chunk = self._read_byte(stdin_fd)
                 if not chunk:
-                    return
+                    return False
                 if chunk != b"\x1b":
                     continue
                 if _is_standalone_escape(
@@ -391,11 +398,79 @@ class EscInterruptWatcher:
                     is_closed=self._closed.is_set,
                     sequence_timeout=self._sequence_timeout,
                 ):
-                    return
+                    return True
         except Exception:
-            return
+            return False
         finally:
             self._restore_terminal_mode(stdin_fd, original_attrs)
+
+    def _wait_blocking_windows(self) -> bool:
+        """Windows 平台下通过 msvcrt 监听 Esc 按键。
+
+        返回:
+            检测到真实 Esc 中断时返回 ``True``，提前关闭时返回 ``False``。
+        """
+        while not self._closed.is_set():
+            if not self._win_wait_for_byte(self._poll_interval):
+                continue
+            chunk = self._win_read_byte()
+            if chunk != b"\x1b":
+                continue
+            if _is_standalone_escape(
+                read_byte=self._win_read_byte,
+                wait_for_byte=self._win_wait_for_byte,
+                is_closed=self._closed.is_set,
+                sequence_timeout=self._sequence_timeout,
+            ):
+                return True
+        return False
+
+    def _win_kbhit(self) -> bool:
+        """Windows 下检查是否有按键等待读取。
+
+        返回:
+            有按键时返回 ``True``。
+        """
+        import msvcrt
+
+        return msvcrt.kbhit()
+
+    def _win_getch(self) -> bytes:
+        """Windows 下读取一个按键字节。
+
+        返回:
+            按键对应的字节。
+        """
+        import msvcrt
+
+        return msvcrt.getch()
+
+    def _win_wait_for_byte(self, timeout: float) -> bool:
+        """Windows 下等待后续字节到达。
+
+        参数:
+            timeout: 最长等待秒数。
+
+        返回:
+            在超时前有字节到达时返回 ``True``。
+        """
+        deadline = time.monotonic() + timeout
+        while not self._closed.is_set():
+            if self._win_kbhit():
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(self._poll_interval, remaining))
+        return False
+
+    def _win_read_byte(self) -> bytes:
+        """Windows 下读取一个字节。
+
+        返回:
+            读取到的字节。
+        """
+        return self._win_getch()
 
 
 def create_interrupt_watcher() -> EscInterruptWatcher | None:

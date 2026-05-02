@@ -40,6 +40,7 @@ dependencies = [
     "dulwich>=0.22.0,<1.0.0",
     "filelock>=3.25.2",
     "croniter>=6.0.0,<7.0.0",
+    "tzdata>=2025.2",
 ]
 
 [project.optional-dependencies]

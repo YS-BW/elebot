@@ -112,8 +112,8 @@ class TestSpawnUnix:
 class TestSpawnWindows:
 
     @pytest.mark.asyncio
-    async def test_uses_comspec_from_env(self):
-        env = {"COMSPEC": r"C:\Windows\system32\cmd.exe", "PATH": ""}
+    async def test_uses_powershell(self):
+        env = {"PATH": ""}
         with (
             patch("elebot.agent.tools.shell._IS_WINDOWS", True),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
@@ -122,23 +122,24 @@ class TestSpawnWindows:
             await ExecTool._spawn("dir", r"C:\Users", env)
 
         args = mock_exec.call_args[0]
-        assert "cmd.exe" in args[0]
-        assert "/c" in args
+        assert "powershell" in args[0].lower()
+        assert "-Command" in args
         assert "dir" in args
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_default_comspec(self):
+    async def test_falls_back_to_default_powershell(self):
         env = {"PATH": ""}
         with (
             patch("elebot.agent.tools.shell._IS_WINDOWS", True),
             patch.dict("os.environ", {}, clear=True),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
+            patch("shutil.which", return_value=None),
         ):
             mock_exec.return_value = AsyncMock()
             await ExecTool._spawn("dir", r"C:\Users", env)
 
         args = mock_exec.call_args[0]
-        assert args[0] == "cmd.exe"
+        assert args[0] == "powershell.exe"
 
 
 # ---------------------------------------------------------------------------

@@ -113,6 +113,16 @@ def _is_process_alive(pid: int) -> bool:
     """判断给定进程是否仍然存活。"""
     if pid <= 0:
         return False
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        query_info = 0x1000  # PROCESS_QUERY_LIMITED_INFORMATION
+        handle = kernel32.OpenProcess(query_info, False, pid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -242,13 +252,21 @@ def _start_weixin_service(config: str | None, workspace: str | None) -> None:
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     with log_path.open("a", encoding="utf-8") as log_file:
-        process = subprocess.Popen(
-            _build_service_command(config, workspace),
+        popen_kwargs: dict = dict(
             stdout=log_file,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
-            start_new_session=True,
             cwd=str(Path.cwd()),
+        )
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        else:
+            popen_kwargs["start_new_session"] = True
+        process = subprocess.Popen(
+            _build_service_command(config, workspace),
+            **popen_kwargs,
         )
 
     pid_path.write_text(str(process.pid), encoding="utf-8")
