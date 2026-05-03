@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -132,9 +133,15 @@ def get_channel_service_state() -> tuple[str, int | None]:
     pid_path = _get_channel_service_pid_path()
     pid = _read_service_pid(pid_path)
     if pid is None:
+        running_pids = list_channel_service_pids()
+        if running_pids:
+            return ("running", running_pids[0])
         return ("stale", None) if pid_path.exists() else ("stopped", None)
     if _is_process_alive(pid):
         return ("running", pid)
+    running_pids = list_channel_service_pids()
+    if running_pids:
+        return ("running", running_pids[0])
     return ("stale", pid)
 
 
@@ -142,22 +149,24 @@ def list_channel_service_pids() -> list[int]:
     """列出当前运行中的所有 channel 服务进程。"""
     try:
         output = subprocess.check_output(
-            [
-                "pgrep",
-                "-fal",
-                r"python -m elebot channel (_serve_internal|run)|/elebot channel (_serve_internal|run)",
-            ],
+            ["ps", "-axo", "pid=,command="],
             text=True,
         )
     except Exception:
         return []
 
+    pattern = re.compile(
+        r"(?:^|\s)(?:\S*python(?:\d+(?:\.\d+)?)?|\S*Python)\s+-m\s+elebot\s+channel\s+(_serve_internal|run)(?:\s|$)"
+    )
     pids: list[int] = []
     for line in output.splitlines():
         line = line.strip()
         if not line:
             continue
         parts = line.split(maxsplit=1)
+        command = parts[1] if len(parts) > 1 else ""
+        if not pattern.search(command):
+            continue
         try:
             pids.append(int(parts[0]))
         except (ValueError, IndexError):

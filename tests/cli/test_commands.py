@@ -571,6 +571,7 @@ def test_channel_run_starts_channel_manager_with_logs(monkeypatch, tmp_path) -> 
             events.append("manager.stop_all")
 
     monkeypatch.setattr("elebot.cli.commands.weixin._load_runtime_config", lambda *_args, **_kwargs: loaded_config)
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_channel_service_state", lambda: ("stopped", None))
     monkeypatch.setattr("elebot.cli.commands.weixin.sync_workspace_templates", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("elebot.cli.commands.weixin._make_runtime", lambda *_args, **_kwargs: _FakeRuntime())
     monkeypatch.setattr("elebot.cli.commands.weixin.ChannelManager", _FakeManager)
@@ -609,6 +610,7 @@ def test_channel_run_requires_login_state(monkeypatch, tmp_path) -> None:
     loaded_config.channels.weixin.state_dir = str(tmp_path / "weixin")
 
     monkeypatch.setattr("elebot.cli.commands.weixin._load_runtime_config", lambda *_args, **_kwargs: loaded_config)
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_channel_service_state", lambda: ("stopped", None))
     monkeypatch.setattr("elebot.cli.commands.weixin.sync_workspace_templates", lambda *_args, **_kwargs: None)
 
     result = runner.invoke(app, ["channel", "run"])
@@ -652,6 +654,7 @@ def test_channel_run_warns_when_default_config_file_is_missing(monkeypatch, tmp_
     monkeypatch.setattr("elebot.config.loader.get_config_path", lambda: missing_config)
     monkeypatch.setattr("elebot.config.loader.load_config", lambda _path=None: loaded_config)
     monkeypatch.setattr("elebot.config.loader.resolve_config_env_vars", lambda config: config)
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_channel_service_state", lambda: ("stopped", None))
     monkeypatch.setattr("elebot.cli.commands.weixin.sync_workspace_templates", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("elebot.cli.commands.weixin._make_runtime", lambda *_args, **_kwargs: _FakeRuntime())
     monkeypatch.setattr("elebot.cli.commands.weixin.ChannelManager", _FakeManager)
@@ -670,6 +673,7 @@ def test_channel_run_requires_enabled_channel(monkeypatch) -> None:
     loaded_config = Config()
 
     monkeypatch.setattr("elebot.cli.commands.weixin._load_runtime_config", lambda *_args, **_kwargs: loaded_config)
+    monkeypatch.setattr("elebot.cli.commands.weixin.get_channel_service_state", lambda: ("stopped", None))
     monkeypatch.setattr("elebot.cli.commands.weixin.sync_workspace_templates", lambda *_args, **_kwargs: None)
 
     result = runner.invoke(app, ["channel", "run"])
@@ -739,6 +743,21 @@ def test_channel_start_reports_running_instance(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert "已被 weixin 占用" in result.stdout
+
+
+def test_get_channel_service_state_falls_back_to_process_scan_when_pid_file_is_missing(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """pid 文件缺失但后台进程仍在时，应回退扫描真实进程。"""
+    pid_path = tmp_path / "channels-service.pid"
+
+    monkeypatch.setattr("elebot.cli.commands.weixin._get_channel_service_pid_path", lambda: pid_path)
+    monkeypatch.setattr("elebot.cli.commands.weixin.list_channel_service_pids", lambda: [33479])
+
+    from elebot.cli.commands import weixin as weixin_commands
+
+    assert weixin_commands.get_channel_service_state() == ("running", 33479)
 
 
 def test_channel_log_follows_existing_log_file(monkeypatch, tmp_path: Path) -> None:
